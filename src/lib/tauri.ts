@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ClipboardCopyOutcome,
   IndexedImage,
+  RecentImageRecord,
   ScanSummary,
   ShortcutRegistrationStatus,
 } from "../types";
@@ -22,8 +23,8 @@ export function copyImageToClipboard(path: string): Promise<ClipboardCopyOutcome
   return invoke<ClipboardCopyOutcome>("copy_image_to_clipboard", { path });
 }
 
-export function getRecentImages(): Promise<IndexedImage[]> {
-  return invoke<IndexedImage[]>("get_recent_images");
+export function getRecentImages(): Promise<RecentImageRecord[]> {
+  return invoke<RecentImageRecord[]>("get_recent_images");
 }
 
 export function updateQuickSearchShortcut(shortcut: string): Promise<ShortcutRegistrationStatus> {

@@ -8,12 +8,13 @@ import {
 } from "@fluentui/react-components";
 import { Image20Regular, Search20Regular } from "@fluentui/react-icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { IndexedImage } from "../../types";
+import type { IndexedImage, RecentImageRecord } from "../../types";
 import { useThumbnail } from "../library/useThumbnail";
 import { useSearchKeyboard } from "./useSearchKeyboard";
 
 interface QuickSearchContentProps {
   items: IndexedImage[];
+  recentItems: RecentImageRecord[];
   loading?: boolean;
   error?: string;
   copyError?: string;
@@ -173,6 +174,7 @@ function QuickSearchItem({
 
 export function QuickSearchContent({
   items,
+  recentItems,
   loading = false,
   error,
   copyError,
@@ -187,12 +189,21 @@ export function QuickSearchContent({
   const [query, setQuery] = useState("");
   const copying = Boolean(copyingPath);
 
+  const recentFirstItems = useMemo(() => {
+    const byPath = new Map<string, IndexedImage>();
+    recentItems.forEach((record) => byPath.set(record.item.path, record.item));
+    items.forEach((item) => {
+      if (!byPath.has(item.path)) byPath.set(item.path, item);
+    });
+    return Array.from(byPath.values());
+  }, [items, recentItems]);
+
   const results = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    return items
+    return recentFirstItems
       .filter((item) => !normalized || item.name.toLocaleLowerCase().includes(normalized))
       .slice(0, MAX_RESULTS);
-  }, [items, query]);
+  }, [query, recentFirstItems]);
 
   const confirmItem = useCallback((item: IndexedImage | undefined) => {
     if (!item || copying) return;
@@ -238,7 +249,7 @@ export function QuickSearchContent({
 
       <div className={styles.results}>
         {results.length > 0 ? (
-          <div className={styles.grid} role="listbox" aria-label="快速搜索结果">
+          <div className={styles.grid} role="listbox" aria-label="快速搜索结果，空搜索时最近使用优先">
             {results.map((item, index) => (
               <QuickSearchItem
                 key={item.path}

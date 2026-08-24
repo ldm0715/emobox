@@ -1,13 +1,13 @@
 use std::{fs, path::Path, time::Instant};
 
 use image::GenericImageView;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 const WARNING_LIMIT: usize = 20;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexedImage {
     pub name: String,

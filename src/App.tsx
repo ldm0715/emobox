@@ -28,6 +28,7 @@ import type {
   IndexedImage,
   LibraryGroup,
   LibraryView,
+  RecentImageRecord,
   SortOption,
 } from "./types";
 
@@ -63,7 +64,7 @@ export function App() {
   const [density, setDensity] = useState<GridDensity>("comfortable");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
-  const [recentItems, setRecentItems] = useState<IndexedImage[]>([]);
+  const [recentItems, setRecentItems] = useState<RecentImageRecord[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutRegistered, setShortcutRegistered] = useState(false);
   const [shortcutError, setShortcutError] = useState("");
@@ -85,8 +86,8 @@ export function App() {
 
     listen<ImageCopiedEvent>("image-copied", ({ payload }) => {
       setRecentItems((current) => [
-        payload.item,
-        ...current.filter((item) => item.path !== payload.item.path),
+        payload.recent,
+        ...current.filter((record) => record.item.path !== payload.item.path),
       ].slice(0, 50));
       dispatchToast(
         <Toast>
@@ -221,7 +222,7 @@ export function App() {
   }, []);
 
   const viewItems = useMemo(() => {
-    if (currentView === "recent") return recentItems;
+    if (currentView === "recent") return recentItems.map((record) => record.item);
     if (currentView === "favorites") return allItems.filter((item) => favorites.has(item.path));
     if (currentView.startsWith("group:")) return [];
     return allItems;
@@ -233,7 +234,7 @@ export function App() {
       ? viewItems.filter((item) => item.name.toLocaleLowerCase().includes(normalizedQuery))
       : [...viewItems];
 
-    filtered.sort((left, right) => {
+    if (currentView !== "recent") filtered.sort((left, right) => {
       if (sortOption === "name-desc") return right.name.localeCompare(left.name, "zh-CN");
       if (sortOption === "format") {
         const extensionOrder = left.extension.localeCompare(right.extension, "en");
@@ -243,7 +244,7 @@ export function App() {
     });
 
     return filtered;
-  }, [searchQuery, sortOption, viewItems]);
+  }, [currentView, searchQuery, sortOption, viewItems]);
 
   const currentTitle = currentView.startsWith("group:")
     ? groups.find((group) => `group:${group.id}` === currentView)?.name ?? "分组"

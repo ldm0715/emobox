@@ -31,6 +31,13 @@ export interface LibraryGroup {
   count?: number;
 }
 
+
+export interface RecentImageRecord {
+  item: IndexedImage;
+  lastUsedAt: number;
+  useCount: number;
+}
+
 export interface ShortcutRegistrationStatus {
   shortcut: string | null;
   registered: boolean;
@@ -46,4 +53,5 @@ export interface ClipboardCopyOutcome {
 export interface ImageCopiedEvent {
   item: IndexedImage;
   outcome: ClipboardCopyOutcome;
+  recent: RecentImageRecord;
 }

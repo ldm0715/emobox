@@ -14,9 +14,10 @@ import {
   getErrorMessage,
   getIndexedImages,
   getQuickSearchShortcutStatus,
+  getRecentImages,
   hideQuickSearch,
 } from "../../lib/tauri";
-import type { IndexedImage } from "../../types";
+import type { IndexedImage, RecentImageRecord } from "../../types";
 import { QuickSearchPanel } from "./QuickSearchPanel";
 
 const QUICK_SEARCH_OPENED_EVENT = "quick-search-opened";
@@ -26,6 +27,7 @@ export function QuickSearchWindow() {
   const toasterId = useId("quick-search-toaster");
   const { dispatchToast } = useToastController(toasterId);
   const [items, setItems] = useState<IndexedImage[]>([]);
+  const [recentItems, setRecentItems] = useState<RecentImageRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copyError, setCopyError] = useState("");
@@ -43,16 +45,24 @@ export function QuickSearchWindow() {
     setCopyError("");
     setCopyingPath(undefined);
 
-    try {
-      setItems(await getIndexedImages());
-      const status = await getQuickSearchShortcutStatus().catch(() => null);
-      if (status?.shortcut) setShortcut(status.shortcut);
-    } catch (loadError) {
-      setItems([]);
-      setError(`无法读取表情索引：${getErrorMessage(loadError)}`);
-    } finally {
-      setLoading(false);
+    const [indexedResult, recentResult] = await Promise.allSettled([
+      getIndexedImages(),
+      getRecentImages(),
+    ]);
+    const indexedItems = indexedResult.status === "fulfilled" ? indexedResult.value : [];
+    const persistedRecentItems = recentResult.status === "fulfilled" ? recentResult.value : [];
+    setItems(indexedItems);
+    setRecentItems(persistedRecentItems);
+
+    if (indexedResult.status === "rejected" && recentResult.status === "rejected") {
+      setError(`无法读取表情索引和最近使用记录：${getErrorMessage(indexedResult.reason)}`);
+    } else if (indexedItems.length === 0 && persistedRecentItems.length === 0 && indexedResult.status === "rejected") {
+      setError(`无法读取表情索引：${getErrorMessage(indexedResult.reason)}`);
     }
+
+    const status = await getQuickSearchShortcutStatus().catch(() => null);
+    if (status?.shortcut) setShortcut(status.shortcut);
+    setLoading(false);
   }, []);
 
   const close = useCallback(() => {
@@ -121,6 +131,7 @@ export function QuickSearchWindow() {
     <>
       <QuickSearchPanel
         items={items}
+        recentItems={recentItems}
         loading={loading}
         error={error || undefined}
         copyError={copyError || undefined}

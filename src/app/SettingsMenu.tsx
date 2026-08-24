@@ -201,9 +201,9 @@ export function SettingsDialog({
         <div className={styles.settingRow}>
           <div className={styles.settingText}>
             <div className={styles.settingLabel}>关闭窗口时最小化到系统托盘</div>
-            <div className={styles.settingDescription}>系统托盘尚未实现，当前不可启用。</div>
+            <div className={styles.settingDescription}>主窗口关闭按钮固定隐藏到系统托盘；请通过托盘“退出”结束进程。</div>
           </div>
-          <Switch disabled checked={false} aria-label="关闭窗口时最小化到系统托盘" />
+          <Switch disabled checked aria-label="关闭窗口时最小化到系统托盘" />
         </div>
         <Divider />
         <div className={styles.settingRow}>
@@ -312,8 +312,8 @@ export function SettingsDialog({
         <div className={styles.aboutEnglish}>EmoBox · 版本 0.1.0</div>
         <p className={styles.paragraph}>表情匣是一个 Windows 优先的本地表情资产管理工具。图片保留在用户选择的原始目录中，不需要账号或网络服务。</p>
         <Divider />
-        <p className={styles.paragraph}><strong>已实现：</strong>本地文件夹导入、递归扫描、缩略图、文件名搜索、当前会话收藏、主题切换、独立快捷搜索浮层和可自定义全局快捷键。</p>
-        <p className={styles.paragraph}><strong>尚未实现：</strong>系统托盘、图片剪贴板、自动粘贴、最近使用持久化、分组管理、单文件导入和删除。</p>
+        <p className={styles.paragraph}><strong>已实现：</strong>本地文件夹导入、递归扫描、缩略图、文件名搜索、当前会话收藏、主题切换、系统托盘、关闭隐藏、最近使用持久化、独立快捷搜索浮层和可自定义全局快捷键。</p>
+        <p className={styles.paragraph}><strong>尚未实现：</strong>自动粘贴、收藏持久化、分组管理、单文件导入和删除。</p>
       </>
     );
   }
