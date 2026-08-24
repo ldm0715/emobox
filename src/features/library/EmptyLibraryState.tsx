@@ -1,0 +1,63 @@
+import { makeStyles, tokens } from "@fluentui/react-components";
+import { ImageMultiple48Regular } from "@fluentui/react-icons";
+import { ImportMenu } from "../import/ImportMenu";
+
+interface EmptyLibraryStateProps {
+  importing: boolean;
+  onImportFolder: () => void;
+}
+
+const useStyles = makeStyles({
+  root: {
+    minHeight: "360px",
+    display: "grid",
+    placeItems: "center",
+    padding: tokens.spacingHorizontalXXL,
+  },
+  content: {
+    maxWidth: "420px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    color: tokens.colorNeutralForeground2,
+    textAlign: "center",
+  },
+  illustration: {
+    width: "80px",
+    height: "80px",
+    display: "grid",
+    placeItems: "center",
+    marginBottom: tokens.spacingVerticalL,
+    color: tokens.colorBrandForeground1,
+    backgroundColor: tokens.colorBrandBackground2,
+    borderRadius: tokens.borderRadiusXLarge,
+  },
+  title: {
+    margin: 0,
+    color: tokens.colorNeutralForeground1,
+    fontSize: tokens.fontSizeBase500,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  description: {
+    maxWidth: "360px",
+    marginTop: tokens.spacingVerticalS,
+    marginBottom: tokens.spacingVerticalL,
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase300,
+  },
+});
+
+export function EmptyLibraryState({ importing, onImportFolder }: EmptyLibraryStateProps) {
+  const styles = useStyles();
+  return (
+    <div className={styles.root}>
+      <div className={styles.content}>
+        <div className={styles.illustration}><ImageMultiple48Regular /></div>
+        <h2 className={styles.title}>还没有表情</h2>
+        <p className={styles.description}>导入本地图片，建立你的表情库。</p>
+        <ImportMenu label="导入表情" appearance="primary" disabled={importing} onImportFolder={onImportFolder} />
+      </div>
+    </div>
+  );
+}
