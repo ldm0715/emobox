@@ -147,7 +147,7 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
           <div className={styles.centeredContent}>
             <History24Regular className={styles.centeredIcon} />
             <h2 className={styles.centeredTitle}>暂无最近使用</h2>
-            <p className={styles.centeredDescription}>图片复制功能接入后，最近使用的表情会显示在这里。</p>
+            <p className={styles.centeredDescription}>从快捷搜索复制过的图片会显示在这里；当前仅保留本次运行记录。</p>
           </div>
         </div>
       );

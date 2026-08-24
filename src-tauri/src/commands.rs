@@ -1,12 +1,31 @@
-use std::{path::PathBuf, sync::RwLock};
+use std::{
+    path::{Path, PathBuf},
+    sync::RwLock,
+};
 
-use tauri::{AppHandle, State};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
 
-use crate::{quick_search, scanner, thumbnail};
+use crate::{clipboard, quick_search, scanner, thumbnail};
+
+const RECENT_IMAGE_LIMIT: usize = 50;
+const IMAGE_COPIED_EVENT: &str = "image-copied";
 
 #[derive(Default)]
 pub struct LibraryIndexState {
     items: RwLock<Vec<scanner::IndexedImage>>,
+}
+
+#[derive(Default)]
+pub struct RecentImagesState {
+    paths: RwLock<Vec<String>>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageCopiedPayload {
+    item: scanner::IndexedImage,
+    outcome: clipboard::ClipboardCopyOutcome,
 }
 
 #[tauri::command]
@@ -53,6 +72,63 @@ pub fn get_indexed_images(
 }
 
 #[tauri::command]
+pub fn copy_image_to_clipboard(
+    app: AppHandle,
+    library_state: State<'_, LibraryIndexState>,
+    recent_state: State<'_, RecentImagesState>,
+    path: String,
+) -> Result<clipboard::ClipboardCopyOutcome, String> {
+    let item = library_state
+        .items
+        .read()
+        .map_err(|_| "索引状态不可用，请重启应用后重新导入。".to_string())?
+        .iter()
+        .find(|item| item.path == path)
+        .cloned()
+        .ok_or_else(|| "这张图片不在当前索引中，请重新导入文件夹后再试。".to_string())?;
+
+    let outcome = clipboard::copy_image(&app, Path::new(&item.path))?;
+
+    {
+        let mut recent_paths = recent_state
+            .paths
+            .write()
+            .map_err(|_| "图片已复制，但最近使用记录暂时不可用。".to_string())?;
+        record_recent_path(&mut recent_paths, &item.path);
+    }
+
+    let payload = ImageCopiedPayload {
+        item,
+        outcome: outcome.clone(),
+    };
+    if let Err(error) = app.emit_to("main", IMAGE_COPIED_EVENT, payload) {
+        log::warn!("图片已复制，但无法通知主窗口更新最近使用：{error}");
+    }
+
+    Ok(outcome)
+}
+
+#[tauri::command]
+pub fn get_recent_images(
+    library_state: State<'_, LibraryIndexState>,
+    recent_state: State<'_, RecentImagesState>,
+) -> Result<Vec<scanner::IndexedImage>, String> {
+    let items = library_state
+        .items
+        .read()
+        .map_err(|_| "索引状态不可用，请重启应用后重新导入。".to_string())?;
+    let recent_paths = recent_state
+        .paths
+        .read()
+        .map_err(|_| "最近使用记录暂时不可用，请重启应用后重试。".to_string())?;
+
+    Ok(recent_paths
+        .iter()
+        .filter_map(|path| items.iter().find(|item| &item.path == path).cloned())
+        .collect())
+}
+
+#[tauri::command]
 pub fn update_quick_search_shortcut(
     app: AppHandle,
     state: State<'_, quick_search::QuickSearchShortcutState>,
@@ -76,4 +152,36 @@ pub fn show_quick_search(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn hide_quick_search(app: AppHandle) -> Result<(), String> {
     quick_search::hide_quick_search(&app)
+}
+fn record_recent_path(recent_paths: &mut Vec<String>, path: &str) {
+    recent_paths.retain(|recent_path| recent_path != path);
+    recent_paths.insert(0, path.to_string());
+    recent_paths.truncate(RECENT_IMAGE_LIMIT);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RECENT_IMAGE_LIMIT, record_recent_path};
+
+    #[test]
+    fn recent_images_are_deduplicated_moved_to_front_and_limited() {
+        let mut paths = (0..RECENT_IMAGE_LIMIT)
+            .map(|index| format!("image-{index}"))
+            .collect::<Vec<_>>();
+
+        record_recent_path(&mut paths, "image-20");
+        assert_eq!(paths.first().map(String::as_str), Some("image-20"));
+        assert_eq!(
+            paths
+                .iter()
+                .filter(|path| path.as_str() == "image-20")
+                .count(),
+            1
+        );
+        assert_eq!(paths.len(), RECENT_IMAGE_LIMIT);
+
+        record_recent_path(&mut paths, "new-image");
+        assert_eq!(paths.first().map(String::as_str), Some("new-image"));
+        assert_eq!(paths.len(), RECENT_IMAGE_LIMIT);
+    }
 }

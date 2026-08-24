@@ -1,3 +1,4 @@
+mod clipboard;
 mod commands;
 mod quick_search;
 mod scanner;
@@ -12,7 +13,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(commands::LibraryIndexState::default())
+        .manage(commands::RecentImagesState::default())
         .manage(quick_search::QuickSearchShortcutState::default())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
@@ -20,6 +23,8 @@ pub fn run() {
             commands::scan_directory,
             commands::load_thumbnail,
             commands::get_indexed_images,
+            commands::copy_image_to_clipboard,
+            commands::get_recent_images,
             commands::update_quick_search_shortcut,
             commands::get_quick_search_shortcut_status,
             commands::show_quick_search,

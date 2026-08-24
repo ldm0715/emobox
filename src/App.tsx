@@ -6,6 +6,7 @@ import {
   useId,
   useToastController,
 } from "@fluentui/react-components";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "./app/AppShell";
 import { AppToolbar } from "./app/AppToolbar";
@@ -17,11 +18,13 @@ import { EmojiLibraryView } from "./features/library/EmojiLibraryView";
 import {
   getErrorMessage,
   getQuickSearchShortcutStatus,
+  getRecentImages,
   showQuickSearch,
   updateQuickSearchShortcut,
 } from "./lib/tauri";
 import type {
   GridDensity,
+  ImageCopiedEvent,
   IndexedImage,
   LibraryGroup,
   LibraryView,
@@ -60,12 +63,50 @@ export function App() {
   const [density, setDensity] = useState<GridDensity>("comfortable");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
+  const [recentItems, setRecentItems] = useState<IndexedImage[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutRegistered, setShortcutRegistered] = useState(false);
   const [shortcutError, setShortcutError] = useState("");
   const lastShortcutErrorToast = useRef("");
 
   const allItems = result?.items ?? [];
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+
+    getRecentImages()
+      .then((items) => {
+        if (!disposed) setRecentItems(items);
+      })
+      .catch(() => {
+        // 最近使用是辅助视图；读取失败不阻断主资料库。
+      });
+
+    listen<ImageCopiedEvent>("image-copied", ({ payload }) => {
+      setRecentItems((current) => [
+        payload.item,
+        ...current.filter((item) => item.path !== payload.item.path),
+      ].slice(0, 50));
+      dispatchToast(
+        <Toast>
+          <ToastTitle>已复制 {payload.item.name}</ToastTitle>
+          <ToastBody>{payload.outcome.message}</ToastBody>
+        </Toast>,
+        { intent: "success" },
+      );
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((listenError) => {
+      console.error("无法监听图片复制事件", listenError);
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [dispatchToast]);
 
   const showShortcutError = useCallback((message: string, registered = false) => {
     setShortcutRegistered(registered);
@@ -108,6 +149,7 @@ export function App() {
     setCurrentView("all");
     setSearchQuery("");
     setSelectedPath(null);
+    setRecentItems(await getRecentImages().catch(() => []));
 
     dispatchToast(
       <Toast>
@@ -179,11 +221,11 @@ export function App() {
   }, []);
 
   const viewItems = useMemo(() => {
-    if (currentView === "recent") return [];
+    if (currentView === "recent") return recentItems;
     if (currentView === "favorites") return allItems.filter((item) => favorites.has(item.path));
     if (currentView.startsWith("group:")) return [];
     return allItems;
-  }, [allItems, currentView, favorites]);
+  }, [allItems, currentView, favorites, recentItems]);
 
   const filteredItems = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLocaleLowerCase();

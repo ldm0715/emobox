@@ -12,6 +12,8 @@ interface QuickSearchPanelProps {
   items: IndexedImage[];
   loading: boolean;
   error?: string;
+  copyError?: string;
+  copyingPath?: string;
   activationId: number;
   shortcut: string;
   onClose: () => void;
@@ -69,6 +71,8 @@ export function QuickSearchPanel({
   items,
   loading,
   error,
+  copyError,
+  copyingPath,
   activationId,
   shortcut,
   onClose,
@@ -97,6 +101,8 @@ export function QuickSearchPanel({
             items={items}
             loading={loading}
             error={error}
+            copyError={copyError}
+            copyingPath={copyingPath}
             activationId={activationId}
             onSelect={onSelect}
             onClose={onClose}

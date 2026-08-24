@@ -35,3 +35,15 @@ export interface ShortcutRegistrationStatus {
   shortcut: string | null;
   registered: boolean;
 }
+
+export interface ClipboardCopyOutcome {
+  sourceFormat: string;
+  clipboardFormat: string;
+  animationPreserved: boolean | null;
+  message: string;
+}
+
+export interface ImageCopiedEvent {
+  item: IndexedImage;
+  outcome: ClipboardCopyOutcome;
+}

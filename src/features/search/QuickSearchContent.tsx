@@ -16,6 +16,8 @@ interface QuickSearchContentProps {
   items: IndexedImage[];
   loading?: boolean;
   error?: string;
+  copyError?: string;
+  copyingPath?: string;
   activationId: number;
   onSelect: (item: IndexedImage) => void;
   onClose: () => void;
@@ -60,6 +62,10 @@ const useStyles = makeStyles({
     ":focus-visible": {
       outline: "none",
     },
+    ":disabled": {
+      cursor: "wait",
+      opacity: 0.65,
+    },
   },
   selected: {
     color: tokens.colorNeutralForeground1,
@@ -101,12 +107,16 @@ const useStyles = makeStyles({
     textAlign: "center",
   },
   footer: {
+    minHeight: "22px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     gap: tokens.spacingHorizontalL,
     color: tokens.colorNeutralForeground4,
     fontSize: tokens.fontSizeBase100,
+  },
+  error: {
+    color: tokens.colorPaletteRedForeground1,
   },
   key: {
     padding: `1px ${tokens.spacingHorizontalXS}`,
@@ -121,12 +131,14 @@ const useStyles = makeStyles({
 function QuickSearchItem({
   item,
   selected,
+  disabled,
   onActivate,
   onPoint,
   itemRef,
 }: {
   item: IndexedImage;
   selected: boolean;
+  disabled: boolean;
   onActivate: () => void;
   onPoint: () => void;
   itemRef: (element: HTMLButtonElement | null) => void;
@@ -142,6 +154,7 @@ function QuickSearchItem({
       tabIndex={-1}
       className={mergeClasses(styles.item, selected && styles.selected)}
       aria-selected={selected}
+      disabled={disabled}
       title={item.name}
       onMouseEnter={onPoint}
       onClick={onActivate}
@@ -162,6 +175,8 @@ export function QuickSearchContent({
   items,
   loading = false,
   error,
+  copyError,
+  copyingPath,
   activationId,
   onSelect,
   onClose,
@@ -170,6 +185,7 @@ export function QuickSearchContent({
   const rootRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [query, setQuery] = useState("");
+  const copying = Boolean(copyingPath);
 
   const results = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -179,10 +195,9 @@ export function QuickSearchContent({
   }, [items, query]);
 
   const confirmItem = useCallback((item: IndexedImage | undefined) => {
-    if (!item) return;
+    if (!item || copying) return;
     onSelect(item);
-    onClose();
-  }, [onClose, onSelect]);
+  }, [copying, onSelect]);
 
   const { selectedIndex, setSelectedIndex, handleKeyDown } = useSearchKeyboard({
     itemCount: results.length,
@@ -205,7 +220,7 @@ export function QuickSearchContent({
   }, [selectedIndex]);
 
   return (
-    <div ref={rootRef} className={styles.root} onKeyDown={handleKeyDown}>
+    <div ref={rootRef} className={styles.root} onKeyDown={handleKeyDown} aria-busy={copying}>
       <SearchBox
         className={styles.search}
         size="large"
@@ -214,6 +229,7 @@ export function QuickSearchContent({
         contentBefore={<Search20Regular />}
         placeholder="按文件名搜索表情"
         value={query}
+        disabled={copying}
         onChange={(_: SearchBoxChangeEvent, data: { value: string }) => {
           setQuery(data.value);
           setSelectedIndex(0);
@@ -228,6 +244,7 @@ export function QuickSearchContent({
                 key={item.path}
                 item={item}
                 selected={index === selectedIndex}
+                disabled={copying}
                 itemRef={(element) => {
                   itemRefs.current[index] = element;
                 }}
@@ -239,11 +256,11 @@ export function QuickSearchContent({
         ) : (
           <div className={styles.empty}>
             {loading ? (
-              <span>正在读取表情索引…</span>
+              <span>正在读取表情索引...</span>
             ) : error ? (
               <span>{error}</span>
             ) : query ? (
-              <span>没有找到“{query}”相关的文件</span>
+              <span>没有找到匹配 {query} 的文件</span>
             ) : (
               <span>还没有可搜索的表情，请先在主窗口导入文件夹</span>
             )}
@@ -251,10 +268,18 @@ export function QuickSearchContent({
         )}
       </div>
 
-      <div className={styles.footer}>
-        <span><span className={styles.key}>方向键</span> 移动</span>
-        <span><span className={styles.key}>Enter</span> 选择</span>
-        <span><span className={styles.key}>Esc</span> 隐藏</span>
+      <div className={styles.footer} role={copyError ? "alert" : undefined}>
+        {copying ? (
+          <span>正在写入 Windows 图片剪贴板...</span>
+        ) : copyError ? (
+          <span className={styles.error}>{copyError}</span>
+        ) : (
+          <>
+            <span><span className={styles.key}>方向键</span> 移动</span>
+            <span><span className={styles.key}>Enter</span> 复制</span>
+            <span><span className={styles.key}>Esc</span> 隐藏</span>
+          </>
+        )}
       </div>
     </div>
   );
