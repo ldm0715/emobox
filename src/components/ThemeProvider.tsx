@@ -14,7 +14,10 @@ import {
   useMemo,
   useState,
 } from "react";
-import { DEFAULT_QUICK_SEARCH_SHORTCUT } from "../config/shortcuts";
+import {
+  DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
+  DEFAULT_QUICK_SEARCH_SHORTCUT,
+} from "../config/shortcuts";
 import type { DefaultLibraryView } from "../types";
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -25,6 +28,7 @@ interface PersistedSettings {
   sidebarCollapsed: boolean;
   defaultView: DefaultLibraryView;
   quickSearchShortcut: string;
+  clipboardCollectShortcut: string;
 }
 
 interface SettingsContextValue extends PersistedSettings {
@@ -33,6 +37,7 @@ interface SettingsContextValue extends PersistedSettings {
   setSidebarCollapsed: (collapsed: boolean) => void;
   setDefaultView: (view: DefaultLibraryView) => void;
   setQuickSearchShortcut: (shortcut: string) => void;
+  setClipboardCollectShortcut: (shortcut: string) => void;
 }
 
 const STORAGE_KEY = "emobox.settings";
@@ -44,6 +49,7 @@ const defaultSettings: PersistedSettings = {
   sidebarCollapsed: false,
   defaultView: "all",
   quickSearchShortcut: DEFAULT_QUICK_SEARCH_SHORTCUT,
+  clipboardCollectShortcut: DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
 };
 
 const brand: BrandVariants = {
@@ -102,6 +108,9 @@ function readSettings(): PersistedSettings {
       quickSearchShortcut: isShortcut(parsed.quickSearchShortcut)
         ? parsed.quickSearchShortcut
         : defaultSettings.quickSearchShortcut,
+      clipboardCollectShortcut: isShortcut(parsed.clipboardCollectShortcut)
+        ? parsed.clipboardCollectShortcut
+        : defaultSettings.clipboardCollectShortcut,
     };
   } catch {
     return defaultSettings;
@@ -151,6 +160,10 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setQuickSearchShortcut: (quickSearchShortcut) => setSettings((current) => ({
         ...current,
         quickSearchShortcut,
+      })),
+      setClipboardCollectShortcut: (clipboardCollectShortcut) => setSettings((current) => ({
+        ...current,
+        clipboardCollectShortcut,
       })),
     }),
     [resolvedTheme, settings],

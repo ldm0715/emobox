@@ -1,8 +1,14 @@
-use std::{fs, path::Path, time::Instant};
+use std::{
+    fs,
+    path::Path,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use image::GenericImageView;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
+
+use crate::{database, repositories::emoji_repository::EmojiRepository};
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 const WARNING_LIMIT: usize = 20;
@@ -133,7 +139,21 @@ pub fn scan_directory(root: &Path) -> Result<ScanSummary, String> {
     Ok(summary)
 }
 
-fn supported_extension(path: &Path) -> Option<String> {
+pub fn scan_and_persist(database_path: &Path, root: &Path) -> Result<ScanSummary, String> {
+    let summary = scan_directory(root)?;
+    let mut connection = database::open_connection(database_path)?;
+    EmojiRepository::upsert_external_scan(&mut connection, &summary.items, unix_time_millis())?;
+    Ok(summary)
+}
+
+fn unix_time_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or_default()
+}
+
+pub(crate) fn supported_extension(path: &Path) -> Option<String> {
     let extension = path.extension()?.to_string_lossy().to_lowercase();
     SUPPORTED_EXTENSIONS
         .contains(&extension.as_str())

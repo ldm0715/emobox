@@ -55,3 +55,24 @@ export interface ImageCopiedEvent {
   outcome: ClipboardCopyOutcome;
   recent: RecentImageRecord;
 }
+
+export interface ImportFailure {
+  path: string;
+  message: string;
+}
+
+export interface ManagedImportSummary {
+  successCount: number;
+  duplicateCount: number;
+  failedCount: number;
+  elapsedMs: number;
+  items: IndexedImage[];
+  failures: ImportFailure[];
+}
+
+export interface StorageInfo {
+  assetsDirectory: string;
+  emojisDirectory: string;
+  thumbnailsDirectory: string;
+  supportedFormats: string[];
+}

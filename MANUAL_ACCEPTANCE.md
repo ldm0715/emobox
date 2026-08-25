@@ -10,8 +10,8 @@
 - [ ] 空状态只有一个“导入表情”MenuButton；
 - [ ] 顶部和空状态复用同一个 ImportMenu；
 - [ ] “导入文件夹”真实可用；
-- [ ] “导入图片”未实现时 disabled；
-- [ ] “从剪贴板收藏”未实现时 disabled。
+- [ ] "导入图片"在选中 PNG/JPG/JPEG/GIF/WebP 后成功复制到 EmoBox 素材库；
+- [ ] "从剪贴板收藏"可用，调用后显示导入数量 Toast；GIF 时仅保留首帧。
 
 ## 顶部工具栏
 
@@ -73,8 +73,9 @@
 - [ ] 输入无修饰键的组合时显示明确的格式错误；
 - [ ] 注册已被其他应用占用的快捷键时显示错误 Toast 和设置页错误说明；
 - [ ] 注册失败时不覆盖上一个仍可用的快捷键；
-- [ ] 显示 `Ctrl + Alt + S` 从剪贴板收藏，但明确说明本阶段未实现；
-- [ ] “打开浮层”按钮打开独立快捷搜索窗口。
+- [ ] `Ctrl + Alt + S` 默认已注册为"从剪贴板收藏"快捷键，可在设置中编辑并应用新组合；
+- [ ] 与快速搜索快捷键冲突时显示明确错误并保留旧快捷键；
+- [ ] "打开浮层"按钮打开独立快捷搜索窗口。
 
 ### 存储与导入
 
@@ -141,6 +142,7 @@
 - [ ] 未实现分组 CRUD；
 - [ ] 未实现标签搜索；
 - [ ] 未实现删除；
+- [ ] 已实现从剪贴板收藏（用户主动触发，菜单或 `Ctrl + Alt + S`）。
 
 ## 第四阶段：系统托盘、关闭隐藏和最近使用持久化
 
@@ -244,3 +246,92 @@
 - [ ] 仅对专用测试副本临时改名或移出测试目录后，再次复制会显示可读错误且应用不崩溃；测试后恢复该副本；
 - [ ] JSON 不存在时应用以空记录正常启动；
 - [ ] JSON 内容损坏时应用记录警告并以空记录继续启动。
+
+## 第五阶段：从剪贴板收藏与全局快捷键
+
+### 准备
+
+1. 准备至少 3 张图片：`png-static.png`（含 alpha）、`jpeg-photo.jpg`、`gif-anim.gif`；
+2. 启动应用并完成至少一次文件夹导入以建立索引；
+3. 打开主窗口的 webview devtools（右键 → 检查元素）备用。
+
+### A. 菜单触发
+
+1. 复制 `png-static.png` 到剪贴板（任意方式：Paint、浏览器、文件管理器）；
+2. 点击工具栏"导入 → 从剪贴板收藏"；
+3. 预期：
+   - Toast 标题"导入完成：成功 1 张"；
+   - "全部表情"视图立即出现新表情，文件名以 `clipboard-` 开头；
+   - 数据库 `%APPDATA%\com.emobox.app\emobox.sqlite3` 的 `emojis` 表新增一行 `source_type='clipboard'`；
+   - 素材目录 `%APPDATA%\com.emobox.app\assets\emojis\` 出现 `<sha256>.png` 文件。
+
+### B. 重复触发去重
+
+1. 继续从剪贴板里有 `png-static.png` 的状态，重复点"从剪贴板收藏"三次；
+2. 预期：每次都显示"已在素材库中"info toast；
+3. 验证 `assets/emojis` 目录仍只有 1 个文件；
+4. 验证 SQLite 仍只有 1 行 `source_type='clipboard'`。
+
+### C. GIF 行为
+
+1. 复制 `gif-anim.gif` 到剪贴板；
+2. 点"从剪贴板收藏"；
+3. 预期：成功 toast 显示"已保存 GIF 首帧"或类似提示，**没有任何"动画丢失"toast**（阶段 5 不再承诺动画保留）；
+4. 打开素材库，验证新文件是静态 PNG（不是 GIF），是首帧。
+
+### D. 剪贴板无图片
+
+1. 复制一段纯文本到剪贴板（`echo "test" | clip`）；
+2. 点"从剪贴板收藏"；
+3. 预期：**info toast "剪贴板中没有图片"**（不是 error toast），素材库无变化。
+
+> arboard 在 Windows 上对"剪贴板没有图片"（空剪贴板或只有文本）返回统一错误文本
+> `The clipboard contents were not available in the requested format or the clipboard is empty.`，
+> 代码匹配 `clipboard is empty` 和 `not available in the requested format` 两个子串，激活 `Empty` 映射。
+
+### E. 全局快捷键 `Ctrl + Alt + S`
+
+1. 确认 EmoBox 主窗口不处于焦点（点击其他应用窗口）；
+2. 复制 `jpeg-photo.jpg` 到剪贴板；
+3. 按 `Ctrl + Alt + S`；
+4. 预期：与点菜单相同的成功 toast 出现，主窗口自动获得焦点，素材库新增。
+
+### F. 自定义冲突检测
+
+1. 打开设置 → 快捷键 → "从剪贴板收藏"；
+2. 录制并应用 `Ctrl + Alt + Space`（与快速搜索冲突）；
+3. 预期：error toast"该快捷键已被「快速搜索」占用"；
+4. 验证 `Ctrl + Alt + S` 仍生效（没被覆盖）；
+5. 验证 `Ctrl + Alt + Space` 仍能唤出浮层（没被覆盖）。
+
+### G. 并发触发
+
+1. 保持 `jpeg-photo.jpg` 在剪贴板；
+2. 快速连按 `Ctrl + Alt + S` 五次；
+3. 预期：第一次 success toast，剩余四次 "已在素材库中" info toast；没有任何 error；
+4. 验证 SQLite 仍只有 1 行 `source_type='clipboard'`（IMPORT_LOCK 串行化 + SHA-256 去重）。
+
+### H. 启动清理 reconcile
+
+1. 应用在运行中，手动在系统层面注册了一个 `Ctrl+Alt+Q` 全局快捷键（用 PowerToys 或类似工具）；
+2. 通过托盘"退出"退出 EmoBox；
+3. 再次 `npm run tauri dev`；
+4. 预期：EmoBox 启动后 `Ctrl+Alt+Q` 不再被 EmoBox 占用（reconcile 调用了 `unregister_all`）。
+
+### I. 删除原文件后仍能 collect
+
+1. 复制 `png-static.png` 到剪贴板；
+2. 删掉源文件（在文件管理器里删除）；
+3. 按 `Ctrl + Alt + S`；
+4. 预期：成功 toast（剪贴板独立于源文件）。
+
+### J. 范围和异常
+
+- [ ] 未新增账号、登录、同步或网络上传；
+- [ ] 未引入云端 API、OCR、AI 识别或视觉去重；
+- [ ] 未读取微信、QQ、Tim 等聊天应用的缓存或数据库；
+- [ ] EmoBox 数据库（SQLite）只在应用数据目录新增 `emojis` 行；
+- [ ] EmoBox 素材库目录只在应用数据目录新增 PNG 文件；
+- [ ] 原始图片没有被复制、移动、重命名或删除（除了"导入图片"主动复制的场景）；
+- [ ] 设置中切换 `Ctrl+Alt+S` 为 `Ctrl+Alt+Q` 后立即生效，无需重启。
+

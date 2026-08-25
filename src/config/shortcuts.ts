@@ -1,4 +1,5 @@
 export const DEFAULT_QUICK_SEARCH_SHORTCUT = "Ctrl+Alt+Space";
+export const DEFAULT_CLIPBOARD_COLLECT_SHORTCUT = "Ctrl+Alt+S";
 export const WINDOWS_SYSTEM_MENU_SHORTCUT = "Alt+Space";
 
 interface ShortcutKeyboardEvent {

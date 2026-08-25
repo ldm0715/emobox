@@ -20,6 +20,9 @@ interface ShortcutEditorProps {
   registered: boolean;
   registrationError: string;
   onApply: (shortcut: string) => Promise<string | null>;
+  ariaLabel?: string;
+  placeholder?: string;
+  helpText?: string;
 }
 
 const useStyles = makeStyles({
@@ -47,6 +50,9 @@ export function ShortcutEditor({
   registered,
   registrationError,
   onApply,
+  ariaLabel = "全局快捷键",
+  placeholder = "例如 Ctrl+Alt+Space",
+  helpText = "快捷键必须包含 Ctrl、Alt、Shift 或 Win。也可以直接编辑文本后应用。",
 }: ShortcutEditorProps) {
   const styles = useStyles();
   const [draft, setDraft] = useState(shortcut);
@@ -100,9 +106,9 @@ export function ShortcutEditor({
       <div className={styles.controls}>
         <Input
           className={styles.input}
-          aria-label="快速搜索全局快捷键"
+          aria-label={ariaLabel}
           value={draft}
-          placeholder="例如 Ctrl+Alt+Space"
+          placeholder={placeholder}
           onChange={(_, data) => {
             setDraft(data.value);
             setLocalError("");
@@ -127,9 +133,7 @@ export function ShortcutEditor({
         </Button>
       </div>
 
-      <div className={styles.help}>
-        快捷键必须包含 Ctrl、Alt、Shift 或 Win。也可以直接编辑文本后应用。
-      </div>
+      <div className={styles.help}>{helpText}</div>
 
       {conflictsWithWindowsMenu && (
         <MessageBar intent="warning">

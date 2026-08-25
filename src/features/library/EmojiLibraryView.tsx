@@ -30,7 +30,9 @@ interface EmojiLibraryViewProps {
   error: string;
   onClearError: () => void;
   onClearSearch: () => void;
+  onImportImages: () => void;
   onImportFolder: () => void;
+  onCollectFromClipboard: () => void;
   onDensityChange: (density: GridDensity) => void;
   onSortChange: (option: SortOption) => void;
   onSelect: (item: IndexedImage) => void;
@@ -104,7 +106,9 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     error,
     onClearError,
     onClearSearch,
+    onImportImages,
     onImportFolder,
+    onCollectFromClipboard,
     onDensityChange,
     onSortChange,
     onSelect,
@@ -126,7 +130,14 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     }
 
     if (allItemCount === 0) {
-      return <EmptyLibraryState importing={importing} onImportFolder={onImportFolder} />;
+      return (
+        <EmptyLibraryState
+          importing={importing}
+          onImportImages={onImportImages}
+          onImportFolder={onImportFolder}
+          onCollectFromClipboard={onCollectFromClipboard}
+        />
+      );
     }
 
     if (view === "favorites") {
@@ -153,7 +164,14 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
       );
     }
 
-    return <EmptyLibraryState importing={importing} onImportFolder={onImportFolder} />;
+    return (
+      <EmptyLibraryState
+        importing={importing}
+        onImportImages={onImportImages}
+        onImportFolder={onImportFolder}
+        onCollectFromClipboard={onCollectFromClipboard}
+      />
+    );
   }
 
   return (

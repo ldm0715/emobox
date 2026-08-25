@@ -25,7 +25,9 @@ interface AppToolbarProps {
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   onQueryChange: (query: string) => void;
+  onImportImages: () => void;
   onImportFolder: () => void;
+  onCollectFromClipboard: () => void;
 }
 
 const useStyles = makeStyles({
@@ -84,7 +86,9 @@ export function AppToolbar({
   sidebarCollapsed,
   onToggleSidebar,
   onQueryChange,
+  onImportImages,
   onImportFolder,
+  onCollectFromClipboard,
 }: AppToolbarProps) {
   const styles = useStyles();
 
@@ -131,7 +135,14 @@ export function AppToolbar({
 
       <div className={styles.actions}>
         {showImport && (
-          <ImportMenu label="导入" appearance="primary" disabled={importing} onImportFolder={onImportFolder} />
+          <ImportMenu
+            label="导入"
+            appearance="primary"
+            disabled={importing}
+            onImportImages={onImportImages}
+            onImportFolder={onImportFolder}
+            onCollectFromClipboard={onCollectFromClipboard}
+          />
         )}
         <ThemeQuickMenu />
       </div>

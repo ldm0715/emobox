@@ -4,7 +4,9 @@ import { ImportMenu } from "../import/ImportMenu";
 
 interface EmptyLibraryStateProps {
   importing: boolean;
+  onImportImages: () => void;
   onImportFolder: () => void;
+  onCollectFromClipboard: () => void;
 }
 
 const useStyles = makeStyles({
@@ -48,15 +50,27 @@ const useStyles = makeStyles({
   },
 });
 
-export function EmptyLibraryState({ importing, onImportFolder }: EmptyLibraryStateProps) {
+export function EmptyLibraryState({
+  importing,
+  onImportImages,
+  onImportFolder,
+  onCollectFromClipboard,
+}: EmptyLibraryStateProps) {
   const styles = useStyles();
   return (
     <div className={styles.root}>
       <div className={styles.content}>
         <div className={styles.illustration}><ImageMultiple48Regular /></div>
         <h2 className={styles.title}>还没有表情</h2>
-        <p className={styles.description}>导入本地图片，建立你的表情库。</p>
-        <ImportMenu label="导入表情" appearance="primary" disabled={importing} onImportFolder={onImportFolder} />
+        <p className={styles.description}>导入图片会保存到 EmoBox；导入文件夹只索引原路径。</p>
+        <ImportMenu
+          label="导入表情"
+          appearance="primary"
+          disabled={importing}
+          onImportImages={onImportImages}
+          onImportFolder={onImportFolder}
+          onCollectFromClipboard={onCollectFromClipboard}
+        />
       </div>
     </div>
   );
