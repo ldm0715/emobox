@@ -1,21 +1,22 @@
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::{
-    clipboard, clipboard_collect, database, quick_search, recent,
-    repositories::emoji_repository::EmojiRepository,
-    scanner,
-    services::{
-        asset_service::AssetService,
-        import_service::{ImportContext, ImportService, ManagedImportSummary},
+    clipboard, clipboard_collect, database, quick_search,
+    repositories::{
+        emoji_repository::{EmojiRepository, ListOptions},
+        group_repository::{GroupRepository, GroupRow},
+        tag_repository::{TagRepository, TagRow},
     },
+    scanner, services::trash_service::{TrashResult, TrashService},
     shortcut_registry::{
         SetOutcome, ShortcutOwner, ShortcutRegistrationStatus, ShortcutRegistry, ShortcutSyncState,
     },
     thumbnail,
 };
+use crate::{repositories::emoji_repository::EmojiRelations, scanner::IndexedEmoji};
 
 const IMAGE_COPIED_EVENT: &str = "image-copied";
 
@@ -24,7 +25,7 @@ const IMAGE_COPIED_EVENT: &str = "image-copied";
 struct ImageCopiedPayload {
     item: scanner::IndexedImage,
     outcome: clipboard::ClipboardCopyOutcome,
-    recent: recent::RecentImageRecord,
+    recent: crate::recent::RecentImageRecord,
 }
 
 #[derive(Serialize)]
@@ -35,6 +36,80 @@ pub struct StorageInfo {
     thumbnails_directory: String,
     supported_formats: Vec<&'static str>,
 }
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupDto {
+    pub id: i64,
+    pub name: String,
+    pub count: i64,
+    pub sort_order: i64,
+}
+
+impl From<GroupRow> for GroupDto {
+    fn from(row: GroupRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            count: row.count,
+            sort_order: row.sort_order,
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TagDto {
+    pub id: i64,
+    pub name: String,
+    pub count: i64,
+}
+
+impl From<TagRow> for TagDto {
+    fn from(row: TagRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            count: row.count,
+        }
+    }
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOptions {
+    pub view: String,
+    #[serde(default)]
+    pub query: String,
+    #[serde(default)]
+    pub group_id: Option<i64>,
+    #[serde(default)]
+    pub tag_ids: Vec<i64>,
+    #[serde(default)]
+    pub favorite_only: bool,
+    #[serde(default)]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub offset: Option<u32>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EmojiRelationsDto {
+    pub group_ids: Vec<i64>,
+    pub tag_ids: Vec<i64>,
+}
+
+impl From<EmojiRelations> for EmojiRelationsDto {
+    fn from(value: EmojiRelations) -> Self {
+        Self {
+            group_ids: value.group_ids,
+            tag_ids: value.tag_ids,
+        }
+    }
+}
+
+const DEFAULT_SEARCH_LIMIT: u32 = 200;
 
 #[tauri::command]
 pub async fn scan_directory(
@@ -54,7 +129,8 @@ pub async fn scan_directory(
 pub async fn import_managed_paths(
     database_state: State<'_, database::DatabaseState>,
     paths: Vec<String>,
-) -> Result<ManagedImportSummary, String> {
+) -> Result<crate::services::import_service::ManagedImportSummary, String> {
+    use crate::services::import_service::{ImportContext, ImportService};
     let context = ImportContext {
         database_path: database_state.database_path().to_path_buf(),
         emojis_directory: database_state.emojis_directory().to_path_buf(),
@@ -112,17 +188,18 @@ pub fn get_storage_info(
 pub fn open_assets_directory(
     database_state: State<'_, database::DatabaseState>,
 ) -> Result<(), String> {
-    AssetService::open_in_explorer(database_state.emojis_directory())
+    crate::services::asset_service::AssetService::open_in_explorer(database_state.emojis_directory())
 }
 
 #[tauri::command]
 pub fn copy_image_to_clipboard(
     app: AppHandle,
     database_state: State<'_, database::DatabaseState>,
-    recent_state: State<'_, recent::RecentImagesState>,
+    recent_state: State<'_, crate::recent::RecentImagesState>,
     path: String,
 ) -> Result<clipboard::ClipboardCopyOutcome, String> {
-    let connection = database_state.connect()?;
+    let mut connection = database_state.connect()?;
+    // 先用 path 查 emoji id（用于 SQLite 主源回写 last_used_at / usage_count）
     let indexed_item = EmojiRepository::find_by_source_path(&connection, &path)?;
     let item = match indexed_item {
         Some(item) => item,
@@ -131,8 +208,38 @@ pub fn copy_image_to_clipboard(
         })?,
     };
 
+    // 通过 path 反查 id
+    let emoji_id: Option<i64> = connection
+        .query_row(
+            "SELECT id FROM emojis WHERE source_path = ?1 AND is_deleted = 0 LIMIT 1",
+            [&path],
+            |row| row.get(0),
+        )
+        .ok();
+
     let outcome = clipboard::copy_image(&app, Path::new(&item.path))?;
-    let recent = recent_state.record(item.clone())?;
+
+    // 写入 SQLite 主源（用户要求统一）
+    if let Some(id) = emoji_id {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().min(i64::MAX as u128) as i64)
+            .unwrap_or_default();
+        EmojiRepository::record_image_used(&mut connection, id, now_ms)
+            .unwrap_or_else(|e| log::warn!("写入最近使用计数失败：{e}"));
+    }
+
+    // 保留 JSON 同步（兼容旧逻辑，但不作为主源）
+    let recent = recent_state.record(item.clone()).unwrap_or_else(|e| {
+        log::warn!("JSON 最近使用记录失败：{e}");
+        crate::recent::RecentImageRecord {
+            item: item.clone(),
+            last_used_at: 0,
+            use_count: 0,
+            group_ids: Vec::new(),
+            tag_ids: Vec::new(),
+        }
+    });
 
     let payload = ImageCopiedPayload {
         item,
@@ -148,9 +255,13 @@ pub fn copy_image_to_clipboard(
 
 #[tauri::command]
 pub fn get_recent_images(
-    recent_state: State<'_, recent::RecentImagesState>,
-) -> Result<Vec<recent::RecentImageRecord>, String> {
-    recent_state.records()
+    database_state: State<'_, database::DatabaseState>,
+) -> Result<Vec<crate::recent::RecentImageRecord>, String> {
+    // 走 SQLite 主源（用户要求）
+    let mut connection = database_state.connect()?;
+    let mut records = EmojiRepository::search_recent(&connection, 50)?;
+    EmojiRepository::fill_relations_for_recent(&connection, &mut records)?;
+    Ok(records)
 }
 
 #[tauri::command]
@@ -205,8 +316,6 @@ pub fn hide_quick_search(app: AppHandle) -> Result<(), String> {
     quick_search::hide_quick_search(&app)
 }
 
-/// 从剪贴板读取图片并保存到素材库。返回 `ClipboardCollectOutcome`（不抛 Err）。
-/// `read_image` 在非主线程调用，所以这里用 `spawn_blocking` 包装。
 #[tauri::command]
 pub async fn collect_image_from_clipboard(
     app: AppHandle,
@@ -218,4 +327,245 @@ pub async fn collect_image_from_clipboard(
     })
     .await
     .map_err(|error| format!("剪贴板收藏任务意外中止：{error}"))
+}
+
+// ---- 第六阶段 commands ----
+
+#[tauri::command]
+pub fn list_groups(
+    database_state: State<'_, database::DatabaseState>,
+) -> Result<Vec<GroupDto>, String> {
+    let connection = database_state.connect()?;
+    let groups = GroupRepository::list_groups(&connection)?;
+    Ok(groups.into_iter().map(GroupDto::from).collect())
+}
+
+#[tauri::command]
+pub fn create_group(
+    database_state: State<'_, database::DatabaseState>,
+    name: String,
+) -> Result<GroupDto, String> {
+    let mut connection = database_state.connect()?;
+    let row = GroupRepository::create_group(&mut connection, &name)?;
+    Ok(GroupDto::from(row))
+}
+
+#[tauri::command]
+pub fn rename_group(
+    database_state: State<'_, database::DatabaseState>,
+    id: i64,
+    name: String,
+) -> Result<GroupDto, String> {
+    let mut connection = database_state.connect()?;
+    let row = GroupRepository::rename_group(&mut connection, id, &name)?;
+    Ok(GroupDto::from(row))
+}
+
+#[tauri::command]
+pub fn delete_group(
+    database_state: State<'_, database::DatabaseState>,
+    id: i64,
+) -> Result<(), String> {
+    let mut connection = database_state.connect()?;
+    GroupRepository::delete_group(&mut connection, id)
+}
+
+#[tauri::command]
+pub fn list_tags(
+    database_state: State<'_, database::DatabaseState>,
+) -> Result<Vec<TagDto>, String> {
+    let connection = database_state.connect()?;
+    let tags = TagRepository::list_tags(&connection)?;
+    Ok(tags.into_iter().map(TagDto::from).collect())
+}
+
+#[tauri::command]
+pub fn create_tag(
+    database_state: State<'_, database::DatabaseState>,
+    name: String,
+) -> Result<TagDto, String> {
+    let mut connection = database_state.connect()?;
+    let row = TagRepository::create_tag(&mut connection, &name)?;
+    Ok(TagDto::from(row))
+}
+
+#[tauri::command]
+pub fn rename_tag(
+    database_state: State<'_, database::DatabaseState>,
+    id: i64,
+    name: String,
+) -> Result<TagDto, String> {
+    let mut connection = database_state.connect()?;
+    let row = TagRepository::rename_tag(&mut connection, id, &name)?;
+    Ok(TagDto::from(row))
+}
+
+#[tauri::command]
+pub fn delete_tag(
+    database_state: State<'_, database::DatabaseState>,
+    id: i64,
+) -> Result<(), String> {
+    let mut connection = database_state.connect()?;
+    TagRepository::delete_tag(&mut connection, id)
+}
+
+#[tauri::command]
+pub fn add_emojis_to_group(
+    database_state: State<'_, database::DatabaseState>,
+    group_id: i64,
+    emoji_ids: Vec<i64>,
+) -> Result<(), String> {
+    let mut connection = database_state.connect()?;
+    EmojiRepository::add_to_group(&mut connection, group_id, &emoji_ids)
+}
+
+#[tauri::command]
+pub fn remove_emojis_from_group(
+    database_state: State<'_, database::DatabaseState>,
+    group_id: i64,
+    emoji_ids: Vec<i64>,
+) -> Result<(), String> {
+    let mut connection = database_state.connect()?;
+    EmojiRepository::remove_from_group(&mut connection, group_id, &emoji_ids)
+}
+
+#[tauri::command]
+pub fn add_tags_to_emojis(
+    database_state: State<'_, database::DatabaseState>,
+    tag_ids: Vec<i64>,
+    emoji_ids: Vec<i64>,
+) -> Result<(), String> {
+    let mut connection = database_state.connect()?;
+    EmojiRepository::add_tags(&mut connection, &tag_ids, &emoji_ids)
+}
+
+#[tauri::command]
+pub fn remove_tags_from_emojis(
+    database_state: State<'_, database::DatabaseState>,
+    tag_ids: Vec<i64>,
+    emoji_ids: Vec<i64>,
+) -> Result<(), String> {
+    let mut connection = database_state.connect()?;
+    EmojiRepository::remove_tags(&mut connection, &tag_ids, &emoji_ids)
+}
+
+#[tauri::command]
+pub fn set_emojis_favorite(
+    database_state: State<'_, database::DatabaseState>,
+    ids: Vec<i64>,
+    is_favorite: bool,
+) -> Result<(), String> {
+    let mut connection = database_state.connect()?;
+    EmojiRepository::set_favorite_for_ids(&mut connection, &ids, is_favorite)
+}
+
+#[tauri::command]
+pub fn search_emojis(
+    database_state: State<'_, database::DatabaseState>,
+    options: SearchOptions,
+) -> Result<Vec<IndexedEmoji>, String> {
+    let connection = database_state.connect()?;
+    let limit = options.limit.unwrap_or(DEFAULT_SEARCH_LIMIT);
+    let offset = options.offset.unwrap_or(0);
+    let list_options = ListOptions {
+        view: &options.view,
+        group_id: options.group_id,
+        favorite_only: options.favorite_only,
+        limit,
+        offset,
+    };
+    EmojiRepository::list_indexed(
+        &connection,
+        &list_options,
+        &options.query,
+        &options.tag_ids,
+    )
+}
+
+#[tauri::command]
+pub async fn soft_delete_to_trash(
+    database_state: State<'_, database::DatabaseState>,
+    ids: Vec<i64>,
+) -> Result<TrashResult, String> {
+    let state = database_state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || TrashService::soft_delete(&state, &ids))
+        .await
+        .map_err(|error| format!("软删任务意外中止：{error}"))?
+}
+
+#[tauri::command]
+pub async fn restore_from_trash(
+    database_state: State<'_, database::DatabaseState>,
+    ids: Vec<i64>,
+) -> Result<TrashResult, String> {
+    let state = database_state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || TrashService::restore(&state, &ids))
+        .await
+        .map_err(|error| format!("恢复任务意外中止：{error}"))?
+}
+
+#[tauri::command]
+pub async fn permanently_delete_emojis(
+    database_state: State<'_, database::DatabaseState>,
+    ids: Vec<i64>,
+) -> Result<TrashResult, String> {
+    let state = database_state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || TrashService::permanently_delete(&state, &ids))
+        .await
+        .map_err(|error| format!("永久删除任务意外中止：{error}"))?
+}
+
+#[tauri::command]
+pub async fn empty_trash(
+    database_state: State<'_, database::DatabaseState>,
+) -> Result<TrashResult, String> {
+    let state = database_state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || TrashService::empty_trash(&state))
+        .await
+        .map_err(|error| format!("清空回收站任务意外中止：{error}"))?
+}
+
+#[tauri::command]
+pub fn list_deleted_emojis(
+    database_state: State<'_, database::DatabaseState>,
+) -> Result<Vec<IndexedEmoji>, String> {
+    let connection = database_state.connect()?;
+    EmojiRepository::list_deleted(&connection)
+}
+
+#[tauri::command]
+pub fn show_in_explorer(_app: AppHandle, path: String) -> Result<(), String> {
+    show_path_in_explorer(Path::new(&path))
+}
+
+fn show_path_in_explorer(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("路径不存在：{}", path.display()));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let arg = if path.is_file() {
+            format!("/select,{}", path.display())
+        } else {
+            path.display().to_string()
+        };
+        std::process::Command::new("explorer.exe")
+            .arg(arg)
+            .spawn()
+            .map_err(|error| format!("无法打开资源管理器：{error}"))?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let target = if path.is_file() {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        };
+        std::process::Command::new("open")
+            .arg(target)
+            .spawn()
+            .map_err(|error| format!("无法打开路径：{error}"))?;
+        Ok(())
+    }
 }

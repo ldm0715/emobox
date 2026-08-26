@@ -12,6 +12,7 @@ import type {
   SortOption,
 } from "../../types";
 import { EmojiGrid } from "./EmojiGrid";
+import type { EmojiItemMenuMode } from "./EmojiItemMenu";
 import { EmptyLibraryState } from "./EmptyLibraryState";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibraryMessage } from "./LibraryMessage";
@@ -37,6 +38,15 @@ interface EmojiLibraryViewProps {
   onSortChange: (option: SortOption) => void;
   onSelect: (item: IndexedImage) => void;
   onToggleFavorite: (item: IndexedImage) => void;
+  onCopy: (item: IndexedImage) => void;
+  onMoveToGroup: (item: IndexedImage) => void;
+  onRemoveFromGroup?: (item: IndexedImage) => void;
+  onAddTags?: (item: IndexedImage) => void;
+  onShowInExplorer: (item: IndexedImage) => void;
+  onDelete: (item: IndexedImage) => void;
+  onRestore?: (item: IndexedImage) => void;
+  onPermanentlyDelete?: (item: IndexedImage) => void;
+  tagsByPath?: Record<string, string[]>;
 }
 
 const useStyles = makeStyles({
@@ -113,7 +123,18 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     onSortChange,
     onSelect,
     onToggleFavorite,
+    onCopy,
+    onMoveToGroup,
+    onRemoveFromGroup,
+    onAddTags,
+    onShowInExplorer,
+    onDelete,
+    onRestore,
+    onPermanentlyDelete,
+    tagsByPath,
   } = props;
+  const menuMode: EmojiItemMenuMode =
+    view === "trash" ? "trash" : view.startsWith("group:") ? "group" : "default";
 
   function renderEmptyContent() {
     if (query) {
@@ -202,8 +223,18 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
             density={density}
             selectedPath={selectedPath}
             favorites={favorites}
+            menuMode={menuMode}
+            tagsByPath={tagsByPath}
             onSelect={onSelect}
             onToggleFavorite={onToggleFavorite}
+            onCopy={onCopy}
+            onMoveToGroup={onMoveToGroup}
+            onRemoveFromGroup={onRemoveFromGroup}
+            onAddTags={onAddTags}
+            onShowInExplorer={onShowInExplorer}
+            onDelete={onDelete}
+            onRestore={onRestore}
+            onPermanentlyDelete={onPermanentlyDelete}
           />
         ) : renderEmptyContent()}
       </div>

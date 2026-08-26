@@ -1,6 +1,6 @@
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::{recent::RecentImageRecord, scanner::IndexedImage};
+use crate::{recent::RecentImageRecord, scanner::IndexedEmoji, scanner::IndexedImage};
 
 pub struct EmojiRepository;
 
@@ -18,6 +18,29 @@ pub struct NewManagedEmoji<'a> {
     pub imported_at: i64,
     pub indexed_at: i64,
     pub is_favorite: bool,
+}
+
+/// 列表查询过滤选项。
+pub struct ListOptions<'a> {
+    pub view: &'a str,
+    pub group_id: Option<i64>,
+    pub favorite_only: bool,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+pub struct EmojiRelations {
+    pub group_ids: Vec<i64>,
+    pub tag_ids: Vec<i64>,
+}
+
+pub struct TrashFileTargets {
+    pub id: i64,
+    pub source_type: String,
+    pub managed_path: Option<String>,
+    pub thumbnail_path: Option<String>,
+    pub trash_path: Option<String>,
+    pub trash_thumbnail_path: Option<String>,
 }
 
 impl EmojiRepository {
@@ -278,10 +301,728 @@ impl EmojiRepository {
             .commit()
             .map_err(|error| format!("无法提交素材记录：{error}"))
     }
+
+    // ---- 第六阶段新增方法 ----
+
+    /// 列表查询（排除 is_deleted=1）。path 投影 COALESCE(managed_path, source_path)。
+    /// query / tag_ids 由 `search_emojis` command 传入；空 query + 空 tag_ids 时退化为纯视图过滤。
+    pub fn list_indexed(
+        connection: &Connection,
+        options: &ListOptions<'_>,
+        query: &str,
+        tag_ids: &[i64],
+    ) -> Result<Vec<IndexedEmoji>, String> {
+        let (view_clause, mut params) = build_view_filter(options);
+        let mut query_clause = String::new();
+        let trimmed = query.trim();
+        if !trimmed.is_empty() {
+            // 跨字段 OR：filename / tag name / group name
+            query_clause.push_str(
+                " AND (?Q = '' \
+                    OR LOWER(e.original_filename) LIKE '%' || LOWER(?Q) || '%' COLLATE NOCASE \
+                    OR EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
+                               WHERE et.emoji_id = e.id AND LOWER(t.name) LIKE '%' || LOWER(?Q) || '%' COLLATE NOCASE) \
+                    OR EXISTS (SELECT 1 FROM emoji_groups eg JOIN groups g ON g.id = eg.group_id \
+                               WHERE eg.emoji_id = e.id AND LOWER(g.name) LIKE '%' || LOWER(?Q) || '%' COLLATE NOCASE))",
+            );
+            params.push(Box::new(trimmed.to_string()));
+        }
+        // tag_ids AND 过滤
+        if !tag_ids.is_empty() {
+            let tag_placeholders: Vec<String> = (0..tag_ids.len()).map(|i| format!("?T{i}")).collect();
+            let tag_list = tag_placeholders.join(",");
+            query_clause.push_str(&format!(
+                " AND NOT EXISTS ( \
+                    SELECT 1 FROM (SELECT {tag_list} AS tag_id) required \
+                    WHERE required.tag_id IS NOT NULL \
+                      AND NOT EXISTS (SELECT 1 FROM emoji_tags et \
+                                      WHERE et.emoji_id = e.id AND et.tag_id = required.tag_id) \
+                  )"
+            ));
+            for id in tag_ids {
+                params.push(Box::new(*id));
+            }
+        }
+
+        let view_param_index = params.len() + 1;
+        let limit_param_index = view_param_index + 1;
+        let offset_param_index = limit_param_index + 1;
+        let sql = format!(
+            r#"
+            SELECT id, original_filename,
+                   COALESCE(managed_path, source_path) AS current_path,
+                   thumbnail_path, file_extension, width, height, file_size,
+                   source_type, is_favorite, last_used_at, usage_count
+            FROM emojis e
+            WHERE is_deleted = 0 {view_clause} {query_clause}
+            ORDER BY
+                CASE WHEN ?{view_param_index} = 'search-recent' THEN last_used_at END DESC,
+                is_favorite DESC,
+                COALESCE(imported_at, indexed_at) DESC,
+                original_filename COLLATE NOCASE ASC
+            LIMIT ?{limit_param_index} OFFSET ?{offset_param_index}
+            "#
+        );
+        // 把 ?Q / ?TN 占位符替换为正确编号
+        let mut sql = sql;
+        let view_count = params.len()
+            - if trimmed.is_empty() { 0 } else { 1 }
+            - tag_ids.len();
+        if !trimmed.is_empty() {
+            let q_index = view_count + 1;
+            sql = sql.replace("?Q", &format!("?{q_index}"));
+        }
+        for i in 0..tag_ids.len() {
+            let t_index = view_count + 1 + if trimmed.is_empty() { 0 } else { 1 } + i;
+            sql = sql.replace(&format!("?T{i}"), &format!("?{t_index}"));
+        }
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("无法准备表情列表查询：{error}"))?;
+        let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        for p in params {
+            bound_params.push(p);
+        }
+        bound_params.push(Box::new(options.view.to_string()));
+        bound_params.push(Box::new(options.limit as i64));
+        bound_params.push(Box::new(options.offset as i64));
+        let bound_refs: Vec<&dyn rusqlite::ToSql> =
+            bound_params.iter().map(|b| b.as_ref()).collect();
+        let mut items: Vec<IndexedEmoji> = statement
+            .query_map(rusqlite::params_from_iter(bound_refs), row_to_indexed_emoji)
+            .map_err(|error| format!("无法读取表情列表：{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法解析表情列表：{error}"))?;
+        Self::fill_relations(connection, &mut items)?;
+        Ok(items)
+    }
+
+    /// 回收站列表。path 投影 COALESCE 三参数：trash_path 优先，managed_path 次之，source_path 兜底。
+    pub fn list_deleted(connection: &Connection) -> Result<Vec<IndexedEmoji>, String> {
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT id, original_filename,
+                       COALESCE(trash_path, managed_path, source_path) AS path,
+                       COALESCE(trash_thumbnail_path, thumbnail_path) AS thumb,
+                       file_extension, width, height, file_size,
+                       source_type, is_favorite, last_used_at, usage_count
+                FROM emojis
+                WHERE is_deleted = 1
+                ORDER BY deleted_at DESC, id DESC
+                "#,
+            )
+            .map_err(|error| format!("无法准备回收站列表查询：{error}"))?;
+        let rows = statement
+            .query_map([], row_to_indexed_emoji)
+            .map_err(|error| format!("无法读取回收站列表：{error}"))?;
+        let mut items: Vec<IndexedEmoji> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法解析回收站列表：{error}"))?;
+        Self::fill_relations(connection, &mut items)?;
+        Ok(items)
+    }
+
+    /// 复制使用回写：更新 last_used_at + usage_count。
+    pub fn record_image_used(
+        connection: &mut Connection,
+        emoji_id: i64,
+        at_ms: i64,
+    ) -> Result<(), String> {
+        connection
+            .execute(
+                "UPDATE emojis SET last_used_at = ?1, usage_count = usage_count + 1
+                 WHERE id = ?2 AND is_deleted = 0",
+                params![at_ms, emoji_id],
+            )
+            .map_err(|error| format!("无法更新最近使用计数：{error}"))?;
+        Ok(())
+    }
+
+    /// 搜索最近使用：直接从 SQLite 查（用户要求 SQLite 主源）。
+    pub fn search_recent(
+        connection: &Connection,
+        limit: u32,
+    ) -> Result<Vec<RecentImageRecord>, String> {
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT id, original_filename,
+                       COALESCE(managed_path, source_path) AS path,
+                       thumbnail_path, file_extension, width, height, file_size,
+                       source_type, is_favorite, last_used_at, usage_count
+                FROM emojis
+                WHERE is_deleted = 0 AND last_used_at IS NOT NULL
+                ORDER BY last_used_at DESC
+                LIMIT ?1
+                "#,
+            )
+            .map_err(|error| format!("无法准备最近使用查询：{error}"))?;
+        let rows = statement
+            .query_map(params![limit as i64], |row| {
+                let item = row_to_indexed_emoji(row)?;
+                let last_used_at: Option<i64> = row.get(10)?;
+                let usage_count: i64 = row.get(11)?;
+                Ok(RecentImageRecord {
+                    item: IndexedImage {
+                        name: item.name,
+                        path: item.path,
+                        extension: item.extension,
+                        width: item.width,
+                        height: item.height,
+                        size_bytes: item.size_bytes,
+                    },
+                    last_used_at: last_used_at.unwrap_or(0).max(0) as u64,
+                    use_count: usage_count.max(0) as u64,
+                    group_ids: Vec::new(),
+                    tag_ids: Vec::new(),
+                })
+            })
+            .map_err(|error| format!("无法读取最近使用：{error}"))?;
+        let mut result: Vec<RecentImageRecord> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法解析最近使用：{error}"))?;
+        result.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
+        Ok(result)
+    }
+
+    /// 给 recent 列表填充关联字段。
+    pub fn fill_relations_for_recent(
+        connection: &Connection,
+        records: &mut Vec<crate::recent::RecentImageRecord>,
+    ) -> Result<(), String> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let paths: Vec<String> = records.iter().map(|r| r.item.path.clone()).collect();
+        let placeholders = std::iter::repeat("?")
+            .take(paths.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT id, source_path FROM emojis WHERE source_path IN ({placeholders}) AND is_deleted = 0"
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(paths.len());
+        for p in &paths {
+            params_vec.push(Box::new(p.clone()));
+        }
+        let bound: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let path_to_id: std::collections::HashMap<String, i64> = connection
+            .prepare(&sql)
+            .map_err(|error| format!("无法准备 id 反查：{error}"))?
+            .query_map(rusqlite::params_from_iter(bound), |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(0)?))
+            })
+            .map_err(|error| format!("无法读取 id 反查：{error}"))?
+            .collect::<Result<std::collections::HashMap<_, _>, _>>()
+            .map_err(|error| format!("无法解析 id 反查：{error}"))?;
+        let ids: Vec<i64> = path_to_id.values().copied().collect();
+        let relations = Self::get_relations_for_ids(connection, &ids)?;
+        for record in records.iter_mut() {
+            if let Some(&id) = path_to_id.get(&record.item.path) {
+                if let Some(r) = relations.get(&id) {
+                    record.group_ids = r.group_ids.clone();
+                    record.tag_ids = r.tag_ids.clone();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 批量设置收藏。
+    pub fn set_favorite_for_ids(
+        connection: &mut Connection,
+        ids: &[i64],
+        is_favorite: bool,
+    ) -> Result<(), String> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "UPDATE emojis SET is_favorite = ?1 WHERE id IN ({placeholders}) AND is_deleted = 0"
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(ids.len() + 1);
+        params_vec.push(Box::new(is_favorite));
+        for id in ids {
+            params_vec.push(Box::new(*id));
+        }
+        let bound: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        connection
+            .execute(&sql, rusqlite::params_from_iter(bound))
+            .map_err(|error| format!("无法批量设置收藏：{error}"))?;
+        Ok(())
+    }
+
+    /// 软删：标记 is_deleted=1 + deleted_at。返回待处理的物理文件目标。
+    pub fn mark_deleted(
+        connection: &mut Connection,
+        ids: &[i64],
+        deleted_at: i64,
+    ) -> Result<Vec<TrashFileTargets>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // 先 SELECT 待处理行
+        let select_sql = format!(
+            "SELECT id, source_type, managed_path, thumbnail_path, trash_path, trash_thumbnail_path
+             FROM emojis WHERE id IN ({placeholders}) AND is_deleted = 0"
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(ids.len() + 1);
+        params_vec.push(Box::new(deleted_at));
+        for id in ids {
+            params_vec.push(Box::new(*id));
+        }
+        let bound_all: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut bound_select: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len());
+        for i in 1..params_vec.len() {
+            bound_select.push(bound_all[i]);
+        }
+        let targets: Vec<TrashFileTargets> = connection
+            .prepare(&select_sql)
+            .map_err(|error| format!("无法准备软删查询：{error}"))?
+            .query_map(rusqlite::params_from_iter(bound_select), |row| {
+                Ok(TrashFileTargets {
+                    id: row.get(0)?,
+                    source_type: row.get(1)?,
+                    managed_path: row.get(2)?,
+                    thumbnail_path: row.get(3)?,
+                    trash_path: row.get(4)?,
+                    trash_thumbnail_path: row.get(5)?,
+                })
+            })
+            .map_err(|error| format!("无法读取待软删行：{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法解析待软删行：{error}"))?;
+
+        let update_sql = format!(
+            "UPDATE emojis SET is_deleted = 1, deleted_at = ?1
+             WHERE id IN ({placeholders}) AND is_deleted = 0"
+        );
+        let bound_update: Vec<&dyn rusqlite::ToSql> = bound_all.iter().take(1 + ids.len()).copied().collect();
+        connection
+            .execute(&update_sql, rusqlite::params_from_iter(bound_update))
+            .map_err(|error| format!("无法标记软删：{error}"))?;
+        Ok(targets)
+    }
+
+    /// 写入 trash 路径字段（由 trash_service 在移动文件成功后调用）。
+    pub fn set_trash_paths(
+        connection: &mut Connection,
+        id: i64,
+        trash_path: Option<&str>,
+        trash_thumbnail_path: Option<&str>,
+    ) -> Result<(), String> {
+        connection
+            .execute(
+                "UPDATE emojis SET trash_path = ?1, trash_thumbnail_path = ?2
+                 WHERE id = ?3",
+                params![trash_path, trash_thumbnail_path, id],
+            )
+            .map_err(|error| format!("无法写入回收站路径：{error}"))?;
+        Ok(())
+    }
+
+    /// 恢复：清 trash 字段 + 解除软删。返回待移回的物理文件目标。
+    pub fn clear_trash(
+        connection: &mut Connection,
+        ids: &[i64],
+    ) -> Result<Vec<TrashFileTargets>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let select_sql = format!(
+            "SELECT id, source_type, managed_path, thumbnail_path, trash_path, trash_thumbnail_path
+             FROM emojis WHERE id IN ({placeholders}) AND is_deleted = 1"
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(ids.len());
+        for id in ids {
+            params_vec.push(Box::new(*id));
+        }
+        let bound: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let targets: Vec<TrashFileTargets> = connection
+            .prepare(&select_sql)
+            .map_err(|error| format!("无法准备恢复查询：{error}"))?
+            .query_map(rusqlite::params_from_iter(bound.iter().copied()), |row| {
+                Ok(TrashFileTargets {
+                    id: row.get(0)?,
+                    source_type: row.get(1)?,
+                    managed_path: row.get(2)?,
+                    thumbnail_path: row.get(3)?,
+                    trash_path: row.get(4)?,
+                    trash_thumbnail_path: row.get(5)?,
+                })
+            })
+            .map_err(|error| format!("无法读取待恢复行：{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法解析待恢复行：{error}"))?;
+
+        let update_sql = format!(
+            "UPDATE emojis SET is_deleted = 0, deleted_at = NULL,
+                 trash_path = NULL, trash_thumbnail_path = NULL
+             WHERE id IN ({placeholders}) AND is_deleted = 1"
+        );
+        connection
+            .execute(&update_sql, rusqlite::params_from_iter(bound))
+            .map_err(|error| format!("无法清空回收站字段：{error}"))?;
+        Ok(targets)
+    }
+
+    /// 永久删除：DELETE 行（CASCADE 清关联）。返回待删物理文件目标。
+    pub fn delete_permanently(
+        connection: &mut Connection,
+        ids: &[i64],
+    ) -> Result<Vec<TrashFileTargets>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let select_sql = format!(
+            "SELECT id, source_type, managed_path, thumbnail_path, trash_path, trash_thumbnail_path
+             FROM emojis WHERE id IN ({placeholders}) AND is_deleted = 1"
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(ids.len());
+        for id in ids {
+            params_vec.push(Box::new(*id));
+        }
+        let bound: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let targets: Vec<TrashFileTargets> = connection
+            .prepare(&select_sql)
+            .map_err(|error| format!("无法准备永久删除查询：{error}"))?
+            .query_map(rusqlite::params_from_iter(bound.iter().copied()), |row| {
+                Ok(TrashFileTargets {
+                    id: row.get(0)?,
+                    source_type: row.get(1)?,
+                    managed_path: row.get(2)?,
+                    thumbnail_path: row.get(3)?,
+                    trash_path: row.get(4)?,
+                    trash_thumbnail_path: row.get(5)?,
+                })
+            })
+            .map_err(|error| format!("无法读取待永久删除行：{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法解析待永久删除行：{error}"))?;
+
+        let delete_sql = format!("DELETE FROM emojis WHERE id IN ({placeholders}) AND is_deleted = 1");
+        connection
+            .execute(&delete_sql, rusqlite::params_from_iter(bound))
+            .map_err(|error| format!("无法永久删除表情：{error}"))?;
+        Ok(targets)
+    }
+
+    /// 列出所有 is_deleted=1 行的物理文件目标（empty_trash 用）。
+    pub fn list_deleted_targets(connection: &Connection) -> Result<Vec<TrashFileTargets>, String> {
+        let mut statement = connection
+            .prepare(
+                "SELECT id, source_type, managed_path, thumbnail_path,
+                        trash_path, trash_thumbnail_path
+                 FROM emojis WHERE is_deleted = 1",
+            )
+            .map_err(|error| format!("无法读取回收站目标：{error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(TrashFileTargets {
+                    id: row.get(0)?,
+                    source_type: row.get(1)?,
+                    managed_path: row.get(2)?,
+                    thumbnail_path: row.get(3)?,
+                    trash_path: row.get(4)?,
+                    trash_thumbnail_path: row.get(5)?,
+                })
+            })
+            .map_err(|error| format!("无法读取回收站行：{error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法解析回收站行：{error}"))
+    }
+
+    /// 加入分组：矩阵写入。
+    pub fn add_to_group(
+        connection: &mut Connection,
+        group_id: i64,
+        emoji_ids: &[i64],
+    ) -> Result<(), String> {
+        if emoji_ids.is_empty() {
+            return Ok(());
+        }
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("无法开始加入分组事务：{error}"))?;
+        let now = unix_time_millis();
+        {
+            let mut statement = transaction
+                .prepare_cached(
+                    "INSERT OR IGNORE INTO emoji_groups (emoji_id, group_id, added_at)
+                     VALUES (?1, ?2, ?3)",
+                )
+                .map_err(|error| format!("无法准备加入分组语句：{error}"))?;
+            for id in emoji_ids {
+                statement
+                    .execute(params![id, group_id, now])
+                    .map_err(|error| format!("无法加入分组 {group_id}：{error}"))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("无法提交加入分组：{error}"))?;
+        Ok(())
+    }
+
+    /// 移出分组。
+    pub fn remove_from_group(
+        connection: &mut Connection,
+        group_id: i64,
+        emoji_ids: &[i64],
+    ) -> Result<(), String> {
+        if emoji_ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(emoji_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "DELETE FROM emoji_groups WHERE group_id = ?1 AND emoji_id IN ({placeholders})"
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> =
+            Vec::with_capacity(emoji_ids.len() + 1);
+        params_vec.push(Box::new(group_id));
+        for id in emoji_ids {
+            params_vec.push(Box::new(*id));
+        }
+        let bound: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        connection
+            .execute(&sql, rusqlite::params_from_iter(bound))
+            .map_err(|error| format!("无法移出分组：{error}"))?;
+        Ok(())
+    }
+
+    /// 矩阵批量加标签：tag_ids × emoji_ids。已存在自动忽略。
+    pub fn add_tags(
+        connection: &mut Connection,
+        tag_ids: &[i64],
+        emoji_ids: &[i64],
+    ) -> Result<(), String> {
+        if tag_ids.is_empty() || emoji_ids.is_empty() {
+            return Ok(());
+        }
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("无法开始批量加标签事务：{error}"))?;
+        let now = unix_time_millis();
+        {
+            let mut statement = transaction
+                .prepare_cached(
+                    "INSERT OR IGNORE INTO emoji_tags (emoji_id, tag_id, added_at)
+                     VALUES (?1, ?2, ?3)",
+                )
+                .map_err(|error| format!("无法准备批量加标签语句：{error}"))?;
+            for emoji_id in emoji_ids {
+                for tag_id in tag_ids {
+                    statement
+                        .execute(params![emoji_id, tag_id, now])
+                        .map_err(|error| format!("无法加标签 {tag_id}：{error}"))?;
+                }
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("无法提交批量加标签：{error}"))?;
+        Ok(())
+    }
+
+    /// 矩阵批量删标签。
+    pub fn remove_tags(
+        connection: &mut Connection,
+        tag_ids: &[i64],
+        emoji_ids: &[i64],
+    ) -> Result<(), String> {
+        if tag_ids.is_empty() || emoji_ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders_emoji = std::iter::repeat("?")
+            .take(emoji_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let placeholders_tag = std::iter::repeat("?")
+            .take(tag_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "DELETE FROM emoji_tags
+             WHERE emoji_id IN ({placeholders_emoji}) AND tag_id IN ({placeholders_tag})"
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> =
+            Vec::with_capacity(emoji_ids.len() + tag_ids.len());
+        for id in emoji_ids {
+            params_vec.push(Box::new(*id));
+        }
+        for id in tag_ids {
+            params_vec.push(Box::new(*id));
+        }
+        let bound: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        connection
+            .execute(&sql, rusqlite::params_from_iter(bound))
+            .map_err(|error| format!("无法批量删除标签：{error}"))?;
+        Ok(())
+    }
+
+    /// 给已有 IndexedEmoji 列表填充 group_ids / tag_ids（2 次 SQL，避免 N+1）。
+    pub fn fill_relations(
+        connection: &Connection,
+        items: &mut Vec<IndexedEmoji>,
+    ) -> Result<(), String> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<i64> = items.iter().map(|e| e.id).collect();
+        let relations = Self::get_relations_for_ids(connection, &ids)?;
+        for item in items.iter_mut() {
+            if let Some(r) = relations.get(&item.id) {
+                item.group_ids = r.group_ids.clone();
+                item.tag_ids = r.tag_ids.clone();
+            }
+        }
+        Ok(())
+    }
+
+    /// 关系查询：批量拿 emoji_ids 的 (group_ids[], tag_ids[])。
+    pub fn get_relations_for_ids(
+        connection: &Connection,
+        emoji_ids: &[i64],
+    ) -> Result<std::collections::BTreeMap<i64, EmojiRelations>, String> {
+        let mut result: std::collections::BTreeMap<i64, EmojiRelations> =
+            std::collections::BTreeMap::new();
+        if emoji_ids.is_empty() {
+            return Ok(result);
+        }
+        for id in emoji_ids {
+            result.insert(
+                *id,
+                EmojiRelations {
+                    group_ids: Vec::new(),
+                    tag_ids: Vec::new(),
+                },
+            );
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(emoji_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(emoji_ids.len());
+        for id in emoji_ids {
+            params_vec.push(Box::new(*id));
+        }
+        let bound: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let group_sql = format!(
+            "SELECT emoji_id, group_id FROM emoji_groups WHERE emoji_id IN ({placeholders})"
+        );
+        let mut statement = connection
+            .prepare(&group_sql)
+            .map_err(|error| format!("无法准备分组关联查询：{error}"))?;
+        let group_rows = statement
+            .query_map(rusqlite::params_from_iter(bound.iter().copied()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| format!("无法读取分组关联：{error}"))?;
+        for entry in group_rows {
+            let (emoji_id, group_id) =
+                entry.map_err(|error| format!("无法解析分组关联：{error}"))?;
+            if let Some(rel) = result.get_mut(&emoji_id) {
+                rel.group_ids.push(group_id);
+            }
+        }
+
+        let tag_sql = format!(
+            "SELECT emoji_id, tag_id FROM emoji_tags WHERE emoji_id IN ({placeholders})"
+        );
+        let mut statement = connection
+            .prepare(&tag_sql)
+            .map_err(|error| format!("无法准备标签关联查询：{error}"))?;
+        let tag_rows = statement
+            .query_map(rusqlite::params_from_iter(bound.iter().copied()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| format!("无法读取标签关联：{error}"))?;
+        for entry in tag_rows {
+            let (emoji_id, tag_id) = entry.map_err(|error| format!("无法解析标签关联：{error}"))?;
+            if let Some(rel) = result.get_mut(&emoji_id) {
+                rel.tag_ids.push(tag_id);
+            }
+        }
+        Ok(result)
+    }
+}
+
+fn row_to_indexed_emoji(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedEmoji> {
+    Ok(IndexedEmoji {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        path: row.get(2)?,
+        thumbnail_path: row.get(3)?,
+        extension: row.get(4)?,
+        width: row.get::<_, u32>(5)?,
+        height: row.get::<_, u32>(6)?,
+        size_bytes: row.get::<_, u64>(7)?,
+        source_type: row.get(8)?,
+        is_favorite: row.get::<_, i64>(9)? != 0,
+        last_used_at: row.get(10)?,
+        usage_count: row.get(11)?,
+        group_ids: Vec::new(),
+        tag_ids: Vec::new(),
+    })
+}
+
+fn build_view_filter(options: &ListOptions<'_>) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut fragments: Vec<&'static str> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    match options.view {
+        "favorites" => fragments.push("AND e.is_favorite = 1"),
+        "ungrouped" => fragments.push(
+            "AND NOT EXISTS (SELECT 1 FROM emoji_groups eg WHERE eg.emoji_id = e.id)",
+        ),
+        "search-recent" => fragments.push("AND e.last_used_at IS NOT NULL"),
+        "group" => {
+            if let Some(gid) = options.group_id {
+                fragments.push(
+                    "AND EXISTS (SELECT 1 FROM emoji_groups eg WHERE eg.emoji_id = e.id AND eg.group_id = ?1)",
+                );
+                params.push(Box::new(gid));
+            }
+        }
+        _ => {}
+    }
+    if options.favorite_only {
+        fragments.push("AND e.is_favorite = 1");
+    }
+    (fragments.join(" "), params)
 }
 
 fn to_i64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
+}
+
+fn unix_time_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

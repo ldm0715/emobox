@@ -2,6 +2,11 @@ import {
   Badge,
   Button,
   Divider,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   Tooltip,
   makeStyles,
   mergeClasses,
@@ -9,10 +14,13 @@ import {
 } from "@fluentui/react-components";
 import {
   Add20Regular,
+  Delete24Regular,
   Folder24Regular,
   History24Regular,
   ImageMultiple24Regular,
   Keyboard24Regular,
+  MoreHorizontal20Regular,
+  Rename20Regular,
   Settings24Regular,
   Star24Regular,
 } from "@fluentui/react-icons";
@@ -25,12 +33,16 @@ interface LibrarySidebarProps {
   currentView: LibraryView;
   allCount: number;
   favoriteCount: number;
+  trashCount?: number;
   groups: LibraryGroup[];
   quickSearchShortcut: string;
   shortcutRegistered: boolean;
   onViewChange: (view: LibraryView) => void;
   onOpenQuickSearch: () => void;
   onOpenSettings: () => void;
+  onCreateGroup: () => void;
+  onRenameGroup: (id: number, name: string) => void;
+  onDeleteGroup: (id: number) => void;
 }
 
 interface NavigationItem {
@@ -76,7 +88,7 @@ const useStyles = makeStyles({
     width: "100%",
     minHeight: "36px",
     display: "grid",
-    gridTemplateColumns: "24px minmax(0, 1fr) auto",
+    gridTemplateColumns: "24px minmax(0, 1fr) auto auto",
     alignItems: "center",
     columnGap: tokens.spacingHorizontalS,
     padding: `0 ${tokens.spacingHorizontalM}`,
@@ -133,6 +145,7 @@ const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "space-between",
     paddingLeft: tokens.spacingHorizontalM,
+    paddingRight: tokens.spacingHorizontalS,
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
@@ -206,6 +219,19 @@ const useStyles = makeStyles({
     minWidth: "44px",
     justifyContent: "center",
   },
+  groupMoreButton: {
+    opacity: 0,
+    transitionProperty: "opacity",
+    transitionDuration: tokens.durationFaster,
+  },
+  groupMoreVisible: {
+    opacity: 1,
+  },
+  groupRow: {
+    ":hover .group-more": {
+      opacity: 1,
+    },
+  },
 });
 
 function CollapsedTooltip({ collapsed, label, children }: { collapsed: boolean; label: string; children: ReactElement }) {
@@ -217,12 +243,16 @@ export function LibrarySidebar({
   currentView,
   allCount,
   favoriteCount,
+  trashCount = 0,
   groups,
   quickSearchShortcut,
   shortcutRegistered,
   onViewChange,
   onOpenQuickSearch,
   onOpenSettings,
+  onCreateGroup,
+  onRenameGroup,
+  onDeleteGroup,
 }: LibrarySidebarProps) {
   const styles = useStyles();
   const shortcutLabel = formatShortcutLabel(quickSearchShortcut);
@@ -264,8 +294,14 @@ export function LibrarySidebar({
       {!collapsed && (
         <div className={styles.groupHeader}>
           <span>我的分组</span>
-          <Tooltip content="新增分组即将支持" relationship="label">
-            <Button size="small" appearance="subtle" disabled aria-label="新增分组" icon={<Add20Regular />} />
+          <Tooltip content="新建分组" relationship="label">
+            <Button
+              size="small"
+              appearance="subtle"
+              aria-label="新建分组"
+              icon={<Add20Regular />}
+              onClick={onCreateGroup}
+            />
           </Tooltip>
         </div>
       )}
@@ -274,17 +310,61 @@ export function LibrarySidebar({
         {groups.length > 0 ? groups.map((group) => {
           const selected = currentView === `group:${group.id}`;
           const button = (
-            <button
-              type="button"
-              key={group.id}
-              className={mergeClasses(styles.navItem, collapsed && styles.navItemCollapsed, selected && styles.navItemSelected)}
-              aria-label={collapsed ? group.name : undefined}
-              onClick={() => onViewChange(`group:${group.id}`)}
-            >
-              <Folder24Regular />
-              {!collapsed && <span className={styles.label}>{group.name}</span>}
-              {!collapsed && group.count !== undefined && <Badge size="small" appearance="outline">{group.count}</Badge>}
-            </button>
+            <div key={group.id} className={styles.groupRow} style={{ position: "relative" }}>
+              <button
+                type="button"
+                className={mergeClasses(styles.navItem, collapsed && styles.navItemCollapsed, selected && styles.navItemSelected)}
+                aria-label={collapsed ? group.name : undefined}
+                onClick={() => onViewChange(`group:${group.id}`)}
+              >
+                <Folder24Regular />
+                {!collapsed && <span className={styles.label}>{group.name}</span>}
+                {!collapsed && group.count !== undefined && <Badge size="small" appearance="outline">{group.count}</Badge>}
+                {!collapsed && (
+                  <span
+                    className={`group-more ${styles.groupMoreButton}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Menu>
+                      <MenuTrigger disableButtonEnhancement>
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          aria-label={`管理分组 ${group.name}`}
+                          icon={<MoreHorizontal20Regular />}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </MenuTrigger>
+                      <MenuPopover>
+                        <MenuList>
+                          <MenuItem
+                            icon={<Rename20Regular />}
+                            onClick={() => {
+                              const newName = window.prompt("重命名分组", group.name);
+                              if (newName && newName.trim() && newName !== group.name) {
+                                onRenameGroup(group.id, newName.trim());
+                              }
+                            }}
+                          >
+                            重命名
+                          </MenuItem>
+                          <MenuItem
+                            icon={<Delete24Regular />}
+                            onClick={() => {
+                              if (window.confirm(`确定删除分组「${group.name}」？\n\n关联的表情不会被删除。`)) {
+                                onDeleteGroup(group.id);
+                              }
+                            }}
+                          >
+                            删除
+                          </MenuItem>
+                        </MenuList>
+                      </MenuPopover>
+                    </Menu>
+                  </span>
+                )}
+              </button>
+            </div>
           );
           return <CollapsedTooltip key={group.id} collapsed={collapsed} label={group.name}>{button}</CollapsedTooltip>;
         }) : !collapsed ? (
@@ -293,6 +373,42 @@ export function LibrarySidebar({
             <span>还没有分组</span>
           </div>
         ) : null}
+      </div>
+
+      <Divider className={styles.divider} />
+
+      <div className={styles.navigation}>
+        {(() => {
+          const ungroupedSelected = currentView === "ungrouped";
+          const ungroupedButton = (
+            <button
+              type="button"
+              className={mergeClasses(styles.navItem, collapsed && styles.navItemCollapsed, ungroupedSelected && styles.navItemSelected)}
+              aria-label="未分组"
+              onClick={() => onViewChange("ungrouped")}
+            >
+              <Folder24Regular />
+              {!collapsed && <span className={styles.label}>未分组</span>}
+            </button>
+          );
+          return <CollapsedTooltip collapsed={collapsed} label="未分组">{ungroupedButton}</CollapsedTooltip>;
+        })()}
+        {(() => {
+          const trashSelected = currentView === "trash";
+          const trashButton = (
+            <button
+              type="button"
+              className={mergeClasses(styles.navItem, collapsed && styles.navItemCollapsed, trashSelected && styles.navItemSelected)}
+              aria-label="回收站"
+              onClick={() => onViewChange("trash")}
+            >
+              <Delete24Regular />
+              {!collapsed && <span className={styles.label}>回收站</span>}
+              {!collapsed && trashCount > 0 && <Badge size="small" appearance="tint">{trashCount}</Badge>}
+            </button>
+          );
+          return <CollapsedTooltip collapsed={collapsed} label="回收站">{trashButton}</CollapsedTooltip>;
+        })()}
       </div>
 
       <div className={styles.spacer} />

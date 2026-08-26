@@ -15,13 +15,17 @@ const ASSETS_DIRECTORY_NAME: &str = "assets";
 const EMOJIS_DIRECTORY_NAME: &str = "emojis";
 const THUMBNAILS_DIRECTORY_NAME: &str = "thumbnails";
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../../migrations/0001_create_emojis.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../../migrations/0001_create_emojis.sql")),
+    (2, include_str!("../../migrations/0002_create_groups_tags.sql")),
+    (3, include_str!("../../migrations/0003_add_emoji_trash_columns.sql")),
+];
 
 #[derive(Clone)]
 pub struct DatabaseState {
-    database_path: PathBuf,
-    emojis_directory: PathBuf,
-    thumbnails_directory: PathBuf,
+    pub(crate) database_path: PathBuf,
+    pub(crate) emojis_directory: PathBuf,
+    pub(crate) thumbnails_directory: PathBuf,
 }
 
 impl DatabaseState {
@@ -206,7 +210,7 @@ mod tests {
                 row.get(0)
             })
             .expect("count migrations");
-        assert_eq!(migration_count, 1);
+        assert_eq!(migration_count, 3);
 
         let columns = connection
             .prepare("PRAGMA table_info(emojis)")
@@ -234,8 +238,22 @@ mod tests {
             "usage_count",
             "is_favorite",
             "is_deleted",
+            "deleted_at",
+            "trash_path",
+            "trash_thumbnail_path",
         ] {
             assert!(columns.iter().any(|column| column == required));
+        }
+
+        for table in ["groups", "tags", "emoji_groups", "emoji_tags"] {
+            let exists: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .expect("check table");
+            assert_eq!(exists, 1, "expected table {table} to exist");
         }
     }
 }

@@ -56,6 +56,8 @@ const viewLabels: Record<DefaultLibraryView, string> = {
   all: "全部表情",
   recent: "最近使用",
   favorites: "收藏",
+  trash: "回收站",
+  ungrouped: "未分组",
 };
 
 const useStyles = makeStyles({

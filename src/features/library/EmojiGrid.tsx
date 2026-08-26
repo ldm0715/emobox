@@ -2,14 +2,25 @@ import { makeStyles, tokens } from "@fluentui/react-components";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { GridDensity, IndexedImage } from "../../types";
 import { EmojiGridItem } from "./EmojiGridItem";
+import type { EmojiItemMenuMode } from "./EmojiItemMenu";
 
 interface EmojiGridProps {
   items: IndexedImage[];
   density: GridDensity;
   selectedPath: string | null;
   favorites: Set<string>;
+  menuMode?: EmojiItemMenuMode;
+  tagsByPath?: Record<string, string[]>;
   onSelect: (item: IndexedImage) => void;
   onToggleFavorite: (item: IndexedImage) => void;
+  onCopy: (item: IndexedImage) => void;
+  onMoveToGroup: (item: IndexedImage) => void;
+  onRemoveFromGroup?: (item: IndexedImage) => void;
+  onAddTags?: (item: IndexedImage) => void;
+  onShowInExplorer: (item: IndexedImage) => void;
+  onDelete: (item: IndexedImage) => void;
+  onRestore?: (item: IndexedImage) => void;
+  onPermanentlyDelete?: (item: IndexedImage) => void;
 }
 
 const BATCH_SIZE = 72;
@@ -37,8 +48,18 @@ export function EmojiGrid({
   density,
   selectedPath,
   favorites,
+  menuMode = "default",
+  tagsByPath,
   onSelect,
   onToggleFavorite,
+  onCopy,
+  onMoveToGroup,
+  onRemoveFromGroup,
+  onAddTags,
+  onShowInExplorer,
+  onDelete,
+  onRestore,
+  onPermanentlyDelete,
 }: EmojiGridProps) {
   const styles = useStyles();
   const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
@@ -79,8 +100,18 @@ export function EmojiGrid({
             selected={selectedPath === item.path}
             favorite={favorites.has(item.path)}
             thumbnailSize={config.thumbnail}
+            menuMode={menuMode}
+            tags={tagsByPath?.[item.path] ?? []}
             onSelect={onSelect}
             onToggleFavorite={onToggleFavorite}
+            onCopy={onCopy}
+            onMoveToGroup={onMoveToGroup}
+            onRemoveFromGroup={onRemoveFromGroup}
+            onAddTags={onAddTags}
+            onShowInExplorer={onShowInExplorer}
+            onDelete={onDelete}
+            onRestore={onRestore}
+            onPermanentlyDelete={onPermanentlyDelete}
           />
         ))}
       </div>

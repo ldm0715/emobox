@@ -17,6 +17,7 @@ import {
 } from "@fluentui/react-icons";
 import { useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { IndexedImage } from "../../types";
+import type { EmojiItemMenuMode } from "./EmojiItemMenu";
 import { EmojiItemMenu } from "./EmojiItemMenu";
 import { useThumbnail } from "./useThumbnail";
 
@@ -25,8 +26,18 @@ interface EmojiGridItemProps {
   selected: boolean;
   favorite: boolean;
   thumbnailSize: number;
+  menuMode?: EmojiItemMenuMode;
+  tags?: string[];
   onSelect: (item: IndexedImage) => void;
   onToggleFavorite: (item: IndexedImage) => void;
+  onCopy: (item: IndexedImage) => void;
+  onMoveToGroup: (item: IndexedImage) => void;
+  onRemoveFromGroup?: (item: IndexedImage) => void;
+  onAddTags?: (item: IndexedImage) => void;
+  onShowInExplorer: (item: IndexedImage) => void;
+  onDelete: (item: IndexedImage) => void;
+  onRestore?: (item: IndexedImage) => void;
+  onPermanentlyDelete?: (item: IndexedImage) => void;
 }
 
 const useStyles = makeStyles({
@@ -127,6 +138,33 @@ const useStyles = makeStyles({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
+  tagBar: {
+    position: "absolute",
+    right: tokens.spacingHorizontalXS,
+    bottom: tokens.spacingVerticalXS,
+    left: tokens.spacingHorizontalXS,
+    zIndex: 2,
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "2px",
+    pointerEvents: "none",
+  },
+  tagPill: {
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    color: "white",
+    backgroundColor: "rgba(24, 24, 27, 0.66)",
+    fontSize: tokens.fontSizeBase100,
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+  },
+  tagMore: {
+    color: "white",
+    backgroundColor: "rgba(24, 24, 27, 0.66)",
+    fontSize: tokens.fontSizeBase100,
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+  },
 });
 
 export function EmojiGridItem({
@@ -134,8 +172,18 @@ export function EmojiGridItem({
   selected,
   favorite,
   thumbnailSize,
+  menuMode = "default",
+  tags = [],
   onSelect,
   onToggleFavorite,
+  onCopy,
+  onMoveToGroup,
+  onRemoveFromGroup,
+  onAddTags,
+  onShowInExplorer,
+  onDelete,
+  onRestore,
+  onPermanentlyDelete,
 }: EmojiGridItemProps) {
   const styles = useStyles();
   const { source, failed } = useThumbnail(item.path, thumbnailSize);
@@ -203,13 +251,38 @@ export function EmojiGridItem({
               />
             </MenuTrigger>
           </Tooltip>
-          <EmojiItemMenu favorite={favorite} onToggleFavorite={() => onToggleFavorite(item)} />
+          <EmojiItemMenu
+            mode={menuMode}
+            favorite={favorite}
+            onToggleFavorite={() => onToggleFavorite(item)}
+            onCopy={() => onCopy(item)}
+            onMoveToGroup={() => onMoveToGroup(item)}
+            onRemoveFromGroup={onRemoveFromGroup ? () => onRemoveFromGroup(item) : undefined}
+            onAddTags={onAddTags ? () => onAddTags(item) : () => {}}
+            onShowInExplorer={() => onShowInExplorer(item)}
+            onDelete={() => onDelete(item)}
+            onRestore={onRestore ? () => onRestore(item) : undefined}
+            onPermanentlyDelete={onPermanentlyDelete ? () => onPermanentlyDelete(item) : undefined}
+          />
         </Menu>
       </div>
 
       <div className={mergeClasses(styles.overlay, "emoji-overlay", selected && styles.overlayVisible)}>
         <div className={styles.fileName} title={item.name}>{item.name}</div>
       </div>
+
+      {tags.length > 0 && (
+        <div className={styles.tagBar}>
+          {tags.slice(0, 2).map((name) => (
+            <span key={name} className={styles.tagPill} title={name}>
+              {name}
+            </span>
+          ))}
+          {tags.length > 2 && (
+            <span className={styles.tagMore}>+{tags.length - 2}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

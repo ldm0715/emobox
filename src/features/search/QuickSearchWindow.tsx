@@ -12,12 +12,12 @@ import { DEFAULT_QUICK_SEARCH_SHORTCUT } from "../../config/shortcuts";
 import {
   copyImageToClipboard,
   getErrorMessage,
-  getIndexedImages,
   getQuickSearchShortcutStatus,
   getRecentImages,
   hideQuickSearch,
+  searchEmojis,
 } from "../../lib/tauri";
-import type { IndexedImage, RecentImageRecord } from "../../types";
+import type { IndexedEmoji, IndexedImage, RecentImageRecord } from "../../types";
 import { QuickSearchPanel } from "./QuickSearchPanel";
 
 const QUICK_SEARCH_OPENED_EVENT = "quick-search-opened";
@@ -45,19 +45,28 @@ export function QuickSearchWindow() {
     setCopyError("");
     setCopyingPath(undefined);
 
-    const [indexedResult, recentResult] = await Promise.allSettled([
-      getIndexedImages(),
+    // 走统一 search API：view="search-recent" 返回 last_used_at NOT NULL 行（SQLite 主源）
+    const [searchResult, recentResult] = await Promise.allSettled([
+      searchEmojis({ view: "search-recent", limit: 30, offset: 0 }),
       getRecentImages(),
     ]);
-    const indexedItems = indexedResult.status === "fulfilled" ? indexedResult.value : [];
-    const persistedRecentItems = recentResult.status === "fulfilled" ? recentResult.value : [];
+    const indexedEmojis: IndexedEmoji[] = searchResult.status === "fulfilled" ? searchResult.value : [];
+    const indexedItems: IndexedImage[] = indexedEmojis.map((e) => ({
+      name: e.name,
+      path: e.path,
+      extension: e.extension,
+      width: e.width,
+      height: e.height,
+      sizeBytes: e.sizeBytes,
+    }));
+    const persistedRecentItems: RecentImageRecord[] = recentResult.status === "fulfilled" ? recentResult.value : [];
     setItems(indexedItems);
     setRecentItems(persistedRecentItems);
 
-    if (indexedResult.status === "rejected" && recentResult.status === "rejected") {
-      setError(`无法读取表情索引和最近使用记录：${getErrorMessage(indexedResult.reason)}`);
-    } else if (indexedItems.length === 0 && persistedRecentItems.length === 0 && indexedResult.status === "rejected") {
-      setError(`无法读取表情索引：${getErrorMessage(indexedResult.reason)}`);
+    if (searchResult.status === "rejected" && recentResult.status === "rejected") {
+      setError(`无法读取表情索引和最近使用记录：${getErrorMessage(searchResult.reason)}`);
+    } else if (indexedItems.length === 0 && persistedRecentItems.length === 0 && searchResult.status === "rejected") {
+      setError(`无法读取表情索引：${getErrorMessage(searchResult.reason)}`);
     }
 
     const status = await getQuickSearchShortcutStatus().catch(() => null);

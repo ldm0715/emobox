@@ -13,7 +13,7 @@ use crate::{database, repositories::emoji_repository::EmojiRepository};
 const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 const WARNING_LIMIT: usize = 20;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexedImage {
     pub name: String,
@@ -22,6 +22,29 @@ pub struct IndexedImage {
     pub width: u32,
     pub height: u32,
     pub size_bytes: u64,
+}
+
+/// 已落库的完整表情：携带 `id`、收藏/使用状态、当前可读路径（COALESCE 投影）。
+/// 用于 `search_emojis` / `list_indexed` / `list_deleted` 等需要完整信息的接口。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexedEmoji {
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    pub thumbnail_path: Option<String>,
+    pub extension: String,
+    pub width: u32,
+    pub height: u32,
+    pub size_bytes: u64,
+    pub source_type: String,
+    pub is_favorite: bool,
+    pub last_used_at: Option<i64>,
+    pub usage_count: i64,
+    #[serde(default)]
+    pub group_ids: Vec<i64>,
+    #[serde(default)]
+    pub tag_ids: Vec<i64>,
 }
 
 #[derive(Debug, Serialize)]

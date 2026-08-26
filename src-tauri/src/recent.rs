@@ -14,12 +14,16 @@ use crate::scanner;
 const RECENT_IMAGE_LIMIT: usize = 50;
 const RECENT_IMAGES_FILE_NAME: &str = "recent-images.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RecentImageRecord {
     pub item: scanner::IndexedImage,
     pub last_used_at: u64,
     pub use_count: u64,
+    #[serde(default)]
+    pub group_ids: Vec<i64>,
+    #[serde(default)]
+    pub tag_ids: Vec<i64>,
 }
 
 pub struct RecentImagesState {
@@ -136,6 +140,8 @@ fn record_recent_image(
             item,
             last_used_at: used_at,
             use_count,
+            group_ids: Vec::new(),
+            tag_ids: Vec::new(),
         },
     );
     records.truncate(RECENT_IMAGE_LIMIT);
@@ -187,6 +193,8 @@ mod tests {
             item: image("persisted"),
             last_used_at: 1_725_000_000_000,
             use_count: 7,
+            group_ids: Vec::new(),
+            tag_ids: Vec::new(),
         };
 
         let json = serde_json::to_string(&record).expect("serialize recent record");

@@ -62,7 +62,27 @@ pub fn run() {
             commands::get_clipboard_collect_shortcut_status,
             commands::show_quick_search,
             commands::hide_quick_search,
-            commands::collect_image_from_clipboard
+            commands::collect_image_from_clipboard,
+            commands::list_groups,
+            commands::create_group,
+            commands::rename_group,
+            commands::delete_group,
+            commands::list_tags,
+            commands::create_tag,
+            commands::rename_tag,
+            commands::delete_tag,
+            commands::add_emojis_to_group,
+            commands::remove_emojis_from_group,
+            commands::add_tags_to_emojis,
+            commands::remove_tags_from_emojis,
+            commands::set_emojis_favorite,
+            commands::search_emojis,
+            commands::soft_delete_to_trash,
+            commands::restore_from_trash,
+            commands::permanently_delete_emojis,
+            commands::empty_trash,
+            commands::list_deleted_emojis,
+            commands::show_in_explorer,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
