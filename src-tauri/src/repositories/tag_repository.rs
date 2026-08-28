@@ -73,6 +73,27 @@ impl TagRepository {
         })
     }
 
+    /// 按名查找标签 id；不存在则创建。NOCASE 精确匹配，幂等。
+    /// 空名 → Err（与 `create_tag` 一致）。
+    pub fn find_or_create_id(connection: &mut Connection, name: &str) -> Result<i64, String> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err("标签名称不能为空。".to_string());
+        }
+        let existing = connection
+            .query_row(
+                "SELECT id FROM tags WHERE name = ?1 COLLATE NOCASE",
+                [trimmed],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| format!("无法查询标签：{error}"))?;
+        match existing {
+            Some(id) => Ok(id),
+            None => Ok(TagRepository::create_tag(connection, trimmed)?.id),
+        }
+    }
+
     pub fn rename_tag(
         connection: &mut Connection,
         id: i64,

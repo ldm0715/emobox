@@ -10,11 +10,9 @@ use serde::Serialize;
 use walkdir::WalkDir;
 
 use crate::{
-    database,
-    perceptual_hash,
-    repositories::emoji_repository::{
-        DedupHitKind, EmojiRepository, ImportGroup, NewManagedEmoji,
-    },
+    database, perceptual_hash,
+    repositories::emoji_repository::{DedupHitKind, EmojiRepository, ImportGroup, NewManagedEmoji},
+    repositories::tag_repository::TagRepository,
     scanner::IndexedImage,
     services::asset_service::AssetService,
 };
@@ -339,6 +337,33 @@ impl ImportService {
         summary.elapsed_ms = started_at.elapsed().as_millis();
         Ok(summary)
     }
+
+    /// 惰性回填存量无标签表情的"文件名"标签（启动时一次性补齐旧数据）。
+    ///
+    /// 只处理一批（≤ batch），返回实际回填数；调用方循环直到返回值 < batch。
+    /// 幂等：`list_untagged_emojis` 只取无任何标签的行，回填后自动跳过。
+    /// 单条失败（如标签名非法）只 `log::warn!` 跳过，不中断整体回填。
+    pub fn backfill_filename_tags(
+        connection: &mut rusqlite::Connection,
+        batch: i64,
+    ) -> Result<usize, String> {
+        let targets = EmojiRepository::list_untagged_emojis(connection, batch)?;
+        let mut backfilled = 0usize;
+        for (id, original_filename) in targets {
+            if original_filename.trim().is_empty() {
+                continue;
+            }
+            match TagRepository::find_or_create_id(connection, &original_filename)
+                .and_then(|tag_id| EmojiRepository::add_tags(connection, &[tag_id], &[id]))
+            {
+                Ok(()) => backfilled += 1,
+                Err(error) => {
+                    log::warn!("文件名标签回填跳过 emoji_id={id} name={original_filename}：{error}")
+                }
+            }
+        }
+        Ok(backfilled)
+    }
 }
 
 /// 与 `commit_staged` 等价，但允许指定 `source_type`（用于 clipboard 路径）。
@@ -387,12 +412,14 @@ fn commit_staged_as_source_type(
                     hamming,
                     source_path.unwrap_or(""),
                 );
-                Ok(ImportOneOutcome::PerceptualDuplicate(PerceptualDuplicateInfo {
-                    source_path: source_path.unwrap_or_default().to_string(),
-                    candidate_id: hit.existing.id,
-                    candidate_path: hit.existing.path,
-                    hamming,
-                }))
+                Ok(ImportOneOutcome::PerceptualDuplicate(
+                    PerceptualDuplicateInfo {
+                        source_path: source_path.unwrap_or_default().to_string(),
+                        candidate_id: hit.existing.id,
+                        candidate_path: hit.existing.path,
+                        hamming,
+                    },
+                ))
             }
         };
     }
@@ -434,6 +461,21 @@ fn commit_staged_as_source_type(
             return Err(error);
         }
     };
+
+    // 导入自动打"文件名"标签（完整文件名含扩展名，如 `开心.png`），让表情可被
+    // `组*开心` / `组*开心.png` 精确搜到。剪贴板合成名（`clipboard-…`）无搜索
+    // 意义，跳过。标签是锦上添花：任何失败只记日志，不失败导入。
+    if source_type != "clipboard" && !original_filename.trim().is_empty() {
+        match TagRepository::find_or_create_id(connection, original_filename).and_then(|tag_id| {
+            EmojiRepository::add_tags(connection, &[tag_id], &[insert_result.emoji_id])
+        }) {
+            Ok(()) => {}
+            Err(error) => log::warn!(
+                "导入自动打标签失败 emoji_id={} name={original_filename}：{error}",
+                insert_result.emoji_id
+            ),
+        }
+    }
 
     Ok(ImportOneOutcome::Imported {
         item: IndexedImage {
@@ -521,8 +563,12 @@ fn backfill_perceptual_hashes(
         match crate::services::asset_service::decode_for_import(&path) {
             Ok(decoded) => {
                 let hash = perceptual_hash::dhash(&decoded);
-                EmojiRepository::update_perceptual_hash(connection, id, perceptual_hash::to_db(hash))
-                    .unwrap_or_else(|error| log::warn!("写入感知哈希失败 id={id}：{error}"));
+                EmojiRepository::update_perceptual_hash(
+                    connection,
+                    id,
+                    perceptual_hash::to_db(hash),
+                )
+                .unwrap_or_else(|error| log::warn!("写入感知哈希失败 id={id}：{error}"));
                 backfilled += 1;
             }
             Err(error) => {
@@ -545,11 +591,7 @@ fn top_level_subfolder(file: &Path, root: &Path) -> Option<String> {
     // 至少两级（顶层目录 + 文件名）才说明在子文件夹里。
     components.next()?;
     let name = first.as_os_str().to_string_lossy().into_owned();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }
 
 fn collect_candidates(
@@ -665,7 +707,9 @@ mod tests {
         let dog = input.join("狗狗");
         fs::create_dir_all(&cat).expect("create cat dir");
         fs::create_dir_all(&dog).expect("create dog dir");
-        smooth_pattern(32, 32).save(cat.join("a.png")).expect("write a");
+        smooth_pattern(32, 32)
+            .save(cat.join("a.png"))
+            .expect("write a");
         checker(48, 48, 8).save(dog.join("b.png")).expect("write b");
 
         let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
@@ -697,8 +741,12 @@ mod tests {
         let context = folder_context(&root);
         let input = root.join("input");
         fs::create_dir_all(input.join("pack/deep")).expect("create nested");
-        checker(32, 32, 4).save(input.join("pack/deep/c.png")).expect("write c");
-        smooth_pattern(32, 32).save(input.join("pack/d.png")).expect("write d");
+        checker(32, 32, 4)
+            .save(input.join("pack/deep/c.png"))
+            .expect("write c");
+        smooth_pattern(32, 32)
+            .save(input.join("pack/d.png"))
+            .expect("write d");
 
         let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
         assert_eq!(summary.success_count, 2);
@@ -713,12 +761,20 @@ mod tests {
         let input = root.join("input");
         fs::create_dir_all(&input).expect("create input dir");
         // 图片全在根目录（无子文件夹）→ 平铺文件夹，文件夹本身建同名组。
-        smooth_pattern(32, 32).save(input.join("a.png")).expect("write a");
-        checker(48, 48, 8).save(input.join("b.png")).expect("write b");
+        smooth_pattern(32, 32)
+            .save(input.join("a.png"))
+            .expect("write a");
+        checker(48, 48, 8)
+            .save(input.join("b.png"))
+            .expect("write b");
 
         let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
         assert_eq!(summary.success_count, 2);
-        assert_eq!(summary.groups_created, vec!["input"], "平铺文件夹应以文件夹名建组");
+        assert_eq!(
+            summary.groups_created,
+            vec!["input"],
+            "平铺文件夹应以文件夹名建组"
+        );
 
         let connection = open_connection(&context.database_path).expect("open");
         let relation_count: i64 = connection
@@ -734,8 +790,12 @@ mod tests {
         let context = folder_context(&root);
         let input = root.join("input");
         fs::create_dir_all(input.join("pack")).expect("create pack");
-        smooth_pattern(32, 32).save(input.join("scatter.png")).expect("write scatter");
-        checker(32, 32, 4).save(input.join("pack/b.png")).expect("write b");
+        smooth_pattern(32, 32)
+            .save(input.join("scatter.png"))
+            .expect("write scatter");
+        checker(32, 32, 4)
+            .save(input.join("pack/b.png"))
+            .expect("write b");
 
         let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
         assert_eq!(summary.success_count, 2);
@@ -758,9 +818,13 @@ mod tests {
         let dog = input.join("狗狗");
         fs::create_dir_all(&cat).expect("create cat");
         fs::create_dir_all(&dog).expect("create dog");
-        smooth_pattern(64, 64).save(cat.join("a.png")).expect("write a");
+        smooth_pattern(64, 64)
+            .save(cat.join("a.png"))
+            .expect("write a");
         // 同字节图片放进第二个子文件夹 → 精确重复。
-        smooth_pattern(64, 64).save(dog.join("a-copy.png")).expect("write copy");
+        smooth_pattern(64, 64)
+            .save(dog.join("a-copy.png"))
+            .expect("write copy");
 
         let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
         assert_eq!(summary.success_count, 1);
@@ -777,7 +841,9 @@ mod tests {
         let context = folder_context(&root);
         let input = root.join("input");
         fs::create_dir_all(input.join("pack")).expect("create pack");
-        smooth_pattern(64, 64).save(input.join("pack/a.png")).expect("write a");
+        smooth_pattern(64, 64)
+            .save(input.join("pack/a.png"))
+            .expect("write a");
 
         let first = ImportService::import_folder(&context, &input, false).expect("first import");
         assert_eq!(first.groups_created, vec!["pack"]);
@@ -821,7 +887,9 @@ mod tests {
         let context = folder_context(&root);
         let input = root.join("input");
         fs::create_dir_all(input.join("猫猫")).expect("create cat dir");
-        checker(32, 32, 4).save(input.join("猫猫/a.png")).expect("write a");
+        checker(32, 32, 4)
+            .save(input.join("猫猫/a.png"))
+            .expect("write a");
         // 预先建好同名组。
         {
             let conn = open_connection(&context.database_path).expect("open");
@@ -834,7 +902,129 @@ mod tests {
 
         let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
         assert_eq!(summary.success_count, 1);
-        assert!(summary.groups_created.is_empty(), "复用既有组不计入 groups_created");
+        assert!(
+            summary.groups_created.is_empty(),
+            "复用既有组不计入 groups_created"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_import_auto_tags_filename() {
+        let root = test_root("folder-tags");
+        let context = folder_context(&root);
+        let input = root.join("input");
+        fs::create_dir_all(input.join("猫猫")).expect("create cat dir");
+        smooth_pattern(32, 32)
+            .save(input.join("猫猫/开心.png"))
+            .expect("write a");
+
+        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        assert_eq!(summary.success_count, 1);
+
+        let connection = open_connection(&context.database_path).expect("open");
+        let emoji_id: i64 = connection
+            .query_row("SELECT id FROM emojis", [], |row| row.get(0))
+            .expect("emoji id");
+        // 标签 = 完整文件名（含扩展名）。
+        let (tag_id, tag_name): (i64, String) = connection
+            .query_row(
+                "SELECT id, name FROM tags WHERE name = '开心.png'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("auto tag");
+        assert_eq!(tag_name, "开心.png");
+        let relation: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM emoji_tags WHERE emoji_id = ?1 AND tag_id = ?2",
+                rusqlite::params![emoji_id, tag_id],
+                |row| row.get(0),
+            )
+            .expect("relation");
+        assert_eq!(relation, 1, "导入的表情应打上文件名标签");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_paths_auto_tags_filename() {
+        let root = test_root("paths-tags");
+        let context = context(&root);
+        let source = root.join("搞笑.png");
+        write_png(&source);
+
+        let summary = ImportService::import_paths(&context, &[source], false).expect("import");
+        assert_eq!(summary.success_count, 1);
+        let connection = open_connection(&context.database_path).expect("open");
+        let tag_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM tags WHERE name = '搞笑.png'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("tag");
+        assert_eq!(tag_count, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clipboard_import_does_not_auto_tag() {
+        let root = test_root("clipboard-notags");
+        let context = context(&root);
+        let image =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(4, 3, Rgba([50, 100, 150, 255])));
+        let outcome = ImportService::import_dynamic_image(
+            &context,
+            image,
+            "png",
+            "clipboard-test.png",
+            false,
+        )
+        .expect("import_dynamic_image");
+        assert!(matches!(outcome, ImportOneOutcome::Imported { .. }));
+
+        let connection = open_connection(&context.database_path).expect("open");
+        let relation_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM emoji_tags", [], |row| row.get(0))
+            .expect("relations");
+        assert_eq!(relation_count, 0, "剪贴板收藏不打文件名标签");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn backfill_filename_tags_skips_trash_and_is_idempotent() {
+        let root = test_root("backfill-tags");
+        let context = context(&root);
+
+        // 直接插两行无标签 emoji：一行活跃、一行在回收站。
+        {
+            let conn = open_connection(&context.database_path).expect("open");
+            for (name, deleted) in [("活跃.png", 0), ("已删.png", 1)] {
+                conn.execute(
+                    "INSERT INTO emojis (source_type, source_path, managed_path, original_filename, file_extension, file_size, sha256, width, height, thumbnail_path, imported_at, indexed_at, last_used_at, usage_count, is_favorite, is_deleted)
+                     VALUES ('managed_import', ?1, ?1, ?2, 'png', 1, ?1, 1, 1, NULL, 0, 0, NULL, 0, 0, ?3)",
+                    rusqlite::params![format!("/{name}"), name, deleted],
+                )
+                .expect("insert emoji");
+            }
+        }
+
+        let mut conn = open_connection(&context.database_path).expect("open");
+        let first = ImportService::backfill_filename_tags(&mut conn, 50).expect("backfill");
+        assert_eq!(first, 1, "只有活跃行被回填");
+
+        let tag_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tags", [], |row| row.get(0))
+            .expect("tags");
+        assert_eq!(tag_count, 1);
+        let relation_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM emoji_tags", [], |row| row.get(0))
+            .expect("relations");
+        assert_eq!(relation_count, 1);
+
+        // 幂等：再次回填无新目标。
+        let second = ImportService::backfill_filename_tags(&mut conn, 50).expect("backfill again");
+        assert_eq!(second, 0, "回填应幂等");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -850,8 +1040,7 @@ mod tests {
 
         let first = ImportService::import_paths(&context, &[png_path], false).expect("png import");
         assert_eq!(first.success_count, 1);
-        let second =
-            ImportService::import_paths(&context, &[jpg_path], false).expect("jpg import");
+        let second = ImportService::import_paths(&context, &[jpg_path], false).expect("jpg import");
         assert_eq!(second.success_count, 0);
         assert_eq!(second.perceptual_duplicate_count, 1, "跨格式同图应感知判重");
     }
@@ -895,7 +1084,10 @@ mod tests {
         let second =
             ImportService::import_paths(&context, &[jpg_path], false).expect("copy import");
         assert_eq!(second.success_count, 0);
-        assert_eq!(second.perceptual_duplicate_count, 1, "回填后应与旧跨格式图判重");
+        assert_eq!(
+            second.perceptual_duplicate_count, 1,
+            "回填后应与旧跨格式图判重"
+        );
 
         let connection = open_connection(&context.database_path).expect("open");
         let null_count: i64 = connection
@@ -1006,7 +1198,8 @@ mod tests {
             .expect("create failure trigger");
         drop(connection);
 
-        let summary = ImportService::import_paths(&context, &[source], false).expect("import summary");
+        let summary =
+            ImportService::import_paths(&context, &[source], false).expect("import summary");
         assert_eq!(
             (
                 summary.success_count,
@@ -1037,9 +1230,14 @@ mod tests {
         let image =
             DynamicImage::ImageRgba8(RgbaImage::from_pixel(4, 3, Rgba([50, 100, 150, 255])));
 
-        let outcome =
-            ImportService::import_dynamic_image(&context, image, "png", "clipboard-test.png", false)
-                .expect("import_dynamic_image should succeed");
+        let outcome = ImportService::import_dynamic_image(
+            &context,
+            image,
+            "png",
+            "clipboard-test.png",
+            false,
+        )
+        .expect("import_dynamic_image should succeed");
 
         match outcome {
             ImportOneOutcome::Imported { item, .. } => {

@@ -47,6 +47,7 @@ import {
   updateClipboardCollectShortcut,
   updateQuickSearchShortcut,
 } from "./lib/tauri";
+import { filterItemsByQuery } from "./lib/searchSyntax";
 import type {
   GridDensity,
   ImageCopiedEvent,
@@ -680,9 +681,9 @@ export function App() {
         if (currentView === "trash") {
           items = await listDeletedEmojis();
         } else if (currentView === "recent") {
-          // recent 走 IndexedImage 派生（已有 recentItems 通道）
+          // recent 走 IndexedImage 派生（已有 recentItems 通道），保留后端填充的分组/标签关系。
           items = recentItems.map((r) => ({
-            id: 0,
+            id: r.item.id,
             name: r.item.name,
             path: r.item.path,
             thumbnailPath: null,
@@ -694,14 +695,11 @@ export function App() {
             isFavorite: false,
             lastUsedAt: Number(r.lastUsedAt),
             usageCount: Number(r.useCount),
-            groupIds: [],
-            tagIds: [],
+            groupIds: r.groupIds,
+            tagIds: r.tagIds,
           }));
-          // 客户端按 query 过滤
-          if (trimmedQuery.length > 0) {
-            const q = trimmedQuery.toLocaleLowerCase();
-            items = items.filter((it) => it.name.toLocaleLowerCase().includes(q));
-          }
+          // 客户端按 query 过滤：精确语法（组*标签）走与后端一致的回退阶梯，否则普通子串。
+          items = filterItemsByQuery(items, trimmedQuery, groups, tags);
         } else if (currentView === "favorites") {
           items = await searchEmojis({
             view: "favorites",
@@ -753,7 +751,7 @@ export function App() {
       disposed = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentView, debouncedQuery, recentItems]);
+  }, [currentView, debouncedQuery, recentItems, groups, tags]);
 
   const openQuickSearch = useCallback(async () => {
     try {

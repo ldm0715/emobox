@@ -223,7 +223,7 @@ export function QuickSearchContent({
         autoFocus
         aria-label="快速搜索表情"
         contentBefore={<Search20Regular />}
-        placeholder="搜索表情、标签或分组（组:标签）"
+        placeholder="搜索表情、标签或分组（组*标签）"
         value={query}
         disabled={copying}
         onChange={(_: SearchBoxChangeEvent, data: { value: string }) => {

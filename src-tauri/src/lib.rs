@@ -2,8 +2,8 @@ mod clipboard;
 mod clipboard_collect;
 mod commands;
 mod database;
-mod platform;
 mod perceptual_hash;
+mod platform;
 mod quick_search;
 mod recent;
 mod repositories;
@@ -40,6 +40,39 @@ pub fn run() {
             app.manage(recent_state);
             app.manage(target_window::TargetWindowState::new());
             tray::setup(app)?;
+
+            // 启动一次性回填存量无标签表情的"文件名"标签（纯 DB，幂等，失败不阻塞）。
+            let db_path = app
+                .state::<database::DatabaseState>()
+                .database_path()
+                .to_path_buf();
+            match database::open_connection(&db_path) {
+                Ok(mut connection) => {
+                    const BACKFILL_BATCH: i64 = 500;
+                    let mut total = 0usize;
+                    loop {
+                        match services::import_service::ImportService::backfill_filename_tags(
+                            &mut connection,
+                            BACKFILL_BATCH,
+                        ) {
+                            Ok(batch) => {
+                                total += batch;
+                                if (batch as i64) < BACKFILL_BATCH {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("文件名标签启动回填失败：{error}");
+                                break;
+                            }
+                        }
+                    }
+                    if total > 0 {
+                        log::info!("已回填 {total} 条文件名标签");
+                    }
+                }
+                Err(error) => log::warn!("打开数据库做标签回填失败：{error}"),
+            }
 
             // 启动清理全局快捷键（D5 reconcile），确保 OS 层面没有上次的残留
             if let Err(error) = app

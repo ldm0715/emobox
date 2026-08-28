@@ -57,6 +57,9 @@ export interface RecentImageRecord {
   item: IndexedImage;
   lastUsedAt: number;
   useCount: number;
+  /** 后端 `fill_relations_for_recent` 填充；recent 视图客户端精确过滤用。 */
+  groupIds: number[];
+  tagIds: number[];
 }
 
 export interface ShortcutRegistrationStatus {

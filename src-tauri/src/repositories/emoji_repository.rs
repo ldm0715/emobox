@@ -11,6 +11,22 @@ use crate::{
 
 pub struct EmojiRepository;
 
+/// 精确搜索的分支模式。
+#[derive(Clone, Copy, Debug)]
+enum SearchMode {
+    /// `组名*标签名` / `组名:标签名`：组名、标签名都 NOCASE 精确匹配。
+    Exact,
+    /// 组名保持精确，标签名放宽为子串 LIKE（精确命中为空时的兜底，
+    /// 例如用户按网格显示名输入 `组*开心.png`，标签实际存 stem `开心`）。
+    Lenient,
+    /// 组名精确匹配不到（分组不存在 / 表情未归组）时的兜底：组名子串去命中
+    /// 分组名 / 文件名 / 标签名任一，再叠加标签子串。未归组的表情包也能用
+    /// `包名*表情` 搜到。
+    FuzzyGroup,
+    /// 普通跨字段子串 LIKE（文件名 / 标签名 / 分组名 OR）。
+    PlainLike,
+}
+
 pub struct NewManagedEmoji<'a> {
     pub source_type: &'a str,
     pub source_path: &'a str,
@@ -203,10 +219,7 @@ impl EmojiRepository {
             .map_err(|error| format!("无法读取表情记录：{error}"))
     }
 
-    pub fn find_by_id(
-        connection: &Connection,
-        id: i64,
-    ) -> Result<Option<IndexedImage>, String> {
+    pub fn find_by_id(connection: &Connection, id: i64) -> Result<Option<IndexedImage>, String> {
         connection
             .query_row(
                 r#"
@@ -265,7 +278,9 @@ impl EmojiRepository {
         let candidates = Self::list_perceptual_candidates(connection)?;
         let mut matches: Vec<(u32, i64)> = candidates
             .into_iter()
-            .filter(|(_, candidate_hash)| hamming_distance(hash, from_db(*candidate_hash)) <= threshold)
+            .filter(|(_, candidate_hash)| {
+                hamming_distance(hash, from_db(*candidate_hash)) <= threshold
+            })
             .map(|(id, candidate_hash)| (hamming_distance(hash, from_db(candidate_hash)), id))
             .collect();
         matches.sort_by_key(|&(distance, id)| (distance, id));
@@ -273,9 +288,8 @@ impl EmojiRepository {
         let Some((distance, candidate_id)) = matches.first().copied() else {
             return Ok(None);
         };
-        let existing = Self::find_by_id(connection, candidate_id)?.ok_or_else(|| {
-            format!("感知重复候选 {candidate_id} 已不存在。")
-        })?;
+        let existing = Self::find_by_id(connection, candidate_id)?
+            .ok_or_else(|| format!("感知重复候选 {candidate_id} 已不存在。"))?;
         Ok(Some(DedupHit {
             existing,
             kind: DedupHitKind::Perceptual { hamming: distance },
@@ -319,6 +333,28 @@ impl EmojiRepository {
             )
             .map_err(|error| format!("无法写入感知哈希：{error}"))?;
         Ok(())
+    }
+
+    /// 取没有任何标签的活跃受管行（供文件名标签回填）。跳过回收站行。
+    pub fn list_untagged_emojis(
+        connection: &Connection,
+        limit: i64,
+    ) -> Result<Vec<(i64, String)>, String> {
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT e.id, e.original_filename FROM emojis e
+                WHERE e.is_deleted = 0
+                  AND NOT EXISTS (SELECT 1 FROM emoji_tags et WHERE et.emoji_id = e.id)
+                LIMIT ?1
+                "#,
+            )
+            .map_err(|error| format!("无法准备标签回填查询：{error}"))?;
+        let rows = statement
+            .query_map([limit], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|error| format!("无法读取标签回填候选：{error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法解析标签回填候选：{error}"))
     }
 
     /// 加载活跃受管行的 (id, perceptual_hash) 作为感知扫描候选集。
@@ -445,9 +481,10 @@ impl EmojiRepository {
 
     /// 列表查询（排除 is_deleted=1）。path 投影 COALESCE(managed_path, source_path)。
     ///
-    /// 查询语法：`组名:标签` / `组名:` / `:标签`（全角冒号也支持）走**精确 AND**
-    /// （NOCASE 精确匹配分组名 / 标签名）；若精确查询结果为空，回退一次普通 LIKE
-    /// （跨字段 OR）。无冒号 → 直接普通 LIKE。含冒号的组名/标签名仍可经回退命中。
+    /// 查询语法：`组名*标签名` / `组名*` / `*标签名` 为主（全角 `＊` 也支持，
+    /// `:` / `：` 保留为别名）走**精确 AND**（NOCASE 精确匹配分组名 / 标签名）；
+    /// 精确命中为空时依次回退到「组精确 + 标签 LIKE」→「组名子串（分组/文件名/
+    /// 标签名任一）+ 标签 LIKE」→ 普通 LIKE（跨字段 OR）。无分隔符 → 直接普通 LIKE。
     pub fn list_indexed(
         connection: &Connection,
         options: &ListOptions<'_>,
@@ -455,15 +492,49 @@ impl EmojiRepository {
         tag_ids: &[i64],
     ) -> Result<Vec<IndexedEmoji>, String> {
         let trimmed = query.trim();
-        if parse_exact_query(trimmed).is_some() {
-            let exact = Self::list_indexed_impl(connection, options, trimmed, tag_ids, true)?;
-            if !exact.is_empty() {
-                return Ok(exact);
-            }
-            log::debug!("精确搜索无结果，回退普通 LIKE：query={trimmed}");
-            return Self::list_indexed_impl(connection, options, trimmed, tag_ids, false);
+        let Some((group, tag)) = parse_exact_query(trimmed) else {
+            return Self::list_indexed_impl(
+                connection,
+                options,
+                trimmed,
+                tag_ids,
+                SearchMode::PlainLike,
+            );
+        };
+        let exact =
+            Self::list_indexed_impl(connection, options, trimmed, tag_ids, SearchMode::Exact)?;
+        if !exact.is_empty() {
+            return Ok(exact);
         }
-        Self::list_indexed_impl(connection, options, trimmed, tag_ids, false)
+        // 只有标签部分存在时 Lenient 才有意义（组精确 + 标签 LIKE）。
+        if tag.is_some() {
+            let lenient = Self::list_indexed_impl(
+                connection,
+                options,
+                trimmed,
+                tag_ids,
+                SearchMode::Lenient,
+            )?;
+            if !lenient.is_empty() {
+                return Ok(lenient);
+            }
+        }
+        // 组名精确匹配不到（分组不存在 / 表情未归组）时，让组名子串去命中
+        // 分组名 / 文件名 / 标签名，再叠加标签条件 —— 未归组的包也能 `包名*表情`。
+        if group.is_some() {
+            let fuzzy = Self::list_indexed_impl(
+                connection,
+                options,
+                trimmed,
+                tag_ids,
+                SearchMode::FuzzyGroup,
+            )?;
+            if !fuzzy.is_empty() {
+                return Ok(fuzzy);
+            }
+        }
+        log::debug!("精确搜索无结果，回退普通 LIKE：query={trimmed}");
+        Self::list_indexed_impl(connection, options, trimmed, tag_ids, SearchMode::PlainLike)
     }
 
     /// 锁步参数绑定：SQL 的 `?` 出现顺序与 `params` Vec 完全一致，不再用手工编号。
@@ -473,7 +544,7 @@ impl EmojiRepository {
         options: &ListOptions<'_>,
         trimmed: &str,
         tag_ids: &[i64],
-        exact: bool,
+        mode: SearchMode,
     ) -> Result<Vec<IndexedEmoji>, String> {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut where_clause = String::from("WHERE is_deleted = 0");
@@ -484,49 +555,85 @@ impl EmojiRepository {
         }
 
         if !trimmed.is_empty() {
-            if exact {
-                let parsed = parse_exact_query(trimmed).expect("exact 分支必有语法");
-                match parsed {
-                    (Some(group), Some(tag)) => {
-                        where_clause.push_str(
-                            " AND EXISTS (SELECT 1 FROM emoji_groups eg JOIN groups g ON g.id = eg.group_id \
-                               WHERE eg.emoji_id = e.id AND g.name = ? COLLATE NOCASE)",
-                        );
-                        params.push(Box::new(group));
-                        where_clause.push_str(
-                            " AND EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
-                               WHERE et.emoji_id = e.id AND t.name = ? COLLATE NOCASE)",
-                        );
-                        params.push(Box::new(tag));
+            match mode {
+                SearchMode::Exact | SearchMode::Lenient => {
+                    let parsed = parse_exact_query(trimmed).expect("精确分支必有语法");
+                    // Lenient 只把标签约束放宽为 LIKE，组约束始终精确。
+                    let tag_constraint = match mode {
+                        SearchMode::Exact => "t.name = ? COLLATE NOCASE",
+                        SearchMode::Lenient => "t.name LIKE '%' || ? || '%' COLLATE NOCASE",
+                        SearchMode::FuzzyGroup | SearchMode::PlainLike => {
+                            unreachable!("非 Exact/Lenient 不进本分支")
+                        }
+                    };
+                    match parsed {
+                        (Some(group), Some(tag)) => {
+                            where_clause.push_str(
+                                " AND EXISTS (SELECT 1 FROM emoji_groups eg JOIN groups g ON g.id = eg.group_id \
+                                   WHERE eg.emoji_id = e.id AND g.name = ? COLLATE NOCASE)",
+                            );
+                            params.push(Box::new(group));
+                            where_clause.push_str(&format!(
+                                " AND EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
+                                   WHERE et.emoji_id = e.id AND {tag_constraint})"
+                            ));
+                            params.push(Box::new(tag));
+                        }
+                        (Some(group), None) => {
+                            where_clause.push_str(
+                                " AND EXISTS (SELECT 1 FROM emoji_groups eg JOIN groups g ON g.id = eg.group_id \
+                                   WHERE eg.emoji_id = e.id AND g.name = ? COLLATE NOCASE)",
+                            );
+                            params.push(Box::new(group));
+                        }
+                        (None, Some(tag)) => {
+                            where_clause.push_str(&format!(
+                                " AND EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
+                                   WHERE et.emoji_id = e.id AND {tag_constraint})"
+                            ));
+                            params.push(Box::new(tag));
+                        }
+                        (None, None) => {}
                     }
-                    (Some(group), None) => {
-                        where_clause.push_str(
-                            " AND EXISTS (SELECT 1 FROM emoji_groups eg JOIN groups g ON g.id = eg.group_id \
-                               WHERE eg.emoji_id = e.id AND g.name = ? COLLATE NOCASE)",
-                        );
-                        params.push(Box::new(group));
-                    }
-                    (None, Some(tag)) => {
-                        where_clause.push_str(
-                            " AND EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
-                               WHERE et.emoji_id = e.id AND t.name = ? COLLATE NOCASE)",
-                        );
-                        params.push(Box::new(tag));
-                    }
-                    (None, None) => {}
                 }
-            } else {
-                // 普通 LIKE：跨字段 OR（文件名 / 标签名 / 分组名），绑定 3 次。
-                where_clause.push_str(
-                    " AND (LOWER(e.original_filename) LIKE '%' || LOWER(?) || '%' COLLATE NOCASE \
-                        OR EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
-                                   WHERE et.emoji_id = e.id AND LOWER(t.name) LIKE '%' || LOWER(?) || '%' COLLATE NOCASE) \
-                        OR EXISTS (SELECT 1 FROM emoji_groups eg JOIN groups g ON g.id = eg.group_id \
-                                   WHERE eg.emoji_id = e.id AND LOWER(g.name) LIKE '%' || LOWER(?) || '%' COLLATE NOCASE))",
-                );
-                params.push(Box::new(trimmed.to_string()));
-                params.push(Box::new(trimmed.to_string()));
-                params.push(Box::new(trimmed.to_string()));
+                SearchMode::FuzzyGroup => {
+                    let (Some(group_term), tag) =
+                        parse_exact_query(trimmed).expect("精确分支必有语法")
+                    else {
+                        unreachable!("FuzzyGroup 仅当组名部分存在时调用");
+                    };
+                    // 组名子串命中 分组名 / 文件名 / 标签名 任一（绑定 3 次）。
+                    where_clause.push_str(
+                        " AND (EXISTS (SELECT 1 FROM emoji_groups eg JOIN groups g ON g.id = eg.group_id \
+                                    WHERE eg.emoji_id = e.id AND g.name LIKE '%' || ? || '%' COLLATE NOCASE) \
+                            OR LOWER(e.original_filename) LIKE '%' || LOWER(?) || '%' COLLATE NOCASE \
+                            OR EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
+                                       WHERE et.emoji_id = e.id AND t.name LIKE '%' || ? || '%' COLLATE NOCASE))",
+                    );
+                    params.push(Box::new(group_term.clone()));
+                    params.push(Box::new(group_term.clone()));
+                    params.push(Box::new(group_term));
+                    if let Some(tag) = tag {
+                        where_clause.push_str(
+                            " AND EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
+                               WHERE et.emoji_id = e.id AND t.name LIKE '%' || ? || '%' COLLATE NOCASE)",
+                        );
+                        params.push(Box::new(tag));
+                    }
+                }
+                SearchMode::PlainLike => {
+                    // 普通 LIKE：跨字段 OR（文件名 / 标签名 / 分组名），绑定 3 次。
+                    where_clause.push_str(
+                        " AND (LOWER(e.original_filename) LIKE '%' || LOWER(?) || '%' COLLATE NOCASE \
+                            OR EXISTS (SELECT 1 FROM emoji_tags et JOIN tags t ON t.id = et.tag_id \
+                                       WHERE et.emoji_id = e.id AND LOWER(t.name) LIKE '%' || LOWER(?) || '%' COLLATE NOCASE) \
+                            OR EXISTS (SELECT 1 FROM emoji_groups eg JOIN groups g ON g.id = eg.group_id \
+                                       WHERE eg.emoji_id = e.id AND LOWER(g.name) LIKE '%' || LOWER(?) || '%' COLLATE NOCASE))",
+                    );
+                    params.push(Box::new(trimmed.to_string()));
+                    params.push(Box::new(trimmed.to_string()));
+                    params.push(Box::new(trimmed.to_string()));
+                }
             }
         }
 
@@ -555,8 +662,10 @@ impl EmojiRepository {
                  COALESCE(e.imported_at, e.indexed_at) DESC"
             }
             _ if options.view == "search-recent" => "e.last_used_at DESC",
-            _ => "e.is_favorite DESC, COALESCE(e.imported_at, e.indexed_at) DESC, \
-                  e.original_filename COLLATE NOCASE ASC",
+            _ => {
+                "e.is_favorite DESC, COALESCE(e.imported_at, e.indexed_at) DESC, \
+                  e.original_filename COLLATE NOCASE ASC"
+            }
         };
 
         let sql = format!(
@@ -582,7 +691,7 @@ impl EmojiRepository {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("无法解析表情列表：{error}"))?;
         log::debug!(
-            "list_indexed(view={}, query={trimmed:?}, exact={exact}) 命中 {} 条，耗时 {:?}",
+            "list_indexed(view={}, query={trimmed:?}, mode={mode:?}) 命中 {} 条，耗时 {:?}",
             options.view,
             items.len(),
             started.elapsed()
@@ -1175,16 +1284,22 @@ fn row_to_indexed_emoji(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedEmoj
     })
 }
 
-/// 解析精确语法：全角冒号 `：` 归一化为 `:`，`splitn(2, ':')`。
-/// 返回 `(组名, 标签名)`；无冒号或两侧都为空 → `None`（走普通 LIKE）。
+/// 解析精确语法：`组名*标签名` 为主（全角 `＊` 归一化），`组名:标签名`
+/// 保留为别名（全角 `：` 归一化）。在最早出现的 `*` 或 `:` 处切分成两部分。
+/// 返回 `(组名, 标签名)`；无分隔符或两侧都为空 → `None`（走普通 LIKE）。
 fn parse_exact_query(query: &str) -> Option<(Option<String>, Option<String>)> {
-    let normalized = query.replace('：', ":");
-    if !normalized.contains(':') {
-        return None;
-    }
-    let mut parts = normalized.splitn(2, ':');
-    let left = parts.next().unwrap_or("").trim();
-    let right = parts.next().unwrap_or("").trim();
+    let normalized = query.replace('：', ":").replace('＊', "*");
+    let star = normalized.find('*');
+    let colon = normalized.find(':');
+    let sep = match (star, colon) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    let sep_pos = sep?;
+    let left = normalized[..sep_pos].trim();
+    let right = normalized[sep_pos + 1..].trim();
     if left.is_empty() && right.is_empty() {
         return None;
     }
@@ -1277,7 +1392,13 @@ mod tests {
         let mut connection = Connection::open_in_memory().expect("open sqlite");
         run_migrations(&mut connection).expect("run migrations");
         // 先造一条受管行（source_path == managed_path == 记录路径）。
-        insert_managed(&mut connection, "C:\\emoji.png", "sha1", Some(to_db(1)), false);
+        insert_managed(
+            &mut connection,
+            "C:\\emoji.png",
+            "sha1",
+            Some(to_db(1)),
+            false,
+        );
 
         let matched = EmojiRepository::import_legacy_recent(
             &mut connection,
@@ -1432,10 +1553,14 @@ mod tests {
         insert_indexed_emoji(&mut connection, "b.png", Some("狗狗"), &["表情"], None);
 
         let tag_id: i64 = connection
-            .query_row("SELECT id FROM tags WHERE name = '表情'", [], |row| row.get(0))
+            .query_row("SELECT id FROM tags WHERE name = '表情'", [], |row| {
+                row.get(0)
+            })
             .expect("tag id");
         let group_id: i64 = connection
-            .query_row("SELECT id FROM groups WHERE name = '猫猫'", [], |row| row.get(0))
+            .query_row("SELECT id FROM groups WHERE name = '猫猫'", [], |row| {
+                row.get(0)
+            })
             .expect("group id");
 
         // query + tag_ids + view(group) + limit/offset 全部同时存在。
@@ -1493,24 +1618,16 @@ mod tests {
         insert_indexed_emoji(&mut connection, "b.png", Some("狗狗"), &["表情"], None);
 
         // 组名:（仅分组）。
-        let items = EmojiRepository::list_indexed(
-            &connection,
-            &list_opts("all", None, None),
-            "猫猫:",
-            &[],
-        )
-        .expect("group only");
+        let items =
+            EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "猫猫:", &[])
+                .expect("group only");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "a.png");
 
         // :标签（仅标签）。
-        let items = EmojiRepository::list_indexed(
-            &connection,
-            &list_opts("all", None, None),
-            ":表情",
-            &[],
-        )
-        .expect("tag only");
+        let items =
+            EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), ":表情", &[])
+                .expect("tag only");
         assert_eq!(items.len(), 2);
     }
 
@@ -1547,6 +1664,170 @@ mod tests {
         )
         .expect("full-width colon");
         assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn list_indexed_exact_group_tag_star() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        insert_indexed_emoji(&mut connection, "a.png", Some("Cat"), &["Cool"], None);
+        insert_indexed_emoji(&mut connection, "b.png", Some("Cat"), &["Warm"], None);
+
+        // NOCASE 精确匹配，`*` 分隔符。
+        let items = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, None),
+            "cat*cool",
+            &[],
+        )
+        .expect("exact");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "a.png");
+    }
+
+    #[test]
+    fn list_indexed_star_group_only_and_tag_only() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        insert_indexed_emoji(&mut connection, "a.png", Some("猫猫"), &["表情"], None);
+        insert_indexed_emoji(&mut connection, "b.png", Some("狗狗"), &["表情"], None);
+
+        // 组名*（仅分组）。
+        let items =
+            EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "猫猫*", &[])
+                .expect("group only");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "a.png");
+
+        // *标签（仅标签）。
+        let items =
+            EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "*表情", &[])
+                .expect("tag only");
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn list_indexed_full_width_star() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        insert_indexed_emoji(&mut connection, "a.png", Some("猫猫"), &["表情"], None);
+
+        let items = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, None),
+            "猫猫＊表情",
+            &[],
+        )
+        .expect("full-width star");
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn list_indexed_star_lenient_fallback_matches_tag_stem() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        // 标签存的是完整文件名 "开心.png"（导入自动打标签），查询只输 stem "开心"。
+        insert_indexed_emoji(
+            &mut connection,
+            "开心.png",
+            Some("猫猫"),
+            &["开心.png"],
+            None,
+        );
+        insert_indexed_emoji(
+            &mut connection,
+            "难过.png",
+            Some("猫猫"),
+            &["难过.png"],
+            None,
+        );
+
+        // 精确命中：组*完整文件名（与网格显示名一致）。
+        let exact = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, None),
+            "猫猫*开心.png",
+            &[],
+        )
+        .expect("exact full");
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].name, "开心.png");
+
+        // 精确 miss（只输 stem）→ 宽松回退（组精确 + 标签 LIKE）仍命中。
+        let lenient = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, None),
+            "猫猫*开心",
+            &[],
+        )
+        .expect("lenient stem");
+        assert_eq!(lenient.len(), 1);
+        assert_eq!(lenient[0].name, "开心.png");
+    }
+
+    #[test]
+    fn list_indexed_star_lenient_fallback_matches_partial_tag() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        insert_indexed_emoji(&mut connection, "a.png", Some("猫猫"), &["开心大笑"], None);
+
+        // 精确标签 "开心" 不存在 → 宽松回退按子串命中 "开心大笑"。
+        let items = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, None),
+            "猫猫*开心",
+            &[],
+        )
+        .expect("lenient partial");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "a.png");
+    }
+
+    #[test]
+    fn list_indexed_star_fuzzy_group_matches_ungrouped_pack() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        // 未归组的表情包：无 `2233` 分组，表情文件名含 `2233`，手动打了 `来吗` 标签。
+        insert_indexed_emoji(
+            &mut connection,
+            "[2233绘梦酱_吹哨子].png",
+            None,
+            &["来吗"],
+            None,
+        );
+        insert_indexed_emoji(&mut connection, "别包.png", None, &["来吗"], None);
+
+        // 组名精确不存在 → FuzzyGroup：文件名含 2233 且标签含 来吗。
+        let items = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, None),
+            "2233*来吗",
+            &[],
+        )
+        .expect("fuzzy group");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "[2233绘梦酱_吹哨子].png");
+
+        // 只搜标签仍精确命中两个。
+        let items =
+            EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "*来吗", &[])
+                .expect("tag only");
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn list_indexed_star_fuzzy_group_only_matches_filename_contains() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        insert_indexed_emoji(&mut connection, "[2233绘梦酱_A].png", None, &[], None);
+        insert_indexed_emoji(&mut connection, "[2233绘梦酱_B].png", None, &[], None);
+        insert_indexed_emoji(&mut connection, "其他.png", None, &[], None);
+
+        // 组名部分单独存在、精确组不存在 → FuzzyGroup 按文件名子串命中。
+        let items =
+            EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "2233*", &[])
+                .expect("fuzzy group only");
+        assert_eq!(items.len(), 2);
     }
 
     #[test]
@@ -1614,7 +1895,10 @@ mod tests {
         let group_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM groups", [], |row| row.get(0))
             .expect("count groups");
-        assert_eq!(group_count, 0, "emoji 插入失败 → 分组必须随事务回滚，不产生空组");
+        assert_eq!(
+            group_count, 0,
+            "emoji 插入失败 → 分组必须随事务回滚，不产生空组"
+        );
     }
 
     fn insert_managed(
@@ -1660,11 +1944,27 @@ mod tests {
         run_migrations(&mut connection).expect("run migrations");
         let query_hash = 0u64;
         // 距离 3（远）、距离 2、距离 2（后插，id 更大）。应选距离 2 中 id 更小的。
-        let far = insert_managed(&mut connection, "/far.png", "s1", Some(to_db(0b111u64)), false);
-        let near_a =
-            insert_managed(&mut connection, "/near-a.png", "s2", Some(to_db(0b11u64)), false);
-        let near_b =
-            insert_managed(&mut connection, "/near-b.png", "s3", Some(to_db(0b11u64)), false);
+        let far = insert_managed(
+            &mut connection,
+            "/far.png",
+            "s1",
+            Some(to_db(0b111u64)),
+            false,
+        );
+        let near_a = insert_managed(
+            &mut connection,
+            "/near-a.png",
+            "s2",
+            Some(to_db(0b11u64)),
+            false,
+        );
+        let near_b = insert_managed(
+            &mut connection,
+            "/near-b.png",
+            "s3",
+            Some(to_db(0b11u64)),
+            false,
+        );
         assert!(far < near_a && near_a < near_b);
 
         let hit = EmojiRepository::find_duplicate_content(
@@ -1677,10 +1977,7 @@ mod tests {
         .expect("query")
         .expect("should hit");
         assert_eq!(hit.existing.id, near_a, "距离相同取 id 较小者");
-        assert_eq!(
-            hit.kind,
-            DedupHitKind::Perceptual { hamming: 2 }
-        );
+        assert_eq!(hit.kind, DedupHitKind::Perceptual { hamming: 2 });
     }
 
     #[test]
@@ -1689,8 +1986,9 @@ mod tests {
         run_migrations(&mut connection).expect("run migrations");
         insert_managed(&mut connection, "/a.png", "s1", Some(to_db(0b11u64)), false);
 
-        let hit = EmojiRepository::find_duplicate_content(&connection, "other", Some(to_db(0)), 4, true)
-            .expect("query");
+        let hit =
+            EmojiRepository::find_duplicate_content(&connection, "other", Some(to_db(0)), 4, true)
+                .expect("query");
         assert!(hit.is_none(), "skip_perceptual_dedup=true 时不做感知扫描");
     }
 
@@ -1699,10 +1997,17 @@ mod tests {
         let mut connection = Connection::open_in_memory().expect("open sqlite");
         run_migrations(&mut connection).expect("run migrations");
         // 距离 10 > 阈值 4。
-        insert_managed(&mut connection, "/far.png", "s1", Some(to_db(0x3ffu64)), false);
+        insert_managed(
+            &mut connection,
+            "/far.png",
+            "s1",
+            Some(to_db(0x3ffu64)),
+            false,
+        );
 
-        let hit = EmojiRepository::find_duplicate_content(&connection, "other", Some(to_db(0)), 4, false)
-            .expect("query");
+        let hit =
+            EmojiRepository::find_duplicate_content(&connection, "other", Some(to_db(0)), 4, false)
+                .expect("query");
         assert!(hit.is_none());
     }
 
@@ -1711,12 +2016,19 @@ mod tests {
         let mut connection = Connection::open_in_memory().expect("open sqlite");
         run_migrations(&mut connection).expect("run migrations");
         // 已删除行不进候选。
-        insert_managed(&mut connection, "/deleted.png", "s1", Some(to_db(0b11u64)), true);
+        insert_managed(
+            &mut connection,
+            "/deleted.png",
+            "s1",
+            Some(to_db(0b11u64)),
+            true,
+        );
         // NULL 感知哈希行不是候选。
         insert_managed(&mut connection, "/null.png", "s2", None, false);
 
-        let hit = EmojiRepository::find_duplicate_content(&connection, "other", Some(to_db(0)), 4, false)
-            .expect("query");
+        let hit =
+            EmojiRepository::find_duplicate_content(&connection, "other", Some(to_db(0)), 4, false)
+                .expect("query");
         assert!(hit.is_none());
     }
 
@@ -1726,11 +2038,15 @@ mod tests {
         run_migrations(&mut connection).expect("run migrations");
         insert_managed(&mut connection, "/null-1.png", "s1", None, false);
         insert_managed(&mut connection, "/null-2.png", "s2", None, false);
-        let filled =
-            insert_managed(&mut connection, "/filled.png", "s3", Some(to_db(0xabcd)), false);
+        let filled = insert_managed(
+            &mut connection,
+            "/filled.png",
+            "s3",
+            Some(to_db(0xabcd)),
+            false,
+        );
 
-        let nulls =
-            EmojiRepository::list_null_perceptual(&connection, 10).expect("list nulls");
+        let nulls = EmojiRepository::list_null_perceptual(&connection, 10).expect("list nulls");
         assert_eq!(nulls.len(), 2, "只有 NULL 行待回填");
 
         for (id, _path) in &nulls {

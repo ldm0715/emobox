@@ -6,7 +6,7 @@ import { useDebouncedValue } from "../library/useDebouncedValue";
 /**
  * 浮层搜索编排：
  * - 空 query → 全库最近优先（`sort: "recent"`，未用过的新图也可见，限 30）；
- * - 非空 query → 全库跨字段搜索（限 60），支持 `组名:标签` 精确语法。
+ * - 非空 query → 全库跨字段搜索（限 60），支持 `组*标签` 精确语法（`:` 为别名）。
  *
  * **requestSeq 守卫**：`query` / `activationId` / `reloadToken` 触发的旧请求
  * 返回后一律丢弃，只有当前请求能更新 `items/loading/error`；cleanup 在卸载或

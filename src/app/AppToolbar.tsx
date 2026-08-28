@@ -126,7 +126,7 @@ export function AppToolbar({
           className={styles.search}
           aria-label="搜索表情、标签或文件名"
           contentBefore={<Search20Regular />}
-          placeholder="搜索表情、标签或文件名"
+          placeholder="搜索表情、标签或分组（组*标签）"
           value={query}
           onChange={handleSearchChange}
           onKeyDown={handleSearchKeyDown}
