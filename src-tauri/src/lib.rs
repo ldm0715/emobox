@@ -103,6 +103,7 @@ pub fn run() {
             commands::create_group,
             commands::rename_group,
             commands::delete_group,
+            commands::set_group_pinned,
             commands::list_tags,
             commands::create_tag,
             commands::rename_tag,

@@ -10,6 +10,7 @@ pub struct GroupRow {
     pub name: String,
     pub sort_order: i64,
     pub count: i64,
+    pub is_pinned: bool,
 }
 
 impl GroupRepository {
@@ -20,9 +21,10 @@ impl GroupRepository {
                 SELECT g.id, g.name, g.sort_order,
                        (SELECT COUNT(*) FROM emojis e
                         JOIN emoji_groups eg ON eg.emoji_id = e.id
-                        WHERE eg.group_id = g.id AND e.is_deleted = 0) AS count
+                        WHERE eg.group_id = g.id AND e.is_deleted = 0) AS count,
+                       g.is_pinned
                 FROM groups g
-                ORDER BY g.sort_order ASC, g.id ASC
+                ORDER BY g.is_pinned DESC, g.sort_order ASC, g.id ASC
                 "#,
             )
             .map_err(|error| format!("无法准备分组列表查询：{error}"))?;
@@ -33,6 +35,7 @@ impl GroupRepository {
                     name: row.get(1)?,
                     sort_order: row.get(2)?,
                     count: row.get(3)?,
+                    is_pinned: row.get(4)?,
                 })
             })
             .map_err(|error| format!("无法读取分组列表：{error}"))?;
@@ -73,6 +76,7 @@ impl GroupRepository {
             name: trimmed.to_string(),
             sort_order: 0,
             count: 0,
+            is_pinned: false,
         })
     }
 
@@ -119,7 +123,7 @@ impl GroupRepository {
 
         let row = connection
             .query_row(
-                "SELECT id, name, sort_order FROM groups WHERE id = ?1",
+                "SELECT id, name, sort_order, is_pinned FROM groups WHERE id = ?1",
                 [id],
                 |row| {
                     Ok(GroupRow {
@@ -127,6 +131,7 @@ impl GroupRepository {
                         name: row.get(1)?,
                         sort_order: row.get(2)?,
                         count: 0,
+                        is_pinned: row.get(3)?,
                     })
                 },
             )
@@ -158,6 +163,21 @@ impl GroupRepository {
         transaction
             .commit()
             .map_err(|error| format!("无法提交删除分组：{error}"))
+    }
+
+    /// 置顶/取消置顶分组。只影响侧栏排序，不刷新组内表情的修改时间
+    /// （与 `rename_group` / `delete_group` 不同 —— 那两者算"修改内容"）。
+    pub fn set_group_pinned(connection: &Connection, id: i64, pinned: bool) -> Result<(), String> {
+        let updated = connection
+            .execute(
+                "UPDATE groups SET is_pinned = ?1, updated_at = ?2 WHERE id = ?3",
+                params![pinned, unix_time_millis(), id],
+            )
+            .map_err(|error| format!("无法更新分组置顶状态：{error}"))?;
+        if updated == 0 {
+            return Err(format!("找不到要置顶的分组：{id}"));
+        }
+        Ok(())
     }
 }
 
@@ -324,5 +344,33 @@ mod tests {
         assert_eq!(a.count, 1);
         let b = list.iter().find(|row| row.name == "B").expect("find B");
         assert_eq!(b.count, 0);
+    }
+
+    #[test]
+    fn set_group_pinned_toggles_and_orders() {
+        let mut connection = fresh();
+        let a = GroupRepository::create_group(&mut connection, "A").expect("create A");
+        let b = GroupRepository::create_group(&mut connection, "B").expect("create B");
+
+        // 默认都不置顶，按 id 升序。
+        let list = GroupRepository::list_groups(&connection).expect("list");
+        assert_eq!(list.iter().map(|row| row.id).collect::<Vec<_>>(), vec![a.id, b.id]);
+        assert!(list.iter().all(|row| !row.is_pinned));
+
+        // 置顶 B → B 排到最前。
+        GroupRepository::set_group_pinned(&connection, b.id, true).expect("pin B");
+        let list = GroupRepository::list_groups(&connection).expect("list after pin");
+        assert_eq!(list.iter().map(|row| row.id).collect::<Vec<_>>(), vec![b.id, a.id]);
+        assert!(list[0].is_pinned, "置顶的 B 应标记 is_pinned");
+        assert!(!list[1].is_pinned);
+
+        // 取消置顶 → 恢复 id 升序。
+        GroupRepository::set_group_pinned(&connection, b.id, false).expect("unpin B");
+        let list = GroupRepository::list_groups(&connection).expect("list after unpin");
+        assert_eq!(list.iter().map(|row| row.id).collect::<Vec<_>>(), vec![a.id, b.id]);
+
+        // 不存在的 id → 报错。
+        let err = GroupRepository::set_group_pinned(&connection, 9999, true).expect_err("missing id");
+        assert!(err.contains("找不到"));
     }
 }

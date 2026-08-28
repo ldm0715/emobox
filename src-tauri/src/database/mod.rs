@@ -33,6 +33,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         5,
         include_str!("../../migrations/0005_add_updated_at.sql"),
     ),
+    (
+        6,
+        include_str!("../../migrations/0006_add_group_pinned.sql"),
+    ),
 ];
 
 #[derive(Clone)]
@@ -249,7 +253,7 @@ mod tests {
                 row.get(0)
             })
             .expect("count migrations");
-        assert_eq!(migration_count, 5);
+        assert_eq!(migration_count, 6);
 
         let columns = connection
             .prepare("PRAGMA table_info(emojis)")
@@ -296,6 +300,18 @@ mod tests {
                 .expect("check table");
             assert_eq!(exists, 1, "expected table {table} to exist");
         }
+
+        let group_columns = connection
+            .prepare("PRAGMA table_info(groups)")
+            .expect("prepare groups table info")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query groups table info")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect groups columns");
+        assert!(
+            group_columns.iter().any(|column| column == "is_pinned"),
+            "migration 6 应给 groups 加 is_pinned 列"
+        );
     }
 
     /// 回归：早期开发库把 5 号迁移应用成了 file_modified（旧内容），重做后

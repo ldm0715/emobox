@@ -51,6 +51,7 @@ export interface LibraryGroup {
   name: string;
   count: number;
   sortOrder: number;
+  isPinned: boolean;
 }
 
 export interface Tag {

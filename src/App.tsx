@@ -41,6 +41,7 @@ import {
   renameGroup,
   searchEmojis,
   setEmojisFavorite,
+  setGroupPinned,
   showInExplorer,
   showQuickSearch,
   softDeleteToTrash,
@@ -1235,6 +1236,14 @@ export function App() {
                 );
               } catch (e) {
                 setError(`删除失败：${getErrorMessage(e)}`);
+              }
+            }}
+            onTogglePinGroup={async (id, pinned) => {
+              try {
+                await setGroupPinned(id, pinned);
+                await refreshSidebar();
+              } catch (e) {
+                setError(`置顶操作失败：${getErrorMessage(e)}`);
               }
             }}
           />

@@ -137,6 +137,10 @@ export function deleteGroup(id: number): Promise<void> {
   return invoke<void>("delete_group", { id });
 }
 
+export function setGroupPinned(id: number, pinned: boolean): Promise<void> {
+  return invoke<void>("set_group_pinned", { id, pinned });
+}
+
 export function listTags(): Promise<Tag[]> {
   return invoke<Tag[]>("list_tags");
 }

@@ -7,10 +7,12 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  SearchBox,
   Tooltip,
   makeStyles,
   mergeClasses,
   tokens,
+  type SearchBoxChangeEvent,
 } from "@fluentui/react-components";
 import {
   Add20Regular,
@@ -20,11 +22,14 @@ import {
   ImageMultiple24Regular,
   Keyboard24Regular,
   MoreHorizontal20Regular,
+  PinOffRegular,
+  PinRegular,
   Rename20Regular,
+  Search20Regular,
   Settings24Regular,
   Star24Regular,
 } from "@fluentui/react-icons";
-import type { ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { formatShortcutLabel } from "../config/shortcuts";
 import type { LibraryGroup, LibraryView } from "../types";
 
@@ -43,6 +48,7 @@ interface LibrarySidebarProps {
   onCreateGroup: () => void;
   onRenameGroup: (id: number, name: string) => void;
   onDeleteGroup: (id: number) => void;
+  onTogglePinGroup: (id: number, pinned: boolean) => void;
 }
 
 interface NavigationItem {
@@ -56,26 +62,18 @@ const useStyles = makeStyles({
   root: {
     minWidth: 0,
     minHeight: 0,
+    height: "100%",
     display: "flex",
     flexDirection: "column",
-    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalS}`,
+    justifyContent: "flex-start",
+    overflow: "hidden",
+    padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`,
     backgroundColor: tokens.colorNeutralBackground2,
     borderRight: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    overflow: "hidden",
   },
   rootCollapsed: {
-    alignItems: "center",
     paddingLeft: "6px",
     paddingRight: "6px",
-  },
-  sectionTitle: {
-    height: "30px",
-    display: "flex",
-    alignItems: "center",
-    paddingLeft: tokens.spacingHorizontalM,
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
-    fontWeight: tokens.fontWeightSemibold,
   },
   navigation: {
     width: "100%",
@@ -86,7 +84,7 @@ const useStyles = makeStyles({
   navItem: {
     position: "relative",
     width: "100%",
-    minHeight: "36px",
+    minHeight: "28px",
     display: "grid",
     gridTemplateColumns: "24px minmax(0, 1fr) auto auto",
     alignItems: "center",
@@ -135,12 +133,12 @@ const useStyles = makeStyles({
   },
   divider: {
     width: "100%",
-    marginTop: tokens.spacingVerticalM,
-    marginBottom: tokens.spacingVerticalM,
+    marginTop: tokens.spacingVerticalS,
+    marginBottom: tokens.spacingVerticalS,
   },
   groupHeader: {
     width: "100%",
-    height: "32px",
+    height: "28px",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
@@ -150,17 +148,44 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
   },
+  groupHeaderActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+  },
   emptyGroup: {
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
     color: tokens.colorNeutralForeground4,
     fontSize: tokens.fontSizeBase200,
   },
-  spacer: {
+  groupList: {
     flex: 1,
-    minHeight: tokens.spacingVerticalL,
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+    "::-webkit-scrollbar": {
+      width: "6px",
+    },
+    "::-webkit-scrollbar-track": {
+      backgroundColor: "transparent",
+    },
+    "::-webkit-scrollbar-thumb": {
+      backgroundColor: tokens.colorNeutralStroke3,
+      borderRadius: "3px",
+    },
+  },
+  groupSearch: {
+    width: "100%",
+    marginBottom: tokens.spacingVerticalS,
+  },
+  pinLabel: {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
   },
   bottom: {
     width: "100%",
@@ -170,12 +195,12 @@ const useStyles = makeStyles({
   },
   hintButton: {
     width: "100%",
-    minHeight: "58px",
+    minHeight: "32px",
     display: "grid",
     gridTemplateColumns: "24px minmax(0, 1fr)",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    padding: `0 ${tokens.spacingHorizontalM}`,
     color: tokens.colorNeutralForeground2,
     backgroundColor: "transparent",
     border: "none",
@@ -192,23 +217,15 @@ const useStyles = makeStyles({
   },
   hintCollapsed: {
     width: "44px",
-    minHeight: "36px",
+    minHeight: "32px",
     gridTemplateColumns: "1fr",
     justifyItems: "center",
     padding: 0,
-  },
-  hintText: {
-    minWidth: 0,
   },
   shortcut: {
     color: tokens.colorNeutralForeground2,
     fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
-  },
-  shortcutDescription: {
-    marginTop: "2px",
-    color: tokens.colorNeutralForeground4,
-    fontSize: tokens.fontSizeBase100,
   },
   settingsButton: {
     width: "100%",
@@ -253,17 +270,33 @@ export function LibrarySidebar({
   onCreateGroup,
   onRenameGroup,
   onDeleteGroup,
+  onTogglePinGroup,
 }: LibrarySidebarProps) {
   const styles = useStyles();
+  const [groupSearch, setGroupSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const shortcutLabel = formatShortcutLabel(quickSearchShortcut);
   const shortcutHint = shortcutRegistered
     ? `${shortcutLabel}：在聊天时快速找图`
     : `${shortcutLabel}：快捷键注册失败，可点击打开浮层`;
+  const trimmedGroupSearch = groupSearch.trim().toLowerCase();
+  const filteredGroups =
+    searchOpen && trimmedGroupSearch
+      ? groups.filter((group) => group.name.toLowerCase().includes(trimmedGroupSearch))
+      : groups;
   const items: NavigationItem[] = [
     { id: "all", label: "全部表情", icon: <ImageMultiple24Regular />, count: allCount },
     { id: "recent", label: "最近使用", icon: <History24Regular /> },
     { id: "favorites", label: "收藏", icon: <Star24Regular />, count: favoriteCount || undefined },
   ];
+
+  useEffect(() => {
+    if (collapsed) setSearchOpen(false);
+  }, [collapsed]);
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
 
   function renderNavigationItem(item: NavigationItem) {
     const selected = currentView === item.id;
@@ -286,7 +319,6 @@ export function LibrarySidebar({
 
   return (
     <aside className={mergeClasses(styles.root, collapsed && styles.rootCollapsed)} aria-label="资料库导航">
-      {!collapsed && <div className={styles.sectionTitle}>资料库</div>}
       <nav className={styles.navigation}>{items.map(renderNavigationItem)}</nav>
 
       <Divider className={styles.divider} />
@@ -294,80 +326,126 @@ export function LibrarySidebar({
       {!collapsed && (
         <div className={styles.groupHeader}>
           <span>我的分组</span>
-          <Tooltip content="新建分组" relationship="label">
-            <Button
-              size="small"
-              appearance="subtle"
-              aria-label="新建分组"
-              icon={<Add20Regular />}
-              onClick={onCreateGroup}
-            />
-          </Tooltip>
+          <div className={styles.groupHeaderActions}>
+            {groups.length > 0 && (
+              <Tooltip content="搜索分组" relationship="label">
+                <Button
+                  size="small"
+                  appearance={searchOpen ? "secondary" : "subtle"}
+                  aria-label="搜索分组"
+                  aria-pressed={searchOpen}
+                  icon={<Search20Regular />}
+                  onClick={() => setSearchOpen((open) => !open)}
+                />
+              </Tooltip>
+            )}
+            <Tooltip content="新建分组" relationship="label">
+              <Button
+                size="small"
+                appearance="subtle"
+                aria-label="新建分组"
+                icon={<Add20Regular />}
+                onClick={onCreateGroup}
+              />
+            </Tooltip>
+          </div>
         </div>
       )}
 
-      <div className={styles.navigation}>
-        {groups.length > 0 ? groups.map((group) => {
-          const selected = currentView === `group:${group.id}`;
-          const button = (
-            <div key={group.id} className={styles.groupRow} style={{ position: "relative" }}>
-              <button
-                type="button"
-                className={mergeClasses(styles.navItem, collapsed && styles.navItemCollapsed, selected && styles.navItemSelected)}
-                aria-label={collapsed ? group.name : undefined}
-                onClick={() => onViewChange(`group:${group.id}`)}
-              >
-                <Folder24Regular />
-                {!collapsed && <span className={styles.label}>{group.name}</span>}
-                {!collapsed && group.count !== undefined && <Badge size="small" appearance="outline">{group.count}</Badge>}
-                {!collapsed && (
-                  <span
-                    className={`group-more ${styles.groupMoreButton}`}
-                    onClick={(e) => e.stopPropagation()}
+      {searchOpen && !collapsed && groups.length > 0 && (
+        <div className={styles.groupSearch}>
+          <SearchBox
+            ref={searchInputRef}
+            size="small"
+            aria-label="搜索分组"
+            placeholder="搜索分组"
+            value={groupSearch}
+            onChange={(_: SearchBoxChangeEvent, data: { value: string }) => setGroupSearch(data.value)}
+          />
+        </div>
+      )}
+
+      <div className={mergeClasses(styles.navigation, styles.groupList)}>
+        {groups.length > 0 ? (
+          filteredGroups.length > 0 ? (
+            filteredGroups.map((group) => {
+              const selected = currentView === `group:${group.id}`;
+              const button = (
+                <div key={group.id} className={styles.groupRow} style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    className={mergeClasses(styles.navItem, collapsed && styles.navItemCollapsed, selected && styles.navItemSelected)}
+                    aria-label={collapsed ? group.name : undefined}
+                    onClick={() => onViewChange(`group:${group.id}`)}
                   >
-                    <Menu>
-                      <MenuTrigger disableButtonEnhancement>
-                        <Button
-                          size="small"
-                          appearance="subtle"
-                          aria-label={`管理分组 ${group.name}`}
-                          icon={<MoreHorizontal20Regular />}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </MenuTrigger>
-                      <MenuPopover>
-                        <MenuList>
-                          <MenuItem
-                            icon={<Rename20Regular />}
-                            onClick={() => {
-                              const newName = window.prompt("重命名分组", group.name);
-                              if (newName && newName.trim() && newName !== group.name) {
-                                onRenameGroup(group.id, newName.trim());
-                              }
-                            }}
-                          >
-                            重命名
-                          </MenuItem>
-                          <MenuItem
-                            icon={<Delete24Regular />}
-                            onClick={() => {
-                              if (window.confirm(`确定删除分组「${group.name}」？\n\n关联的表情不会被删除。`)) {
-                                onDeleteGroup(group.id);
-                              }
-                            }}
-                          >
-                            删除
-                          </MenuItem>
-                        </MenuList>
-                      </MenuPopover>
-                    </Menu>
-                  </span>
-                )}
-              </button>
+                    <Folder24Regular />
+                    {!collapsed && (
+                      <span className={styles.pinLabel}>
+                        {group.isPinned && <PinRegular fontSize={12} />}
+                        <span className={styles.label}>{group.name}</span>
+                      </span>
+                    )}
+                    {!collapsed && group.count !== undefined && <Badge size="small" appearance="outline">{group.count}</Badge>}
+                    {!collapsed && (
+                      <span
+                        className={`group-more ${styles.groupMoreButton}`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Menu>
+                          <MenuTrigger disableButtonEnhancement>
+                            <Button
+                              size="small"
+                              appearance="subtle"
+                              aria-label={`管理分组 ${group.name}`}
+                              icon={<MoreHorizontal20Regular />}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </MenuTrigger>
+                          <MenuPopover>
+                            <MenuList>
+                              <MenuItem
+                                icon={group.isPinned ? <PinOffRegular /> : <PinRegular />}
+                                onClick={() => onTogglePinGroup(group.id, !group.isPinned)}
+                              >
+                                {group.isPinned ? "取消置顶" : "置顶"}
+                              </MenuItem>
+                              <MenuItem
+                                icon={<Rename20Regular />}
+                                onClick={() => {
+                                  const newName = window.prompt("重命名分组", group.name);
+                                  if (newName && newName.trim() && newName !== group.name) {
+                                    onRenameGroup(group.id, newName.trim());
+                                  }
+                                }}
+                              >
+                                重命名
+                              </MenuItem>
+                              <MenuItem
+                                icon={<Delete24Regular />}
+                                onClick={() => {
+                                  if (window.confirm(`确定删除分组「${group.name}」？\n\n关联的表情不会被删除。`)) {
+                                    onDeleteGroup(group.id);
+                                  }
+                                }}
+                              >
+                                删除
+                              </MenuItem>
+                            </MenuList>
+                          </MenuPopover>
+                        </Menu>
+                      </span>
+                    )}
+                  </button>
+                </div>
+              );
+              return <CollapsedTooltip key={group.id} collapsed={collapsed} label={group.name}>{button}</CollapsedTooltip>;
+            })
+          ) : !collapsed ? (
+            <div className={styles.emptyGroup}>
+              <span>无匹配分组</span>
             </div>
-          );
-          return <CollapsedTooltip key={group.id} collapsed={collapsed} label={group.name}>{button}</CollapsedTooltip>;
-        }) : !collapsed ? (
+          ) : null
+        ) : !collapsed ? (
           <div className={styles.emptyGroup}>
             <Folder24Regular />
             <span>还没有分组</span>
@@ -411,7 +489,6 @@ export function LibrarySidebar({
         })()}
       </div>
 
-      <div className={styles.spacer} />
       <Divider className={styles.divider} />
 
       <div className={styles.bottom}>
@@ -423,12 +500,7 @@ export function LibrarySidebar({
             onClick={onOpenQuickSearch}
           >
             <Keyboard24Regular />
-            {!collapsed && (
-              <span className={styles.hintText}>
-                <span className={styles.shortcut}>{shortcutLabel}</span>
-                <span className={styles.shortcutDescription}>在聊天时快速找图</span>
-              </span>
-            )}
+            {!collapsed && <span className={styles.shortcut}>{shortcutLabel}</span>}
           </button>
         </Tooltip>
 

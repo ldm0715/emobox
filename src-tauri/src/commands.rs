@@ -46,6 +46,7 @@ pub struct GroupDto {
     pub name: String,
     pub count: i64,
     pub sort_order: i64,
+    pub is_pinned: bool,
 }
 
 impl From<GroupRow> for GroupDto {
@@ -55,6 +56,7 @@ impl From<GroupRow> for GroupDto {
             name: row.name,
             count: row.count,
             sort_order: row.sort_order,
+            is_pinned: row.is_pinned,
         }
     }
 }
@@ -407,6 +409,17 @@ pub fn delete_group(
     let mut connection = database_state.connect()?;
     GroupRepository::delete_group(&mut connection, id)?;
     quick_search::notify_library_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_group_pinned(
+    database_state: State<'_, database::DatabaseState>,
+    id: i64,
+    pinned: bool,
+) -> Result<(), String> {
+    let connection = database_state.connect()?;
+    GroupRepository::set_group_pinned(&connection, id, pinned)?;
     Ok(())
 }
 
