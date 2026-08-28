@@ -695,6 +695,8 @@ export function App() {
             isFavorite: false,
             lastUsedAt: Number(r.lastUsedAt),
             usageCount: Number(r.useCount),
+            importedAt: null,
+            modifiedAt: null,
             groupIds: r.groupIds,
             tagIds: r.tagIds,
           }));
@@ -907,6 +909,8 @@ export function App() {
       width: e.width,
       height: e.height,
       sizeBytes: e.sizeBytes,
+      importedAt: e.importedAt,
+      modifiedAt: e.modifiedAt,
     }));
   }, [currentView, currentEmojis, recentItems]);
 
@@ -920,6 +924,10 @@ export function App() {
         const extensionOrder = left.extension.localeCompare(right.extension, "en");
         return extensionOrder || left.name.localeCompare(right.name, "zh-CN");
       }
+      // 时间排序均为「新→旧」；`?? 0` 兜底保证缺失时间戳排最后。
+      if (sortOption === "added-time") return (right.importedAt ?? 0) - (left.importedAt ?? 0);
+      if (sortOption === "modified-time")
+        return (right.modifiedAt ?? right.importedAt ?? 0) - (left.modifiedAt ?? left.importedAt ?? 0);
       return left.name.localeCompare(right.name, "zh-CN");
     });
     return filtered;

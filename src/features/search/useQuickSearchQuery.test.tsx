@@ -44,6 +44,8 @@ function makeEmoji(id: number, name: string): IndexedEmoji {
     isFavorite: false,
     lastUsedAt: null,
     usageCount: 0,
+    importedAt: null,
+    modifiedAt: null,
     groupIds: [],
     tagIds: [],
   };

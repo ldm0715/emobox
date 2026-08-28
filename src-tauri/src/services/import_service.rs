@@ -448,6 +448,7 @@ fn commit_staged_as_source_type(
         thumbnail_path: &thumbnail_path,
         imported_at: timestamp,
         indexed_at: timestamp,
+        updated_at: timestamp,
         is_favorite: false,
         perceptual_hash,
         group,
@@ -1025,6 +1026,28 @@ mod tests {
         // 幂等：再次回填无新目标。
         let second = ImportService::backfill_filename_tags(&mut conn, 50).expect("backfill again");
         assert_eq!(second, 0, "回填应幂等");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_sets_updated_at_initial_to_imported_at() {
+        let root = test_root("import-updated-at");
+        let context = context(&root);
+        let source = root.join("mtime.png");
+        write_png(&source);
+
+        let summary = ImportService::import_paths(&context, &[source], false).expect("import");
+        assert_eq!(summary.success_count, 1);
+
+        let connection = open_connection(&context.database_path).expect("open");
+        let (imported_at, updated_at): (i64, i64) = connection
+            .query_row(
+                "SELECT imported_at, updated_at FROM emojis LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("timestamps");
+        assert_eq!(imported_at, updated_at, "新表情的修改时间初始=导入时间");
         let _ = fs::remove_dir_all(root);
     }
 

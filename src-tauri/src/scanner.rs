@@ -40,6 +40,13 @@ pub struct IndexedEmoji {
     pub is_favorite: bool,
     pub last_used_at: Option<i64>,
     pub usage_count: i64,
+    /// 添加时间（ms）。`imported_at` 与 `indexed_at` 同值；客户端「按添加时间」排序用。
+    #[serde(default)]
+    pub imported_at: Option<i64>,
+    /// 记录最后修改时间（ms，`emojis.updated_at`）。元数据被用户改动时刷新
+    /// （增删改标签/分组、收藏、回收站移入/收回）；客户端「按修改时间」排序用。
+    #[serde(default)]
+    pub modified_at: Option<i64>,
     #[serde(default)]
     pub group_ids: Vec<i64>,
     #[serde(default)]

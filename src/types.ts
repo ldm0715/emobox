@@ -7,6 +7,10 @@ export interface IndexedImage {
   width: number;
   height: number;
   sizeBytes: number;
+  /** 添加时间（ms）。网格排序「按添加时间」用；import 汇总等构造点可省略。 */
+  importedAt?: number | null;
+  /** 记录最后修改时间（ms）。元数据被改动（增删改标签/分组、收藏、回收站移入/收回）时刷新；排序「按修改时间」用；缺失时退化为 importedAt。 */
+  modifiedAt?: number | null;
 }
 
 // 已落库的完整表情：携带 id / 收藏 / 使用 / 关联。search/list 全部返回这一种。
@@ -23,6 +27,8 @@ export interface IndexedEmoji {
   isFavorite: boolean;
   lastUsedAt: number | null;     // ms 时间戳（SQLite 主源）
   usageCount: number;
+  importedAt: number | null;     // 添加时间（ms）
+  modifiedAt: number | null;     // 记录最后修改时间（ms，updated_at）
   groupIds: number[];            // 关联的分组 id 列表
   tagIds: number[];              // 关联的标签 id 列表
 }
@@ -33,7 +39,12 @@ export type LibraryView = DefaultLibraryView | `group:${number}`;
 
 export type GridDensity = "compact" | "comfortable" | "large";
 
-export type SortOption = "name-asc" | "name-desc" | "format";
+export type SortOption =
+  | "name-asc"
+  | "name-desc"
+  | "format"
+  | "added-time"
+  | "modified-time";
 
 export interface LibraryGroup {
   id: number;

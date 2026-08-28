@@ -465,6 +465,7 @@ pub fn add_emojis_to_group(
 ) -> Result<(), String> {
     let mut connection = database_state.connect()?;
     EmojiRepository::add_to_group(&mut connection, group_id, &emoji_ids)?;
+    EmojiRepository::touch_updated_at(&connection, &emoji_ids)?;
     quick_search::notify_library_changed(&app);
     Ok(())
 }
@@ -478,6 +479,7 @@ pub fn remove_emojis_from_group(
 ) -> Result<(), String> {
     let mut connection = database_state.connect()?;
     EmojiRepository::remove_from_group(&mut connection, group_id, &emoji_ids)?;
+    EmojiRepository::touch_updated_at(&connection, &emoji_ids)?;
     quick_search::notify_library_changed(&app);
     Ok(())
 }
@@ -491,6 +493,8 @@ pub fn add_tags_to_emojis(
 ) -> Result<(), String> {
     let mut connection = database_state.connect()?;
     EmojiRepository::add_tags(&mut connection, &tag_ids, &emoji_ids)?;
+    // 标签操作只在用户命令层刷新（导入自动打标签 / 启动回填走内部路径，不刷新）。
+    EmojiRepository::touch_updated_at(&connection, &emoji_ids)?;
     quick_search::notify_library_changed(&app);
     Ok(())
 }
@@ -504,6 +508,7 @@ pub fn remove_tags_from_emojis(
 ) -> Result<(), String> {
     let mut connection = database_state.connect()?;
     EmojiRepository::remove_tags(&mut connection, &tag_ids, &emoji_ids)?;
+    EmojiRepository::touch_updated_at(&connection, &emoji_ids)?;
     quick_search::notify_library_changed(&app);
     Ok(())
 }
@@ -517,6 +522,7 @@ pub fn set_emojis_favorite(
 ) -> Result<(), String> {
     let mut connection = database_state.connect()?;
     EmojiRepository::set_favorite_for_ids(&mut connection, &ids, is_favorite)?;
+    EmojiRepository::touch_updated_at(&connection, &ids)?;
     quick_search::notify_library_changed(&app);
     Ok(())
 }

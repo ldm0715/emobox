@@ -29,6 +29,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         4,
         include_str!("../../migrations/0004_remove_external_directory_add_perceptual_hash.sql"),
     ),
+    (
+        5,
+        include_str!("../../migrations/0005_add_updated_at.sql"),
+    ),
 ];
 
 #[derive(Clone)]
@@ -59,6 +63,7 @@ impl DatabaseState {
         let database_path = app_data_directory.join(DATABASE_FILE_NAME);
         let mut connection = open_connection(&database_path)?;
         run_migrations(&mut connection)?;
+        ensure_updated_at_column(&connection)?;
         import_legacy_recent_if_present(
             &mut connection,
             &app_data_directory.join(LEGACY_RECENT_FILE_NAME),
@@ -168,6 +173,30 @@ pub(crate) fn run_migrations(connection: &mut Connection) -> Result<(), String> 
     Ok(())
 }
 
+/// 兼容早期开发库：5 号迁移曾以 `file_modified` 列发布并已应用到部分库；重做后
+/// 5 号内容改为 `updated_at`，会被按版本号跳过。这里按实际 schema 幂等补列：
+/// `emojis` 缺 `updated_at` 就加列并 backfill。普通 `ALTER TABLE ADD COLUMN`，
+/// 不依赖 `ADD COLUMN IF NOT EXISTS`（部分 SQLite 版本不支持）。
+fn ensure_updated_at_column(connection: &Connection) -> Result<(), String> {
+    let has: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('emojis') WHERE name = 'updated_at'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("无法检查 updated_at 列：{error}"))?;
+    if has == 0 {
+        connection
+            .execute_batch(
+                "ALTER TABLE emojis ADD COLUMN updated_at INTEGER;
+                 UPDATE emojis SET updated_at = COALESCE(imported_at, indexed_at);",
+            )
+            .map_err(|error| format!("无法补齐 updated_at 列：{error}"))?;
+        log::info!("已为存量库补齐 updated_at 列");
+    }
+    Ok(())
+}
+
 fn import_legacy_recent_if_present(connection: &mut Connection, path: &Path) {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -207,7 +236,7 @@ fn unix_time_millis() -> i64 {
 mod tests {
     use rusqlite::Connection;
 
-    use super::run_migrations;
+    use super::{ensure_updated_at_column, run_migrations};
 
     #[test]
     fn migrations_are_idempotent_and_create_required_schema() {
@@ -220,7 +249,7 @@ mod tests {
                 row.get(0)
             })
             .expect("count migrations");
-        assert_eq!(migration_count, 4);
+        assert_eq!(migration_count, 5);
 
         let columns = connection
             .prepare("PRAGMA table_info(emojis)")
@@ -252,6 +281,7 @@ mod tests {
             "trash_path",
             "trash_thumbnail_path",
             "perceptual_hash",
+            "updated_at",
         ] {
             assert!(columns.iter().any(|column| column == required));
         }
@@ -266,5 +296,80 @@ mod tests {
                 .expect("check table");
             assert_eq!(exists, 1, "expected table {table} to exist");
         }
+    }
+
+    /// 回归：早期开发库把 5 号迁移应用成了 file_modified（旧内容），重做后
+    /// 5 号内容改为 updated_at 会被按版本号跳过。`ensure_updated_at_column`
+    /// 必须幂等地补上 updated_at 列。
+    #[test]
+    fn ensure_updated_at_column_repairs_db_that_applied_old_migration_5() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        // 1) 建 schema_migrations 表（与 run_migrations 相同）。
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at INTEGER NOT NULL
+                );",
+            )
+            .expect("schema_migrations");
+        // 2) 应用前 4 个真实迁移 + 模拟旧 5 号迁移（file_modified 列），并把 5 记为已应用。
+        for sql in [
+            include_str!("../../migrations/0001_create_emojis.sql"),
+            include_str!("../../migrations/0002_create_groups_tags.sql"),
+            include_str!("../../migrations/0003_add_emoji_trash_columns.sql"),
+            include_str!("../../migrations/0004_remove_external_directory_add_perceptual_hash.sql"),
+        ] {
+            connection.execute_batch(sql).expect("apply migration 1-4");
+        }
+        connection
+            .execute_batch("ALTER TABLE emojis ADD COLUMN file_modified INTEGER;")
+            .expect("old migration 5");
+        connection
+            .execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (5, 0)",
+                [],
+            )
+            .expect("mark old migration 5 applied");
+        // 放一行存量数据，验证修复的 backfill。
+        connection
+            .execute(
+                "INSERT INTO emojis (source_type, source_path, managed_path, original_filename, file_extension, file_size, sha256, width, height, indexed_at, usage_count, is_favorite, is_deleted)
+                 VALUES ('managed_import', '/a.png', '/a.png', 'a.png', 'png', 1, 'sha', 1, 1, 0, 0, 0, 0)",
+                [],
+            )
+            .expect("insert row");
+
+        // 3) 修复函数按实际 schema 幂等补列（run_migrations 在真实库已是 no-op，
+        //    此处直接测修复逻辑本身）。
+        ensure_updated_at_column(&connection).expect("repair");
+
+        let updated_at_column: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('emojis') WHERE name = 'updated_at'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check updated_at column");
+        assert_eq!(updated_at_column, 1, "修复应补齐 updated_at 列");
+        let backfilled: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM emojis WHERE updated_at IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check backfill");
+        assert_eq!(backfilled, 1, "修复应 backfill 存量行 updated_at");
+
+        // 幂等：再次调用无副作用。
+        ensure_updated_at_column(&connection).expect("repair again");
+        let idempotent: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('emojis') WHERE name = 'updated_at'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check again");
+        assert_eq!(idempotent, 1, "修复应幂等");
     }
 }

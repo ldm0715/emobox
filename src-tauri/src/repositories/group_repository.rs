@@ -106,6 +106,13 @@ impl GroupRepository {
         if updated == 0 {
             return Err(format!("找不到要重命名的分组：{id}"));
         }
+        // 重命名分组算"修改"：组内所有表情的修改时间一起刷新。
+        transaction
+            .execute(
+                "UPDATE emojis SET updated_at = ?1 WHERE id IN (SELECT emoji_id FROM emoji_groups WHERE group_id = ?2)",
+                params![now, id],
+            )
+            .map_err(|error| format!("无法刷新分组成员的修改时间：{error}"))?;
         transaction
             .commit()
             .map_err(|error| format!("无法提交重命名分组：{error}"))?;
@@ -133,6 +140,14 @@ impl GroupRepository {
         let transaction = connection
             .transaction()
             .map_err(|error| format!("无法开始删除分组事务：{error}"))?;
+        // 删除分组算"修改"：先刷新受影响成员的修改时间（随后 CASCADE 会清掉
+        // emoji_groups，无法再按成员查询）。
+        transaction
+            .execute(
+                "UPDATE emojis SET updated_at = ?1 WHERE id IN (SELECT emoji_id FROM emoji_groups WHERE group_id = ?2)",
+                params![unix_time_millis(), id],
+            )
+            .map_err(|error| format!("无法刷新分组成员的修改时间：{error}"))?;
         // CASCADE 自动清空 emoji_groups 中匹配行；emoji 行不动。
         let deleted = transaction
             .execute("DELETE FROM groups WHERE id = ?1", [id])
@@ -190,6 +205,62 @@ mod tests {
         let renamed =
             GroupRepository::rename_group(&mut connection, created.id, "狗狗").expect("rename");
         assert_eq!(renamed.name, "狗狗");
+    }
+
+    fn insert_emoji_with_group(connection: &mut Connection, group_id: i64) -> i64 {
+        connection
+            .execute(
+                "INSERT INTO emojis (source_type, source_path, managed_path, original_filename, file_extension, file_size, sha256, width, height, indexed_at, usage_count, is_favorite, is_deleted, updated_at)
+                 VALUES ('managed_import', '/x.png', '/x.png', 'x.png', 'png', 1, 'sha', 1, 1, 0, 0, 0, 0, 0)",
+                [],
+            )
+            .expect("insert emoji");
+        let emoji_id: i64 = connection
+            .query_row("SELECT id FROM emojis", [], |row| row.get(0))
+            .expect("emoji id");
+        connection
+            .execute(
+                "INSERT INTO emoji_groups (emoji_id, group_id, added_at) VALUES (?1, ?2, 0)",
+                rusqlite::params![emoji_id, group_id],
+            )
+            .expect("insert relation");
+        emoji_id
+    }
+
+    #[test]
+    fn rename_group_refreshes_member_updated_at() {
+        let mut connection = fresh();
+        let group = GroupRepository::create_group(&mut connection, "猫猫").expect("create");
+        let emoji_id = insert_emoji_with_group(&mut connection, group.id);
+
+        GroupRepository::rename_group(&mut connection, group.id, "狗狗").expect("rename");
+
+        let updated_at: i64 = connection
+            .query_row(
+                "SELECT updated_at FROM emojis WHERE id = ?1",
+                [emoji_id],
+                |row| row.get(0),
+            )
+            .expect("updated_at");
+        assert!(updated_at > 0, "重命名分组应刷新成员修改时间");
+    }
+
+    #[test]
+    fn delete_group_refreshes_member_updated_at() {
+        let mut connection = fresh();
+        let group = GroupRepository::create_group(&mut connection, "猫猫").expect("create");
+        let emoji_id = insert_emoji_with_group(&mut connection, group.id);
+
+        GroupRepository::delete_group(&mut connection, group.id).expect("delete group");
+
+        let updated_at: i64 = connection
+            .query_row(
+                "SELECT updated_at FROM emojis WHERE id = ?1",
+                [emoji_id],
+                |row| row.get(0),
+            )
+            .expect("updated_at");
+        assert!(updated_at > 0, "删除分组应刷新成员修改时间");
     }
 
     #[test]

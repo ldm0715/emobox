@@ -31,6 +31,8 @@ const sortLabels: Record<SortOption, string> = {
   "name-asc": "名称 A–Z",
   "name-desc": "名称 Z–A",
   format: "文件格式",
+  "added-time": "按添加时间",
+  "modified-time": "按修改时间",
 };
 
 const useStyles = makeStyles({
@@ -121,6 +123,8 @@ export function LibraryHeader({
           <Option value="name-asc">名称 A–Z</Option>
           <Option value="name-desc">名称 Z–A</Option>
           <Option value="format">文件格式</Option>
+          <Option value="added-time">按添加时间</Option>
+          <Option value="modified-time">按修改时间</Option>
         </Dropdown>
 
         <div className={styles.densityGroup} aria-label="网格密度">

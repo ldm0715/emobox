@@ -168,6 +168,13 @@ impl TrashService {
             .iter()
             .filter(|t| !failed_ids.contains(&t.id))
             .count();
+        // 移入回收站算"修改"：只刷新成功项（失败项已回滚 is_deleted，不刷新）。
+        let succeeded_ids: Vec<i64> = targets
+            .iter()
+            .filter(|t| !failed_ids.contains(&t.id))
+            .map(|t| t.id)
+            .collect();
+        EmojiRepository::touch_updated_at(&connection, &succeeded_ids)?;
         Ok(result)
     }
 
@@ -233,6 +240,13 @@ impl TrashService {
         let failed_ids: std::collections::HashSet<i64> =
             result.failures.iter().map(|f| f.id).collect();
         result.succeeded = targets.len() - failed_ids.len();
+        // 收回回收站算"修改"：只刷新成功项。
+        let succeeded_ids: Vec<i64> = targets
+            .iter()
+            .filter(|t| !failed_ids.contains(&t.id))
+            .map(|t| t.id)
+            .collect();
+        EmojiRepository::touch_updated_at(&connection, &succeeded_ids)?;
         Ok(result)
     }
 
@@ -468,6 +482,14 @@ mod tests {
             .join("trash")
             .join(format!("alpha-{id}.png"));
         assert!(trash_main.exists(), "trash 文件应存在");
+
+        let conn = state.connect().expect("conn");
+        let updated_at: Option<i64> = conn
+            .query_row("SELECT updated_at FROM emojis WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .expect("updated_at");
+        assert!(updated_at.unwrap_or(0) > 0, "移入回收站应刷新修改时间");
     }
 
     #[test]
@@ -476,9 +498,22 @@ mod tests {
         let (id, main, _thumb) = insert_managed(&state, "beta", "png", "bbb");
         TrashService::soft_delete(&state, &[id]).expect("soft");
         assert!(!main.exists());
+        // 重置 updated_at，验证 restore 会重新刷新。
+        {
+            let conn = state.connect().expect("conn");
+            conn.execute("UPDATE emojis SET updated_at = 0 WHERE id = ?1", [id])
+                .expect("reset");
+        }
         let result = TrashService::restore(&state, &[id]).expect("restore");
         assert_eq!(result.succeeded, 1);
         assert!(main.exists(), "原图应被恢复");
+        let conn = state.connect().expect("conn");
+        let updated_at: Option<i64> = conn
+            .query_row("SELECT updated_at FROM emojis WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .expect("updated_at");
+        assert!(updated_at.unwrap_or(0) > 0, "恢复应刷新修改时间");
     }
 
     #[test]

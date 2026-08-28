@@ -123,6 +123,13 @@ impl TagRepository {
         if updated == 0 {
             return Err(format!("找不到要重命名的标签：{id}"));
         }
+        // 重命名标签算"修改"：带该标签的所有表情的修改时间一起刷新。
+        transaction
+            .execute(
+                "UPDATE emojis SET updated_at = ?1 WHERE id IN (SELECT emoji_id FROM emoji_tags WHERE tag_id = ?2)",
+                params![unix_time_millis(), id],
+            )
+            .map_err(|error| format!("无法刷新标签表情的修改时间：{error}"))?;
         transaction
             .commit()
             .map_err(|error| format!("无法提交重命名标签：{error}"))?;
@@ -145,6 +152,13 @@ impl TagRepository {
         let transaction = connection
             .transaction()
             .map_err(|error| format!("无法开始删除标签事务：{error}"))?;
+        // 删除标签算"修改"：先刷新带该标签表情的修改时间（随后 CASCADE 清掉 emoji_tags）。
+        transaction
+            .execute(
+                "UPDATE emojis SET updated_at = ?1 WHERE id IN (SELECT emoji_id FROM emoji_tags WHERE tag_id = ?2)",
+                params![unix_time_millis(), id],
+            )
+            .map_err(|error| format!("无法刷新标签表情的修改时间：{error}"))?;
         // CASCADE 自动清空 emoji_tags。
         let deleted = transaction
             .execute("DELETE FROM tags WHERE id = ?1", [id])
@@ -221,6 +235,62 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM emoji_tags", [], |row| row.get(0))
             .expect("count");
         assert_eq!(relation_count, 0, "关联应被 CASCADE 清空");
+    }
+
+    fn insert_emoji_with_tag(connection: &mut Connection, tag_id: i64) -> i64 {
+        connection
+            .execute(
+                "INSERT INTO emojis (source_type, source_path, managed_path, original_filename, file_extension, file_size, sha256, width, height, indexed_at, usage_count, is_favorite, is_deleted, updated_at)
+                 VALUES ('managed_import', '/x.png', '/x.png', 'x.png', 'png', 1, 'sha', 1, 1, 0, 0, 0, 0, 0)",
+                [],
+            )
+            .expect("insert emoji");
+        let emoji_id: i64 = connection
+            .query_row("SELECT id FROM emojis", [], |row| row.get(0))
+            .expect("emoji id");
+        connection
+            .execute(
+                "INSERT INTO emoji_tags (emoji_id, tag_id, added_at) VALUES (?1, ?2, 0)",
+                rusqlite::params![emoji_id, tag_id],
+            )
+            .expect("insert relation");
+        emoji_id
+    }
+
+    #[test]
+    fn rename_tag_refreshes_tagged_emoji_updated_at() {
+        let mut connection = fresh();
+        let tag = TagRepository::create_tag(&mut connection, "搞笑").expect("create");
+        let emoji_id = insert_emoji_with_tag(&mut connection, tag.id);
+
+        TagRepository::rename_tag(&mut connection, tag.id, "好玩").expect("rename");
+
+        let updated_at: i64 = connection
+            .query_row(
+                "SELECT updated_at FROM emojis WHERE id = ?1",
+                [emoji_id],
+                |row| row.get(0),
+            )
+            .expect("updated_at");
+        assert!(updated_at > 0, "重命名标签应刷新带该标签表情的修改时间");
+    }
+
+    #[test]
+    fn delete_tag_refreshes_tagged_emoji_updated_at() {
+        let mut connection = fresh();
+        let tag = TagRepository::create_tag(&mut connection, "搞笑").expect("create");
+        let emoji_id = insert_emoji_with_tag(&mut connection, tag.id);
+
+        TagRepository::delete_tag(&mut connection, tag.id).expect("delete tag");
+
+        let updated_at: i64 = connection
+            .query_row(
+                "SELECT updated_at FROM emojis WHERE id = ?1",
+                [emoji_id],
+                |row| row.get(0),
+            )
+            .expect("updated_at");
+        assert!(updated_at > 0, "删除标签应刷新带该标签表情的修改时间");
     }
 
     #[test]

@@ -40,6 +40,9 @@ pub struct NewManagedEmoji<'a> {
     pub thumbnail_path: &'a str,
     pub imported_at: i64,
     pub indexed_at: i64,
+    /// 记录最后修改时间（ms）。新表情初始 = 导入时间；元数据被改动时由
+    /// `touch_updated_at` / 命令层刷新。
+    pub updated_at: i64,
     pub is_favorite: bool,
     /// dHash 的 i64 位保持表示（经 perceptual_hash::to_db）。
     pub perceptual_hash: Option<i64>,
@@ -357,6 +360,29 @@ impl EmojiRepository {
             .map_err(|error| format!("无法解析标签回填候选：{error}"))
     }
 
+    /// 刷新一批表情的"最后修改时间"（updated_at）。元数据被用户改动时调用。
+    /// 空列表直接返回。时间戳在方法内取当前毫秒。
+    pub fn touch_updated_at(connection: &Connection, emoji_ids: &[i64]) -> Result<(), String> {
+        if emoji_ids.is_empty() {
+            return Ok(());
+        }
+        let now = unix_time_millis();
+        let placeholders = std::iter::repeat_n("?", emoji_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("UPDATE emojis SET updated_at = ?1 WHERE id IN ({placeholders})");
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(emoji_ids.len() + 1);
+        params_vec.push(Box::new(now));
+        for id in emoji_ids {
+            params_vec.push(Box::new(*id));
+        }
+        let bound: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        connection
+            .execute(&sql, rusqlite::params_from_iter(bound))
+            .map_err(|error| format!("无法刷新修改时间：{error}"))?;
+        Ok(())
+    }
+
     /// 加载活跃受管行的 (id, perceptual_hash) 作为感知扫描候选集。
     fn list_perceptual_candidates(connection: &Connection) -> Result<Vec<(i64, i64)>, String> {
         let mut statement = connection
@@ -427,12 +453,12 @@ impl EmojiRepository {
                     source_type, source_path, managed_path, original_filename,
                     file_extension, file_size, sha256, width, height,
                     thumbnail_path, imported_at, indexed_at, last_used_at,
-                    usage_count, is_favorite, is_deleted, perceptual_hash
+                    usage_count, is_favorite, is_deleted, perceptual_hash, updated_at
                 ) VALUES (
                     ?1, ?2, ?3, ?4,
                     ?5, ?6, ?7, ?8, ?9,
                     ?10, ?11, ?12, NULL,
-                    0, ?13, 0, ?14
+                    0, ?13, 0, ?14, ?15
                 )
                 "#,
                 params![
@@ -450,6 +476,7 @@ impl EmojiRepository {
                     emoji.indexed_at,
                     emoji.is_favorite,
                     emoji.perceptual_hash,
+                    emoji.updated_at,
                 ],
             )
             .map_err(|error| format!("无法写入素材记录：{error}"))?;
@@ -672,7 +699,8 @@ impl EmojiRepository {
             "SELECT id, original_filename, \
                     COALESCE(managed_path, source_path) AS current_path, \
                     thumbnail_path, file_extension, width, height, file_size, \
-                    source_type, is_favorite, last_used_at, usage_count \
+                    source_type, is_favorite, last_used_at, usage_count, \
+                    imported_at, updated_at \
              FROM emojis e {where_clause} \
              ORDER BY {order_by} \
              LIMIT ? OFFSET ?"
@@ -709,7 +737,8 @@ impl EmojiRepository {
                        COALESCE(trash_path, managed_path, source_path) AS path,
                        COALESCE(trash_thumbnail_path, thumbnail_path) AS thumb,
                        file_extension, width, height, file_size,
-                       source_type, is_favorite, last_used_at, usage_count
+                       source_type, is_favorite, last_used_at, usage_count,
+                       imported_at, updated_at
                 FROM emojis
                 WHERE is_deleted = 1
                 ORDER BY deleted_at DESC, id DESC
@@ -753,7 +782,8 @@ impl EmojiRepository {
                 SELECT id, original_filename,
                        COALESCE(managed_path, source_path) AS path,
                        thumbnail_path, file_extension, width, height, file_size,
-                       source_type, is_favorite, last_used_at, usage_count
+                       source_type, is_favorite, last_used_at, usage_count,
+                       imported_at, updated_at
                 FROM emojis
                 WHERE is_deleted = 0 AND last_used_at IS NOT NULL
                 ORDER BY last_used_at DESC
@@ -1279,6 +1309,8 @@ fn row_to_indexed_emoji(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedEmoj
         is_favorite: row.get::<_, i64>(9)? != 0,
         last_used_at: row.get(10)?,
         usage_count: row.get(11)?,
+        imported_at: row.get(12)?,
+        modified_at: row.get(13)?,
         group_ids: Vec::new(),
         tag_ids: Vec::new(),
     })
@@ -1461,6 +1493,7 @@ mod tests {
             thumbnail_path: "/t.png",
             imported_at: 0,
             indexed_at: 0,
+            updated_at: 0,
             is_favorite: false,
             perceptual_hash: None,
             group,
@@ -1923,6 +1956,27 @@ mod tests {
             )
             .expect("insert managed row");
         connection.last_insert_rowid()
+    }
+
+    #[test]
+    fn touch_updated_at_refreshes_selected_rows_only() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let id1 = insert_managed(&mut connection, "/a.png", "sha-a", None, false);
+        let id2 = insert_managed(&mut connection, "/b.png", "sha-b", None, false);
+
+        EmojiRepository::touch_updated_at(&connection, &[id1]).expect("touch");
+
+        let (u1, u2): (Option<i64>, Option<i64>) = connection
+            .query_row(
+                "SELECT (SELECT updated_at FROM emojis WHERE id = ?1),
+                        (SELECT updated_at FROM emojis WHERE id = ?2)",
+                rusqlite::params![id1, id2],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read updated_at");
+        assert!(u1.unwrap_or(0) > 0, "被 touch 的行应刷新 updated_at");
+        assert_eq!(u2, None, "未被 touch 的行保持 NULL");
     }
 
     #[test]
