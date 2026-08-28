@@ -33,7 +33,7 @@ export function ThemeQuickMenu() {
           <Button
             appearance="subtle"
             aria-label="主题"
-            icon={resolvedTheme === "dark" ? <WeatherSunny24Regular /> : <WeatherMoon24Regular />}
+            icon={resolvedTheme === "dark" ? <WeatherMoon24Regular /> : <WeatherSunny24Regular />}
           />
         </MenuTrigger>
       </Tooltip>
