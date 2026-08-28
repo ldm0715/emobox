@@ -5,12 +5,13 @@ import {
 } from "@fluentui/react-components";
 import { Dismiss20Regular, SearchSquare20Regular } from "@fluentui/react-icons";
 import { formatShortcutLabel } from "../../config/shortcuts";
-import type { IndexedImage, RecentImageRecord } from "../../types";
+import type { IndexedImage } from "../../types";
 import { QuickSearchContent } from "./QuickSearchContent";
 
 interface QuickSearchPanelProps {
-  items: IndexedImage[];
-  recentItems: RecentImageRecord[];
+  results: IndexedImage[];
+  query: string;
+  onQueryChange: (query: string) => void;
   loading: boolean;
   error?: string;
   copyError?: string;
@@ -69,8 +70,9 @@ const useStyles = makeStyles({
 });
 
 export function QuickSearchPanel({
-  items,
-  recentItems,
+  results,
+  query,
+  onQueryChange,
   loading,
   error,
   copyError,
@@ -100,8 +102,9 @@ export function QuickSearchPanel({
         </header>
         <div className={styles.content}>
           <QuickSearchContent
-            items={items}
-            recentItems={recentItems}
+            results={results}
+            query={query}
+            onQueryChange={onQueryChange}
             loading={loading}
             error={error}
             copyError={copyError}

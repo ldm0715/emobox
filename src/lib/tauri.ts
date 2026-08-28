@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ClipboardCopyOutcome,
+  FolderImportSummary,
   IndexedEmoji,
   IndexedImage,
   LibraryGroup,
   ManagedImportSummary,
+  PasteResult,
   RecentImageRecord,
-  ScanSummary,
   SearchOptions,
   ShortcutRegistrationStatus,
   StorageInfo,
@@ -14,20 +15,28 @@ import type {
   TrashResult,
 } from "../types";
 
-export function scanDirectory(path: string): Promise<ScanSummary> {
-  return invoke<ScanSummary>("scan_directory", { path });
+export function importFolder(
+  path: string,
+  skipPerceptualDedup = false,
+): Promise<FolderImportSummary> {
+  return invoke<FolderImportSummary>("import_folder", {
+    path,
+    skipPerceptualDedup,
+  });
 }
 
-export function importManagedPaths(paths: string[]): Promise<ManagedImportSummary> {
-  return invoke<ManagedImportSummary>("import_managed_paths", { paths });
+export function importManagedPaths(
+  paths: string[],
+  skipPerceptualDedup = false,
+): Promise<ManagedImportSummary> {
+  return invoke<ManagedImportSummary>("import_managed_paths", {
+    paths,
+    skipPerceptualDedup,
+  });
 }
 
-export function loadThumbnail(path: string, maxSize = 240): Promise<string> {
-  return invoke<string>("load_thumbnail", { path, maxSize });
-}
-
-export function getIndexedImages(): Promise<IndexedImage[]> {
-  return invoke<IndexedImage[]>("get_indexed_images");
+export function loadThumbnail(emojiId: number, maxSize = 240): Promise<string> {
+  return invoke<string>("load_thumbnail", { emojiId, maxSize });
 }
 
 export function getStorageInfo(): Promise<StorageInfo> {
@@ -68,8 +77,12 @@ export type ClipboardCollectOutcome =
     }
   | { kind: "unavailable"; reason: string; message: string };
 
-export function collectImageFromClipboard(): Promise<ClipboardCollectOutcome> {
-  return invoke<ClipboardCollectOutcome>("collect_image_from_clipboard");
+export function collectImageFromClipboard(
+  skipPerceptualDedup = false,
+): Promise<ClipboardCollectOutcome> {
+  return invoke<ClipboardCollectOutcome>("collect_image_from_clipboard", {
+    skipPerceptualDedup,
+  });
 }
 
 export type SetOutcome =
@@ -201,4 +214,10 @@ export function listDeletedEmojis(): Promise<IndexedEmoji[]> {
 
 export function showInExplorer(path: string): Promise<void> {
   return invoke<void>("show_in_explorer", { path });
+}
+
+// ---------- Phase 7: 自动粘贴 ----------
+
+export function pasteToTargetWindow(): Promise<PasteResult> {
+  return invoke<PasteResult>("paste_to_target_window");
 }

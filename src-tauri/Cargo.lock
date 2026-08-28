@@ -833,6 +833,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-log",
  "walkdir",
+ "windows",
 ]
 
 [[package]]

@@ -1,5 +1,6 @@
-// 扫描器/导入中间结果的 6 字段版本（未入库的）。
+// 轻量图片投影：携带 id（供 load_thumbnail 按 id 取缩略图）与展示字段。
 export interface IndexedImage {
+  id: number;
   name: string;
   path: string;
   extension: string;
@@ -18,22 +19,12 @@ export interface IndexedEmoji {
   width: number;
   height: number;
   sizeBytes: number;
-  sourceType: "external_directory" | "managed_import" | "clipboard";
+  sourceType: "managed_import" | "clipboard";
   isFavorite: boolean;
   lastUsedAt: number | null;     // ms 时间戳（SQLite 主源）
   usageCount: number;
   groupIds: number[];            // 关联的分组 id 列表
   tagIds: number[];              // 关联的标签 id 列表
-}
-
-export interface ScanSummary {
-  directory: string;
-  indexedCount: number;
-  skippedCount: number;
-  unsupportedCount: number;
-  elapsedMs: number;
-  items: IndexedImage[];
-  warnings: string[];
 }
 
 export type DefaultLibraryView = "all" | "recent" | "favorites" | "trash" | "ungrouped";
@@ -91,13 +82,36 @@ export interface ImportFailure {
   message: string;
 }
 
+// 感知重复命中：dHash 疑似同图。sourcePath 供"强制导入"重试（跳过感知去重）。
+export interface PerceptualDuplicateInfo {
+  sourcePath: string;
+  candidateId: number;
+  candidatePath: string;
+  hamming: number;
+}
+
 export interface ManagedImportSummary {
   successCount: number;
-  duplicateCount: number;
+  exactDuplicateCount: number;
+  perceptualDuplicateCount: number;
   failedCount: number;
   elapsedMs: number;
   items: IndexedImage[];
   failures: ImportFailure[];
+  perceptualDuplicates: PerceptualDuplicateInfo[];
+}
+
+// 文件夹导入汇总。groupsCreated 只包含本次真正新建的组名（复用的既有组不计入）。
+export interface FolderImportSummary {
+  successCount: number;
+  exactDuplicateCount: number;
+  perceptualDuplicateCount: number;
+  failedCount: number;
+  groupsCreated: string[];
+  elapsedMs: number;
+  items: IndexedImage[];
+  failures: ImportFailure[];
+  perceptualDuplicates: PerceptualDuplicateInfo[];
 }
 
 export interface StorageInfo {
@@ -123,6 +137,7 @@ export interface SearchOptions {
   groupId?: number;
   tagIds?: number[];
   favoriteOnly?: boolean;
+  sort?: "recent";
   limit?: number;
   offset?: number;
 }
@@ -137,3 +152,33 @@ export interface TrashResult {
   filesMoved: number;
   failures: TrashFailure[];
 }
+
+// Phase 7: auto-paste result. `kind` is lowercase to match the Rust
+// `serde(rename_all = "lowercase")` enum. The frontend dispatches on
+// `kind` and shows a single toast.
+export type PasteResult =
+  | {
+      kind: "success";
+      reason: string;
+      processName: string | null;
+      message: string;
+    }
+  | {
+      kind: "clipboardOnly";
+      reason:
+        | "noTarget"
+        | "targetClosed"
+        | "activationFailed"
+        | "inputFailed"
+        | "reused"
+        | "invisible"
+        | string;
+      processName: string | null;
+      message: string;
+    }
+  | {
+      kind: "disabled";
+      reason: string;
+      processName: null;
+      message: string;
+    };

@@ -19,6 +19,7 @@ use crate::{
     scanner::IndexedImage,
     services::import_service::{
         ImportContext, ImportOneOutcome, ImportService, ManagedImportSummary,
+        PerceptualDuplicateInfo,
     },
 };
 
@@ -51,6 +52,7 @@ pub enum ClipboardCollectOutcome {
 pub fn collect_image_from_clipboard<R: Runtime>(
     app: &AppHandle<R>,
     database_state: &DatabaseState,
+    skip_perceptual_dedup: bool,
 ) -> ClipboardCollectOutcome {
     // 1. 读剪贴板
     let image_result = app.clipboard().read_image();
@@ -103,16 +105,29 @@ pub fn collect_image_from_clipboard<R: Runtime>(
         thumbnails_directory: database_state.thumbnails_directory().to_path_buf(),
     };
 
-    let result = ImportService::import_dynamic_image(&context, dyn_image, "png", &filename);
+    let result = ImportService::import_dynamic_image(
+        &context,
+        dyn_image,
+        "png",
+        &filename,
+        skip_perceptual_dedup,
+    );
 
     match result {
-        Ok(ImportOneOutcome::Imported(item)) => ClipboardCollectOutcome::Imported {
+        Ok(ImportOneOutcome::Imported { item, .. }) => ClipboardCollectOutcome::Imported {
             summary: build_summary_for_imported(&item, &filename),
             message: "已从剪贴板收藏。".to_string(),
         },
-        Ok(ImportOneOutcome::Duplicate) => ClipboardCollectOutcome::Duplicate {
+        Ok(ImportOneOutcome::ExactDuplicate) => ClipboardCollectOutcome::Duplicate {
             summary: build_summary_for_duplicate(),
             message: "这张图片已在素材库中。".to_string(),
+        },
+        Ok(ImportOneOutcome::PerceptualDuplicate(info)) => ClipboardCollectOutcome::Duplicate {
+            summary: build_summary_for_perceptual_duplicate(&info),
+            message: format!(
+                "检测到感知相似的图片（相似度 {}），请确认是否同一张。",
+                info.hamming
+            ),
         },
         Err(error) => ClipboardCollectOutcome::Failed {
             summary: None,
@@ -125,10 +140,12 @@ pub fn collect_image_from_clipboard<R: Runtime>(
 fn build_summary_for_imported(item: &IndexedImage, filename: &str) -> ManagedImportSummary {
     ManagedImportSummary {
         success_count: 1,
-        duplicate_count: 0,
+        exact_duplicate_count: 0,
+        perceptual_duplicate_count: 0,
         failed_count: 0,
         elapsed_ms: 0,
         items: vec![IndexedImage {
+            id: item.id,
             name: filename.to_string(),
             path: item.path.clone(),
             extension: item.extension.clone(),
@@ -137,17 +154,33 @@ fn build_summary_for_imported(item: &IndexedImage, filename: &str) -> ManagedImp
             size_bytes: item.size_bytes,
         }],
         failures: Vec::new(),
+        perceptual_duplicates: Vec::new(),
     }
 }
 
 fn build_summary_for_duplicate() -> ManagedImportSummary {
     ManagedImportSummary {
         success_count: 0,
-        duplicate_count: 1,
+        exact_duplicate_count: 1,
+        perceptual_duplicate_count: 0,
         failed_count: 0,
         elapsed_ms: 0,
         items: Vec::new(),
         failures: Vec::new(),
+        perceptual_duplicates: Vec::new(),
+    }
+}
+
+fn build_summary_for_perceptual_duplicate(info: &PerceptualDuplicateInfo) -> ManagedImportSummary {
+    ManagedImportSummary {
+        success_count: 0,
+        exact_duplicate_count: 0,
+        perceptual_duplicate_count: 1,
+        failed_count: 0,
+        elapsed_ms: 0,
+        items: Vec::new(),
+        failures: Vec::new(),
+        perceptual_duplicates: vec![info.clone()],
     }
 }
 

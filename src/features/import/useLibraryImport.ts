@@ -2,10 +2,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useState } from "react";
 import {
   collectImageFromClipboard,
+  importFolder as importFolderCmd,
   importManagedPaths,
-  scanDirectory,
 } from "../../lib/tauri";
-import type { ManagedImportSummary, ScanSummary } from "../../types";
+import type { FolderImportSummary, ManagedImportSummary } from "../../types";
 
 const imageFilters = [{
   name: "支持的图片",
@@ -23,55 +23,53 @@ function toUserMessage(error: unknown): string {
 }
 
 export function useLibraryImport() {
-  const [directory, setDirectory] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState("");
 
-  const scanPath = useCallback(async (path: string): Promise<ScanSummary | null> => {
-    setIsImporting(true);
-    setError("");
+  // 文件夹导入：递归复制进受管库，顶层子文件夹自动建同名分组。
+  const importFolder = useCallback(
+    async (skipPerceptualDedup = false): Promise<FolderImportSummary | null> => {
+      setError("");
+      try {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: "选择要导入的表情包文件夹",
+        });
+        if (typeof selected !== "string") return null;
+        setIsImporting(true);
+        try {
+          return await importFolderCmd(selected, skipPerceptualDedup);
+        } finally {
+          setIsImporting(false);
+        }
+      } catch (dialogError) {
+        setError(toUserMessage(dialogError));
+        return null;
+      }
+    },
+    [],
+  );
 
-    try {
-      const summary = await scanDirectory(path);
-      setDirectory(summary.directory);
-      return summary;
-    } catch (scanError) {
-      setError(toUserMessage(scanError));
-      return null;
-    } finally {
-      setIsImporting(false);
-    }
-  }, []);
-
-  const importFolder = useCallback(async (): Promise<ScanSummary | null> => {
-    setError("");
-    try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "选择要索引的表情包文件夹",
-      });
-      if (typeof selected !== "string") return null;
-      return await scanPath(selected);
-    } catch (dialogError) {
-      setError(toUserMessage(dialogError));
-      return null;
-    }
-  }, [scanPath]);
-
-  const importPaths = useCallback(async (paths: string[]): Promise<ManagedImportSummary | null> => {
-    if (paths.length === 0) return null;
-    setIsImporting(true);
-    setError("");
-    try {
-      return await importManagedPaths(paths);
-    } catch (importError) {
-      setError(toUserMessage(importError));
-      return null;
-    } finally {
-      setIsImporting(false);
-    }
-  }, []);
+  const importPaths = useCallback(
+    async (
+      paths: string[],
+      skipPerceptualDedup = false,
+    ): Promise<ManagedImportSummary | null> => {
+      if (paths.length === 0) return null;
+      setIsImporting(true);
+      setError("");
+      try {
+        return await importManagedPaths(paths, skipPerceptualDedup);
+      } catch (importError) {
+        setError(toUserMessage(importError));
+        return null;
+      } finally {
+        setIsImporting(false);
+      }
+    },
+    [],
+  );
 
   const importImages = useCallback(async (): Promise<ManagedImportSummary | null> => {
     setError("");
@@ -91,15 +89,10 @@ export function useLibraryImport() {
     }
   }, [importPaths]);
 
-  const rescan = useCallback(async () => {
-    if (!directory) return null;
-    return await scanPath(directory);
-  }, [directory, scanPath]);
-
-  const collectFromClipboard = useCallback(async () => {
+  const collectFromClipboard = useCallback(async (skipPerceptualDedup = false) => {
     setError("");
     try {
-      return await collectImageFromClipboard();
+      return await collectImageFromClipboard(skipPerceptualDedup);
     } catch (invokeError) {
       setError(toUserMessage(invokeError));
       return null;
@@ -107,14 +100,12 @@ export function useLibraryImport() {
   }, []);
 
   return {
-    directory,
     isImporting,
     error,
     setError,
     importImages,
     importFolder,
     importPaths,
-    rescan,
     collectFromClipboard,
   };
 }

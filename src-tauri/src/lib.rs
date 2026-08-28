@@ -2,12 +2,15 @@ mod clipboard;
 mod clipboard_collect;
 mod commands;
 mod database;
+mod platform;
+mod perceptual_hash;
 mod quick_search;
 mod recent;
 mod repositories;
 mod scanner;
 mod services;
 mod shortcut_registry;
+mod target_window;
 mod thumbnail;
 mod tray;
 
@@ -35,6 +38,7 @@ pub fn run() {
             let recent_state =
                 recent::RecentImagesState::load(app.handle()).map_err(std::io::Error::other)?;
             app.manage(recent_state);
+            app.manage(target_window::TargetWindowState::new());
             tray::setup(app)?;
 
             // 启动清理全局快捷键（D5 reconcile），确保 OS 层面没有上次的残留
@@ -48,10 +52,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::scan_directory,
+            commands::import_folder,
             commands::import_managed_paths,
             commands::load_thumbnail,
-            commands::get_indexed_images,
             commands::get_storage_info,
             commands::open_assets_directory,
             commands::copy_image_to_clipboard,
@@ -83,6 +86,7 @@ pub fn run() {
             commands::empty_trash,
             commands::list_deleted_emojis,
             commands::show_in_explorer,
+            commands::paste_to_target_window,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

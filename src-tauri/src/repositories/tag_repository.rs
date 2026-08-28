@@ -107,17 +107,13 @@ impl TagRepository {
             .map_err(|error| format!("无法提交重命名标签：{error}"))?;
 
         let row = connection
-            .query_row(
-                "SELECT id, name FROM tags WHERE id = ?1",
-                [id],
-                |row| {
-                    Ok(TagRow {
-                        id: row.get(0)?,
-                        name: row.get(1)?,
-                        count: 0,
-                    })
-                },
-            )
+            .query_row("SELECT id, name FROM tags WHERE id = ?1", [id], |row| {
+                Ok(TagRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    count: 0,
+                })
+            })
             .optional()
             .map_err(|error| format!("无法读取重命名后的标签：{error}"))?
             .ok_or_else(|| format!("找不到标签：{id}"))?;
@@ -184,7 +180,7 @@ mod tests {
         let tag = TagRepository::create_tag(&mut connection, "搞笑").expect("create");
         connection
             .execute(
-                "INSERT INTO emojis (source_type, source_path, original_filename, file_extension, file_size, width, height, indexed_at, usage_count, is_favorite, is_deleted) VALUES ('external_directory', '/x.png', 'x.png', 'png', 1, 1, 1, 0, 0, 0, 0)",
+                "INSERT INTO emojis (source_type, source_path, managed_path, original_filename, file_extension, file_size, sha256, width, height, indexed_at, usage_count, is_favorite, is_deleted) VALUES ('managed_import', '/x.png', '/x.png', 'x.png', 'png', 1, 'sha', 1, 1, 0, 0, 0, 0)",
                 [],
             )
             .expect("insert emoji");
@@ -213,7 +209,7 @@ mod tests {
         let _t2 = TagRepository::create_tag(&mut connection, "B").expect("t2");
         connection
             .execute(
-                "INSERT INTO emojis (source_type, source_path, original_filename, file_extension, file_size, width, height, indexed_at, usage_count, is_favorite, is_deleted) VALUES ('external_directory', '/x.png', 'x.png', 'png', 1, 1, 1, 0, 0, 0, 0)",
+                "INSERT INTO emojis (source_type, source_path, managed_path, original_filename, file_extension, file_size, sha256, width, height, indexed_at, usage_count, is_favorite, is_deleted) VALUES ('managed_import', '/x.png', '/x.png', 'x.png', 'png', 1, 'sha', 1, 1, 0, 0, 0, 0)",
                 [],
             )
             .expect("insert emoji");

@@ -186,7 +186,7 @@ export function EmojiGridItem({
   onPermanentlyDelete,
 }: EmojiGridItemProps) {
   const styles = useStyles();
-  const { source, failed } = useThumbnail(item.path, thumbnailSize);
+  const { source, failed } = useThumbnail(item.id, thumbnailSize);
   const [menuOpen, setMenuOpen] = useState(false);
 
   function stop(event: MouseEvent) {

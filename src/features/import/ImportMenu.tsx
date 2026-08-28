@@ -39,7 +39,7 @@ export function ImportMenu({
             导入图片
           </MenuItem>
           <MenuItem icon={<FolderAdd20Regular />} onClick={onImportFolder}>
-            导入文件夹（仅索引原路径）
+            导入文件夹（自动建分组）
           </MenuItem>
           <MenuItem
             icon={<ClipboardImage20Regular />}

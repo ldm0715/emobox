@@ -1,4 +1,5 @@
 import {
+  Button,
   Toast,
   ToastBody,
   ToastTitle,
@@ -29,7 +30,6 @@ import {
   createTag,
   deleteGroup,
   getErrorMessage,
-  getIndexedImages,
   getRecentImages,
   getStorageInfo,
   listDeletedEmojis,
@@ -88,6 +88,7 @@ const useStyles = makeStyles({
 
 function toLegacyImage(emoji: IndexedEmoji): IndexedImage {
   return {
+    id: emoji.id,
     name: emoji.name,
     path: emoji.path,
     extension: emoji.extension,
@@ -492,17 +493,46 @@ export function App() {
     const intent = summary.failedCount > 0
       ? summary.successCount > 0 ? "warning" : "error"
       : "success";
+    const totalDuplicates =
+      summary.exactDuplicateCount + summary.perceptualDuplicateCount;
+    const retryPaths = summary.perceptualDuplicates.map((d) => d.sourcePath);
+
     dispatchToast(
       <Toast>
-        <ToastTitle>导入完成：成功 {summary.successCount} 张</ToastTitle>
+        <ToastTitle
+          action={
+            retryPaths.length > 0 ? (
+              <Button
+                appearance="primary"
+                onClick={() => {
+                  void (async () => {
+                    const retried = await importPaths(retryPaths, true);
+                    if (retried) {
+                      await prepareAfterImport();
+                      showManagedImportResult(retried);
+                    }
+                  })();
+                }}
+              >
+                强制导入
+              </Button>
+            ) : undefined
+          }
+        >
+          导入完成：成功 {summary.successCount} 张
+        </ToastTitle>
         <ToastBody>
-          重复跳过 {summary.duplicateCount} 张，失败 {summary.failedCount} 张。
+          重复跳过 {totalDuplicates} 张
+          {summary.perceptualDuplicateCount > 0
+            ? `（其中感知相似 ${summary.perceptualDuplicateCount} 张）`
+            : ""}
+          ，失败 {summary.failedCount} 张。
           {summary.failures[0] ? ` ${summary.failures[0].message}` : ""}
         </ToastBody>
       </Toast>,
       { intent },
     );
-  }, [dispatchToast]);
+  }, [dispatchToast, importPaths, prepareAfterImport]);
 
   const handleImportImages = useCallback(async () => {
     const summary = await importImages();
@@ -516,14 +546,27 @@ export function App() {
     if (!summary) return;
     await prepareAfterImport();
 
+    const totalDuplicates =
+      summary.exactDuplicateCount + summary.perceptualDuplicateCount;
+    const intent = summary.failedCount > 0
+      ? summary.successCount > 0 ? "warning" : "error"
+      : "success";
     dispatchToast(
       <Toast>
-        <ToastTitle>已索引 {summary.indexedCount} 张外部图片</ToastTitle>
-        {(summary.skippedCount > 0 || summary.unsupportedCount > 0) && (
-          <ToastBody>跳过 {summary.skippedCount} 个无法读取项和 {summary.unsupportedCount} 个其他文件。</ToastBody>
-        )}
+        <ToastTitle>导入完成：成功 {summary.successCount} 张</ToastTitle>
+        <ToastBody>
+          {summary.groupsCreated.length > 0
+            ? `已新建分组：${summary.groupsCreated.join("、")}。`
+            : ""}
+          重复跳过 {totalDuplicates} 张
+          {summary.perceptualDuplicateCount > 0
+            ? `（其中感知相似 ${summary.perceptualDuplicateCount} 张）`
+            : ""}
+          {summary.failedCount > 0 ? `，失败 ${summary.failedCount} 张` : ""}。
+          {summary.failures[0] ? ` ${summary.failures[0].message}` : ""}
+        </ToastBody>
       </Toast>,
-      { intent: "success" },
+      { intent },
     );
   }, [dispatchToast, importFolder, prepareAfterImport]);
 
@@ -643,7 +686,7 @@ export function App() {
             width: r.item.width,
             height: r.item.height,
             sizeBytes: r.item.sizeBytes,
-            sourceType: "external_directory",
+            sourceType: "managed_import",
             isFavorite: false,
             lastUsedAt: Number(r.lastUsedAt),
             usageCount: Number(r.useCount),
@@ -846,6 +889,7 @@ export function App() {
       return recentItems.map((record) => record.item);
     }
     return currentEmojis.map((e) => ({
+      id: e.id,
       name: e.name,
       path: e.path,
       extension: e.extension,

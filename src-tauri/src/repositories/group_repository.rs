@@ -187,8 +187,8 @@ mod tests {
     fn rename_group_updates_timestamp() {
         let mut connection = fresh();
         let created = GroupRepository::create_group(&mut connection, "猫猫").expect("create");
-        let renamed = GroupRepository::rename_group(&mut connection, created.id, "狗狗")
-            .expect("rename");
+        let renamed =
+            GroupRepository::rename_group(&mut connection, created.id, "狗狗").expect("rename");
         assert_eq!(renamed.name, "狗狗");
     }
 
@@ -199,7 +199,7 @@ mod tests {
         // 插入一个 emoji + 关联，验证删除 group 后关联被清空但 emoji 行不动
         connection
             .execute(
-                "INSERT INTO emojis (source_type, source_path, original_filename, file_extension, file_size, width, height, indexed_at, usage_count, is_favorite, is_deleted) VALUES ('external_directory', '/x.png', 'x.png', 'png', 1, 1, 1, 0, 0, 0, 0)",
+                "INSERT INTO emojis (source_type, source_path, managed_path, original_filename, file_extension, file_size, sha256, width, height, indexed_at, usage_count, is_favorite, is_deleted) VALUES ('managed_import', '/x.png', '/x.png', 'x.png', 'png', 1, 'sha', 1, 1, 0, 0, 0, 0)",
                 [],
             )
             .expect("insert emoji");
@@ -233,7 +233,7 @@ mod tests {
         let _g2 = GroupRepository::create_group(&mut connection, "B").expect("g2");
         connection
             .execute(
-                "INSERT INTO emojis (source_type, source_path, original_filename, file_extension, file_size, width, height, indexed_at, usage_count, is_favorite, is_deleted) VALUES ('external_directory', '/x.png', 'x.png', 'png', 1, 1, 1, 0, 0, 0, 0)",
+                "INSERT INTO emojis (source_type, source_path, managed_path, original_filename, file_extension, file_size, sha256, width, height, indexed_at, usage_count, is_favorite, is_deleted) VALUES ('managed_import', '/x.png', '/x.png', 'x.png', 'png', 1, 'sha', 1, 1, 0, 0, 0, 0)",
                 [],
             )
             .expect("insert emoji");

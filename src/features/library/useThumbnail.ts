@@ -4,15 +4,15 @@ import { loadThumbnail } from "../../lib/tauri";
 const resolvedCache = new Map<string, string>();
 const pendingCache = new Map<string, Promise<string>>();
 
-function requestThumbnail(path: string, maxSize: number): Promise<string> {
-  const key = `${path}:${maxSize}`;
+function requestThumbnail(emojiId: number, maxSize: number): Promise<string> {
+  const key = `${emojiId}:${maxSize}`;
   const cached = resolvedCache.get(key);
   if (cached) return Promise.resolve(cached);
 
   const pending = pendingCache.get(key);
   if (pending) return pending;
 
-  const request = loadThumbnail(path, maxSize)
+  const request = loadThumbnail(emojiId, maxSize)
     .then((source) => {
       resolvedCache.set(key, source);
       pendingCache.delete(key);
@@ -27,8 +27,8 @@ function requestThumbnail(path: string, maxSize: number): Promise<string> {
   return request;
 }
 
-export function useThumbnail(path: string, maxSize: number) {
-  const cacheKey = `${path}:${maxSize}`;
+export function useThumbnail(emojiId: number, maxSize: number) {
+  const cacheKey = `${emojiId}:${maxSize}`;
   const [source, setSource] = useState<string | null>(() => resolvedCache.get(cacheKey) ?? null);
   const [failed, setFailed] = useState(false);
 
@@ -37,7 +37,7 @@ export function useThumbnail(path: string, maxSize: number) {
     setSource(resolvedCache.get(cacheKey) ?? null);
     setFailed(false);
 
-    requestThumbnail(path, maxSize)
+    requestThumbnail(emojiId, maxSize)
       .then((value) => {
         if (!cancelled) setSource(value);
       })
@@ -48,7 +48,7 @@ export function useThumbnail(path: string, maxSize: number) {
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, maxSize, path]);
+  }, [cacheKey, maxSize, emojiId]);
 
   return { source, failed };
 }

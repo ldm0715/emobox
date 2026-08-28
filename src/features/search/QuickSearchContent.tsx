@@ -7,14 +7,15 @@ import {
   type SearchBoxChangeEvent,
 } from "@fluentui/react-components";
 import { Image20Regular, Search20Regular } from "@fluentui/react-icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { IndexedImage, RecentImageRecord } from "../../types";
+import { useCallback, useEffect, useRef } from "react";
+import type { IndexedImage } from "../../types";
 import { useThumbnail } from "../library/useThumbnail";
 import { useSearchKeyboard } from "./useSearchKeyboard";
 
 interface QuickSearchContentProps {
-  items: IndexedImage[];
-  recentItems: RecentImageRecord[];
+  results: IndexedImage[];
+  query: string;
+  onQueryChange: (query: string) => void;
   loading?: boolean;
   error?: string;
   copyError?: string;
@@ -24,7 +25,6 @@ interface QuickSearchContentProps {
   onClose: () => void;
 }
 
-const MAX_RESULTS = 30;
 const COLUMN_COUNT = 5;
 
 const useStyles = makeStyles({
@@ -145,7 +145,7 @@ function QuickSearchItem({
   itemRef: (element: HTMLButtonElement | null) => void;
 }) {
   const styles = useStyles();
-  const { source } = useThumbnail(item.path, 128);
+  const { source } = useThumbnail(item.id, 128);
 
   return (
     <button
@@ -173,8 +173,9 @@ function QuickSearchItem({
 }
 
 export function QuickSearchContent({
-  items,
-  recentItems,
+  results,
+  query,
+  onQueryChange,
   loading = false,
   error,
   copyError,
@@ -186,24 +187,7 @@ export function QuickSearchContent({
   const styles = useStyles();
   const rootRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const [query, setQuery] = useState("");
   const copying = Boolean(copyingPath);
-
-  const recentFirstItems = useMemo(() => {
-    const byPath = new Map<string, IndexedImage>();
-    recentItems.forEach((record) => byPath.set(record.item.path, record.item));
-    items.forEach((item) => {
-      if (!byPath.has(item.path)) byPath.set(item.path, item);
-    });
-    return Array.from(byPath.values());
-  }, [items, recentItems]);
-
-  const results = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase();
-    return recentFirstItems
-      .filter((item) => !normalized || item.name.toLocaleLowerCase().includes(normalized))
-      .slice(0, MAX_RESULTS);
-  }, [query, recentFirstItems]);
 
   const confirmItem = useCallback((item: IndexedImage | undefined) => {
     if (!item || copying) return;
@@ -218,7 +202,6 @@ export function QuickSearchContent({
   });
 
   useEffect(() => {
-    setQuery("");
     setSelectedIndex(0);
     itemRefs.current = [];
     window.requestAnimationFrame(() => {
@@ -230,6 +213,8 @@ export function QuickSearchContent({
     itemRefs.current[selectedIndex]?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
+  const trimmedQuery = query.trim();
+
   return (
     <div ref={rootRef} className={styles.root} onKeyDown={handleKeyDown} aria-busy={copying}>
       <SearchBox
@@ -238,11 +223,11 @@ export function QuickSearchContent({
         autoFocus
         aria-label="快速搜索表情"
         contentBefore={<Search20Regular />}
-        placeholder="按文件名搜索表情"
+        placeholder="搜索表情、标签或分组（组:标签）"
         value={query}
         disabled={copying}
         onChange={(_: SearchBoxChangeEvent, data: { value: string }) => {
-          setQuery(data.value);
+          onQueryChange(data.value);
           setSelectedIndex(0);
         }}
       />
@@ -252,7 +237,7 @@ export function QuickSearchContent({
           <div className={styles.grid} role="listbox" aria-label="快速搜索结果，空搜索时最近使用优先">
             {results.map((item, index) => (
               <QuickSearchItem
-                key={item.path}
+                key={item.id}
                 item={item}
                 selected={index === selectedIndex}
                 disabled={copying}
@@ -267,13 +252,13 @@ export function QuickSearchContent({
         ) : (
           <div className={styles.empty}>
             {loading ? (
-              <span>正在读取表情索引...</span>
+              <span>正在搜索...</span>
             ) : error ? (
               <span>{error}</span>
-            ) : query ? (
-              <span>没有找到匹配 {query} 的文件</span>
+            ) : trimmedQuery ? (
+              <span>没有找到匹配 {trimmedQuery} 的表情</span>
             ) : (
-              <span>还没有可搜索的表情，请先在主窗口导入文件夹</span>
+              <span>还没有表情，请先在主窗口导入图片或文件夹</span>
             )}
           </div>
         )}

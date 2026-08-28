@@ -46,13 +46,6 @@ impl RecentImagesState {
         })
     }
 
-    pub fn records(&self) -> Result<Vec<RecentImageRecord>, String> {
-        self.records
-            .read()
-            .map(|records| records.clone())
-            .map_err(|_| "最近使用记录暂时不可用，请重启应用后重试。".to_string())
-    }
-
     pub fn find_item(&self, path: &str) -> Result<Option<scanner::IndexedImage>, String> {
         self.records
             .read()
@@ -155,6 +148,7 @@ mod tests {
 
     fn image(path: &str) -> IndexedImage {
         IndexedImage {
+            id: 0,
             name: format!("{path}.png"),
             path: path.to_string(),
             extension: "png".to_string(),

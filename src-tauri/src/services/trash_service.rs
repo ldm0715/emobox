@@ -7,7 +7,9 @@
 //! 4. DB 事务 commit 失败（极少见）→ 兜底回移文件到原路径。
 //! 5. permanently_delete 删 trash 文件用 `NotFound` 吞掉。
 //!
-//! external_directory 来源**绝不**调用文件移动（`source_path` 是用户原文件）。
+//! `is_managed_source` 守卫：只有 `managed_import` / `clipboard`（受管副本）才做
+//! 文件移动。遗留的 `external_directory` 行（迁移 0004 已删除）本就不涉及文件移动，
+//! 守卫是零成本的防御。
 
 use std::{
     fs,
@@ -64,7 +66,10 @@ impl TrashService {
             .and_then(|stem| stem.to_str())
             .unwrap_or("emoji");
 
-        let trash_dir = state.emojis_directory().parent()?.join(TRASH_DIRECTORY_NAME);
+        let trash_dir = state
+            .emojis_directory()
+            .parent()?
+            .join(TRASH_DIRECTORY_NAME);
         let main_name = format!("{stem}-{}.{}", source.id, extension);
         let thumb_name = format!("{stem}-{}_thumb.png", source.id);
 
@@ -72,10 +77,7 @@ impl TrashService {
     }
 
     /// 软删到回收站。
-    pub fn soft_delete(
-        state: &DatabaseState,
-        ids: &[i64],
-    ) -> Result<TrashResult, String> {
+    pub fn soft_delete(state: &DatabaseState, ids: &[i64]) -> Result<TrashResult, String> {
         let mut result = TrashResult::default();
         if ids.is_empty() {
             return Ok(result);
@@ -85,9 +87,8 @@ impl TrashService {
             .parent()
             .ok_or_else(|| "素材库目录无效。".to_string())?
             .join(TRASH_DIRECTORY_NAME);
-        fs::create_dir_all(&trash_dir).map_err(|error| {
-            format!("无法创建回收站目录 {}：{error}", trash_dir.display())
-        })?;
+        fs::create_dir_all(&trash_dir)
+            .map_err(|error| format!("无法创建回收站目录 {}：{error}", trash_dir.display()))?;
 
         let mut connection = state.connect()?;
         let targets = EmojiRepository::mark_deleted(&mut connection, ids, unix_time_millis())?;
@@ -124,7 +125,9 @@ impl TrashService {
                     }
                     // 写 trash_path/trash_thumbnail_path
                     let trash_thumb_owned = if target.thumbnail_path.is_some() {
-                        with_thumb_suffix(&trash_main).to_string_lossy().into_owned()
+                        with_thumb_suffix(&trash_main)
+                            .to_string_lossy()
+                            .into_owned()
                     } else {
                         String::new()
                     };
@@ -196,15 +199,15 @@ impl TrashService {
                     ) {
                         let thumb = Path::new(thumb_str);
                         let trash_thumb = Path::new(trash_thumb_str);
-                        if trash_thumb.is_file() {
-                            if let Err(reason) = move_file_safe(trash_thumb, thumb) {
-                                log::warn!(
-                                    "缩略图恢复失败（不阻塞原图）: id={} reason={}",
-                                    target.id,
-                                    reason
-                                );
-                                result.push_failure(target.id, format!("缩略图：{reason}"));
-                            }
+                        if trash_thumb.is_file()
+                            && let Err(reason) = move_file_safe(trash_thumb, thumb)
+                        {
+                            log::warn!(
+                                "缩略图恢复失败（不阻塞原图）: id={} reason={}",
+                                target.id,
+                                reason
+                            );
+                            result.push_failure(target.id, format!("缩略图：{reason}"));
                         }
                     }
                 }
@@ -234,10 +237,7 @@ impl TrashService {
     }
 
     /// 永久删除：先删 trash 物理文件，再 DELETE 行（CASCADE 清关联）。
-    pub fn permanently_delete(
-        state: &DatabaseState,
-        ids: &[i64],
-    ) -> Result<TrashResult, String> {
+    pub fn permanently_delete(state: &DatabaseState, ids: &[i64]) -> Result<TrashResult, String> {
         let mut result = TrashResult::default();
         if ids.is_empty() {
             return Ok(result);
@@ -247,20 +247,20 @@ impl TrashService {
         for target in &targets {
             if let Some(path_str) = target.trash_path.as_deref() {
                 let path = Path::new(path_str);
-                if let Err(error) = fs::remove_file(path) {
-                    if error.kind() != std::io::ErrorKind::NotFound {
-                        result.push_failure(target.id, format!("删除原图：{error}"));
-                        continue;
-                    }
+                if let Err(error) = fs::remove_file(path)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    result.push_failure(target.id, format!("删除原图：{error}"));
+                    continue;
                 }
                 result.files_moved += 1;
             }
             if let Some(path_str) = target.trash_thumbnail_path.as_deref() {
                 let path = Path::new(path_str);
-                if let Err(error) = fs::remove_file(path) {
-                    if error.kind() != std::io::ErrorKind::NotFound {
-                        log::warn!("删除缩略图失败：{error}");
-                    }
+                if let Err(error) = fs::remove_file(path)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    log::warn!("删除缩略图失败：{error}");
                 }
             }
         }
@@ -290,14 +290,12 @@ impl TrashService {
                     result.files_moved += 1;
                 }
             }
-            if !row_failed {
-                if let Some(path_str) = target.trash_thumbnail_path.as_deref() {
-                    if let Err(error) = fs::remove_file(Path::new(path_str)) {
-                        if error.kind() != std::io::ErrorKind::NotFound {
-                            log::warn!("删除缩略图失败：{error}");
-                        }
-                    }
-                }
+            if !row_failed
+                && let Some(path_str) = target.trash_thumbnail_path.as_deref()
+                && let Err(error) = fs::remove_file(Path::new(path_str))
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                log::warn!("删除缩略图失败：{error}");
             }
         }
         // 第二遍：删 DB 行（失败的行跳过）
@@ -307,8 +305,7 @@ impl TrashService {
             .map(|t| t.id)
             .collect();
         if !ids_to_delete.is_empty() {
-            let placeholders = std::iter::repeat("?")
-                .take(ids_to_delete.len())
+            let placeholders = std::iter::repeat_n("?", ids_to_delete.len())
                 .collect::<Vec<_>>()
                 .join(",");
             let sql = format!("DELETE FROM emojis WHERE id IN ({placeholders}) AND is_deleted = 1");
@@ -361,7 +358,12 @@ fn with_thumb_suffix(path: &Path) -> PathBuf {
         .unwrap_or_default();
     let new_name = format!(
         "{}_thumb.png",
-        file_name.trim_end_matches(".png").trim_end_matches(".jpg").trim_end_matches(".jpeg").trim_end_matches(".gif").trim_end_matches(".webp")
+        file_name
+            .trim_end_matches(".png")
+            .trim_end_matches(".jpg")
+            .trim_end_matches(".jpeg")
+            .trim_end_matches(".gif")
+            .trim_end_matches(".webp")
     );
     s.set_file_name(new_name);
     s
@@ -427,9 +429,11 @@ mod tests {
         ext: &str,
         sha: &str,
     ) -> (i64, std::path::PathBuf, std::path::PathBuf) {
-        let mut conn = state.connect().expect("conn");
+        let conn = state.connect().expect("conn");
         let main_path = state.emojis_directory().join(format!("{name}.{ext}"));
-        let thumb_path = state.thumbnails_directory().join(format!("{name}_thumb.png"));
+        let thumb_path = state
+            .thumbnails_directory()
+            .join(format!("{name}_thumb.png"));
         fs::write(&main_path, b"main").expect("write main");
         fs::write(&thumb_path, b"thumb").expect("write thumb");
         conn.execute(
@@ -467,31 +471,6 @@ mod tests {
     }
 
     #[test]
-    fn soft_delete_external_does_not_touch_files() {
-        let (_dir, state) = fresh_db_in_tempdir();
-        let mut conn = state.connect().expect("conn");
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let external_path = std::env::temp_dir().join(format!("emobox-external-{nanos}.png"));
-        fs::write(&external_path, b"external").expect("write external");
-        conn.execute(
-            "INSERT INTO emojis (source_type, source_path, original_filename, file_extension, file_size, width, height, indexed_at, usage_count, is_favorite, is_deleted)
-             VALUES ('external_directory', ?1, 'x.png', 'png', 1, 1, 1, 0, 0, 0, 0)",
-            rusqlite::params![external_path.to_string_lossy()],
-        )
-        .expect("insert");
-        let id: i64 = conn
-            .query_row("SELECT id FROM emojis", [], |row| row.get(0))
-            .expect("id");
-        let result = TrashService::soft_delete(&state, &[id]).expect("soft delete");
-        assert_eq!(result.succeeded, 1);
-        assert!(external_path.exists(), "external 原文件应保留");
-        fs::remove_file(&external_path).ok();
-    }
-
-    #[test]
     fn restore_moves_files_back() {
         let (_dir, state) = fresh_db_in_tempdir();
         let (id, main, _thumb) = insert_managed(&state, "beta", "png", "bbb");
@@ -510,7 +489,7 @@ mod tests {
         let result = TrashService::permanently_delete(&state, &[id]).expect("perm");
         assert_eq!(result.succeeded, 1);
         assert!(!main.exists());
-        let mut conn = state.connect().expect("conn");
+        let conn = state.connect().expect("conn");
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM emojis", [], |row| row.get(0))
             .expect("count");

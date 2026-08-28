@@ -186,7 +186,7 @@ export function SettingsDialog({
   onUpdateClipboardCollectShortcut,
 }: SettingsDialogProps) {
   const styles = useStyles();
-  const { theme, setTheme, defaultView, setDefaultView, quickSearchShortcut } = useAppSettings();
+  const { theme, setTheme, defaultView, setDefaultView, quickSearchShortcut, autoPaste, setAutoPaste } = useAppSettings();
   const [section, setSection] = useState<SettingsSection>("general");
 
   function renderGeneral() {
@@ -233,6 +233,20 @@ export function SettingsDialog({
             <Option value="recent">最近使用</Option>
             <Option value="favorites">收藏</Option>
           </Dropdown>
+        </div>
+        <Divider />
+        <div className={styles.settingRow}>
+          <div className={styles.settingText}>
+            <div className={styles.settingLabel}>选择表情后自动粘贴到打开浮层前的窗口</div>
+            <div className={styles.settingDescription}>
+              关闭后只复制到剪贴板；自动粘贴不会发送消息。Windows 专用，目标窗口无法恢复时将自动降级为仅复制。
+            </div>
+          </div>
+          <Switch
+            checked={autoPaste}
+            onChange={(_, data) => setAutoPaste(data.checked)}
+            aria-label="选择表情后自动粘贴到打开浮层前的窗口"
+          />
         </div>
       </>
     );
@@ -347,8 +361,8 @@ export function SettingsDialog({
         <div className={styles.aboutEnglish}>EmoBox  版本 0.1.0</div>
         <p className={styles.paragraph}>表情匣是一款 Windows 优先的本地表情资产管理工具，不需要账号或网络服务。</p>
         <Divider />
-        <p className={styles.paragraph}><strong>已实现：</strong>外部文件夹索引、素材库图片导入、拖拽导入、SHA-256 去重、缩略图、搜索、主题、系统托盘、最近使用和快捷搜索。</p>
-        <p className={styles.paragraph}><strong>尚未实现：</strong>自动粘贴、分组标签和云同步。</p>
+        <p className={styles.paragraph}><strong>已实现：</strong>外部文件夹索引、素材库图片导入、拖拽导入、SHA-256 去重、缩略图、搜索、主题、系统托盘、最近使用、快捷搜索和自动粘贴到打开浮层前的窗口（Windows）。</p>
+        <p className={styles.paragraph}><strong>尚未实现：</strong>云同步和跨设备同步。</p>
       </>
     );
   }

@@ -17,8 +17,18 @@ const THUMBNAILS_DIRECTORY_NAME: &str = "thumbnails";
 
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../../migrations/0001_create_emojis.sql")),
-    (2, include_str!("../../migrations/0002_create_groups_tags.sql")),
-    (3, include_str!("../../migrations/0003_add_emoji_trash_columns.sql")),
+    (
+        2,
+        include_str!("../../migrations/0002_create_groups_tags.sql"),
+    ),
+    (
+        3,
+        include_str!("../../migrations/0003_add_emoji_trash_columns.sql"),
+    ),
+    (
+        4,
+        include_str!("../../migrations/0004_remove_external_directory_add_perceptual_hash.sql"),
+    ),
 ];
 
 #[derive(Clone)]
@@ -210,7 +220,7 @@ mod tests {
                 row.get(0)
             })
             .expect("count migrations");
-        assert_eq!(migration_count, 3);
+        assert_eq!(migration_count, 4);
 
         let columns = connection
             .prepare("PRAGMA table_info(emojis)")
@@ -241,6 +251,7 @@ mod tests {
             "deleted_at",
             "trash_path",
             "trash_thumbnail_path",
+            "perceptual_hash",
         ] {
             assert!(columns.iter().any(|column| column == required));
         }

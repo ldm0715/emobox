@@ -29,6 +29,10 @@ interface PersistedSettings {
   defaultView: DefaultLibraryView;
   quickSearchShortcut: string;
   clipboardCollectShortcut: string;
+  // Phase 7: auto-paste after copy from the quick-search overlay.
+  // Windows is the target platform — the Rust command always returns
+  // `disabled` on other platforms, so the toggle is a no-op there.
+  autoPaste: boolean;
 }
 
 interface SettingsContextValue extends PersistedSettings {
@@ -38,6 +42,7 @@ interface SettingsContextValue extends PersistedSettings {
   setDefaultView: (view: DefaultLibraryView) => void;
   setQuickSearchShortcut: (shortcut: string) => void;
   setClipboardCollectShortcut: (shortcut: string) => void;
+  setAutoPaste: (enabled: boolean) => void;
 }
 
 const STORAGE_KEY = "emobox.settings";
@@ -50,6 +55,7 @@ const defaultSettings: PersistedSettings = {
   defaultView: "all",
   quickSearchShortcut: DEFAULT_QUICK_SEARCH_SHORTCUT,
   clipboardCollectShortcut: DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
+  autoPaste: true,
 };
 
 const brand: BrandVariants = {
@@ -111,6 +117,7 @@ function readSettings(): PersistedSettings {
       clipboardCollectShortcut: isShortcut(parsed.clipboardCollectShortcut)
         ? parsed.clipboardCollectShortcut
         : defaultSettings.clipboardCollectShortcut,
+      autoPaste: typeof parsed.autoPaste === "boolean" ? parsed.autoPaste : defaultSettings.autoPaste,
     };
   } catch {
     return defaultSettings;
@@ -164,6 +171,10 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setClipboardCollectShortcut: (clipboardCollectShortcut) => setSettings((current) => ({
         ...current,
         clipboardCollectShortcut,
+      })),
+      setAutoPaste: (autoPaste) => setSettings((current) => ({
+        ...current,
+        autoPaste,
       })),
     }),
     [resolvedTheme, settings],

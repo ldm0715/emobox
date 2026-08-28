@@ -62,7 +62,7 @@ export function EmptyLibraryState({
       <div className={styles.content}>
         <div className={styles.illustration}><ImageMultiple48Regular /></div>
         <h2 className={styles.title}>还没有表情</h2>
-        <p className={styles.description}>导入图片会保存到 EmoBox；导入文件夹只索引原路径。</p>
+        <p className={styles.description}>导入图片会保存到 EmoBox 素材库；导入文件夹会把图片复制进素材库并按子文件夹自动分组（没有子文件夹时按文件夹本身建一个组）。</p>
         <ImportMenu
           label="导入表情"
           appearance="primary"
