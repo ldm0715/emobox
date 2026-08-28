@@ -1,24 +1,23 @@
 import {
   Badge,
   Button,
-  Menu,
-  MenuTrigger,
   Tooltip,
   makeStyles,
   mergeClasses,
   tokens,
- shorthands,
+  shorthands,
 } from "@fluentui/react-components";
 import {
+  CheckboxChecked20Regular,
+  CheckboxUnchecked20Regular,
   Image20Regular,
   MoreHorizontal20Regular,
   Star20Filled,
   Star20Regular,
 } from "@fluentui/react-icons";
-import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { type KeyboardEvent, type MouseEvent } from "react";
 import type { IndexedImage } from "../../types";
-import type { EmojiItemMenuMode } from "./EmojiItemMenu";
-import { EmojiItemMenu } from "./EmojiItemMenu";
+import type { SelectionMode } from "./useMultiSelection";
 import { useThumbnail } from "./useThumbnail";
 
 interface EmojiGridItemProps {
@@ -26,18 +25,12 @@ interface EmojiGridItemProps {
   selected: boolean;
   favorite: boolean;
   thumbnailSize: number;
-  menuMode?: EmojiItemMenuMode;
+  multiSelectMode: boolean;
   tags?: string[];
-  onSelect: (item: IndexedImage) => void;
-  onToggleFavorite: (item: IndexedImage) => void;
-  onCopy: (item: IndexedImage) => void;
-  onMoveToGroup: (item: IndexedImage) => void;
-  onRemoveFromGroup?: (item: IndexedImage) => void;
-  onAddTags?: (item: IndexedImage) => void;
-  onShowInExplorer: (item: IndexedImage) => void;
-  onDelete: (item: IndexedImage) => void;
-  onRestore?: (item: IndexedImage) => void;
-  onPermanentlyDelete?: (item: IndexedImage) => void;
+  onItemSelect: (item: IndexedImage, mode: SelectionMode) => void;
+  onToggleFavorite: (items: IndexedImage[]) => void;
+  onOpenContextMenu: (event: MouseEvent<HTMLDivElement>, item: IndexedImage) => void;
+  onOpenMoreButton: (event: MouseEvent<HTMLButtonElement>, item: IndexedImage) => void;
 }
 
 const useStyles = makeStyles({
@@ -94,6 +87,23 @@ const useStyles = makeStyles({
     top: tokens.spacingVerticalXS,
     left: tokens.spacingHorizontalXS,
     zIndex: 2,
+  },
+  selectCheckbox: {
+    position: "absolute",
+    top: tokens.spacingVerticalXS,
+    left: tokens.spacingHorizontalXS,
+    zIndex: 3,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "20px",
+    height: "20px",
+    borderRadius: tokens.borderRadiusMedium,
+    color: "white",
+    backgroundColor: "rgba(24, 24, 27, 0.66)",
+  },
+  selectCheckboxChecked: {
+    backgroundColor: tokens.colorBrandBackground,
   },
   actions: {
     position: "absolute",
@@ -172,31 +182,27 @@ export function EmojiGridItem({
   selected,
   favorite,
   thumbnailSize,
-  menuMode = "default",
+  multiSelectMode,
   tags = [],
-  onSelect,
+  onItemSelect,
   onToggleFavorite,
-  onCopy,
-  onMoveToGroup,
-  onRemoveFromGroup,
-  onAddTags,
-  onShowInExplorer,
-  onDelete,
-  onRestore,
-  onPermanentlyDelete,
+  onOpenContextMenu,
+  onOpenMoreButton,
 }: EmojiGridItemProps) {
   const styles = useStyles();
   const { source, failed } = useThumbnail(item.id, thumbnailSize);
-  const [menuOpen, setMenuOpen] = useState(false);
 
-  function stop(event: MouseEvent) {
+  function handleClick(event: MouseEvent<HTMLDivElement>) {
     event.stopPropagation();
+    if (event.ctrlKey || event.metaKey) onItemSelect(item, "toggle");
+    else if (event.shiftKey) onItemSelect(item, "range");
+    else onItemSelect(item, multiSelectMode ? "toggle" : "replace");
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      onSelect(item);
+      onItemSelect(item, "replace");
     }
   }
 
@@ -207,13 +213,10 @@ export function EmojiGridItem({
       aria-selected={selected}
       aria-label={item.name}
       className={mergeClasses(styles.root, selected && styles.selected)}
-      onClick={() => onSelect(item)}
-      onDoubleClick={() => onSelect(item)}
+      onClick={handleClick}
+      onDoubleClick={() => onItemSelect(item, "replace")}
       onKeyDown={handleKeyDown}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        setMenuOpen(true);
-      }}
+      onContextMenu={(event) => onOpenContextMenu(event, item)}
     >
       <div className={styles.frame}>
         {source ? (
@@ -226,9 +229,17 @@ export function EmojiGridItem({
         )}
       </div>
 
-      {item.extension === "gif" && <Badge className={styles.gifBadge} size="small" appearance="filled">GIF</Badge>}
+      {item.extension === "gif" && !multiSelectMode && <Badge className={styles.gifBadge} size="small" appearance="filled">GIF</Badge>}
 
-      <div className={`${styles.actions} emoji-actions`} onClick={stop}>
+      {multiSelectMode && (
+        <span
+          className={mergeClasses(styles.selectCheckbox, selected && styles.selectCheckboxChecked)}
+        >
+          {selected ? <CheckboxChecked20Regular /> : <CheckboxUnchecked20Regular />}
+        </span>
+      )}
+
+      <div className={`${styles.actions} emoji-actions`} onClick={(event) => event.stopPropagation()}>
         <Tooltip content={favorite ? "取消收藏" : "收藏"} relationship="label">
           <Button
             className={styles.actionButton}
@@ -236,35 +247,19 @@ export function EmojiGridItem({
             appearance="subtle"
             aria-label={favorite ? "取消收藏" : "收藏"}
             icon={favorite ? <Star20Filled /> : <Star20Regular />}
-            onClick={() => onToggleFavorite(item)}
+            onClick={() => onToggleFavorite([item])}
           />
         </Tooltip>
-        <Menu open={menuOpen} onOpenChange={(_, data) => setMenuOpen(data.open)} positioning="below-end">
-          <Tooltip content="更多操作" relationship="label">
-            <MenuTrigger disableButtonEnhancement>
-              <Button
-                className={styles.actionButton}
-                size="small"
-                appearance="subtle"
-                aria-label="更多操作"
-                icon={<MoreHorizontal20Regular />}
-              />
-            </MenuTrigger>
-          </Tooltip>
-          <EmojiItemMenu
-            mode={menuMode}
-            favorite={favorite}
-            onToggleFavorite={() => onToggleFavorite(item)}
-            onCopy={() => onCopy(item)}
-            onMoveToGroup={() => onMoveToGroup(item)}
-            onRemoveFromGroup={onRemoveFromGroup ? () => onRemoveFromGroup(item) : undefined}
-            onAddTags={onAddTags ? () => onAddTags(item) : () => {}}
-            onShowInExplorer={() => onShowInExplorer(item)}
-            onDelete={() => onDelete(item)}
-            onRestore={onRestore ? () => onRestore(item) : undefined}
-            onPermanentlyDelete={onPermanentlyDelete ? () => onPermanentlyDelete(item) : undefined}
+        <Tooltip content="更多操作" relationship="label">
+          <Button
+            className={styles.actionButton}
+            size="small"
+            appearance="subtle"
+            aria-label="更多操作"
+            icon={<MoreHorizontal20Regular />}
+            onClick={(event) => onOpenMoreButton(event, item)}
           />
-        </Menu>
+        </Tooltip>
       </div>
 
       <div className={mergeClasses(styles.overlay, "emoji-overlay", selected && styles.overlayVisible)}>

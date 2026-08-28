@@ -5,6 +5,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { Search20Regular, Star24Regular, History24Regular } from "@fluentui/react-icons";
+import { useMemo } from "react";
 import type {
   GridDensity,
   IndexedImage,
@@ -16,6 +17,7 @@ import type { EmojiItemMenuMode } from "./EmojiItemMenu";
 import { EmptyLibraryState } from "./EmptyLibraryState";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibraryMessage } from "./LibraryMessage";
+import type { SelectionMode } from "./useMultiSelection";
 
 interface EmojiLibraryViewProps {
   view: LibraryView;
@@ -25,8 +27,9 @@ interface EmojiLibraryViewProps {
   query: string;
   density: GridDensity;
   sortOption: SortOption;
-  selectedPath: string | null;
-  favorites: Set<string>;
+  selectedIds: Set<number>;
+  favoriteIds: Set<number>;
+  multiSelectMode: boolean;
   importing: boolean;
   error: string;
   onClearError: () => void;
@@ -36,16 +39,18 @@ interface EmojiLibraryViewProps {
   onCollectFromClipboard: () => void;
   onDensityChange: (density: GridDensity) => void;
   onSortChange: (option: SortOption) => void;
-  onSelect: (item: IndexedImage) => void;
-  onToggleFavorite: (item: IndexedImage) => void;
-  onCopy: (item: IndexedImage) => void;
-  onMoveToGroup: (item: IndexedImage) => void;
-  onRemoveFromGroup?: (item: IndexedImage) => void;
-  onAddTags?: (item: IndexedImage) => void;
-  onShowInExplorer: (item: IndexedImage) => void;
-  onDelete: (item: IndexedImage) => void;
-  onRestore?: (item: IndexedImage) => void;
-  onPermanentlyDelete?: (item: IndexedImage) => void;
+  onToggleMultiSelect: () => void;
+  onItemSelect: (item: IndexedImage, mode: SelectionMode) => void;
+  onClearSelection: () => void;
+  onToggleFavorite: (items: IndexedImage[]) => void;
+  onCopy: (items: IndexedImage[]) => void;
+  onMoveToGroup: (items: IndexedImage[]) => void;
+  onRemoveFromGroup?: (items: IndexedImage[]) => void;
+  onAddTags?: (items: IndexedImage[]) => void;
+  onShowInExplorer: (items: IndexedImage[]) => void;
+  onDelete: (items: IndexedImage[]) => void;
+  onRestore?: (items: IndexedImage[]) => void;
+  onPermanentlyDelete?: (items: IndexedImage[]) => void;
   tagsByPath?: Record<string, string[]>;
 }
 
@@ -98,6 +103,29 @@ const useStyles = makeStyles({
     marginBottom: tokens.spacingVerticalM,
     lineHeight: tokens.lineHeightBase300,
   },
+  selectionBar: {
+    position: "sticky",
+    bottom: 0,
+    zIndex: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: tokens.spacingHorizontalL,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    margin: `0 -${tokens.spacingHorizontalXL}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow2,
+  },
+  selectionBarCount: {
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200,
+    whiteSpace: "nowrap",
+  },
+  selectionBarActions: {
+    display: "flex",
+    gap: tokens.spacingHorizontalS,
+  },
 });
 
 export function EmojiLibraryView(props: EmojiLibraryViewProps) {
@@ -110,8 +138,9 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     query,
     density,
     sortOption,
-    selectedPath,
-    favorites,
+    selectedIds,
+    favoriteIds,
+    multiSelectMode,
     importing,
     error,
     onClearError,
@@ -121,7 +150,9 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     onCollectFromClipboard,
     onDensityChange,
     onSortChange,
-    onSelect,
+    onToggleMultiSelect,
+    onItemSelect,
+    onClearSelection,
     onToggleFavorite,
     onCopy,
     onMoveToGroup,
@@ -135,6 +166,14 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
   } = props;
   const menuMode: EmojiItemMenuMode =
     view === "trash" ? "trash" : view.startsWith("group:") ? "group" : "default";
+
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.has(item.id)),
+    [items, selectedIds],
+  );
+  // 多选模式下只要有选中就浮出批量条（含"退出多选"）；非多选模式仅 2+ 项时浮出。
+  const showBar = selectedIds.size >= (multiSelectMode ? 1 : 2);
+  const allFav = selectedItems.length > 0 && selectedItems.every((item) => favoriteIds.has(item.id));
 
   function renderEmptyContent() {
     if (query) {
@@ -202,6 +241,8 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
         count={items.length}
         sortOption={sortOption}
         density={density}
+        multiSelectMode={multiSelectMode}
+        onToggleMultiSelect={onToggleMultiSelect}
         onSortChange={onSortChange}
         onDensityChange={onDensityChange}
       />
@@ -221,11 +262,13 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
           <EmojiGrid
             items={items}
             density={density}
-            selectedPath={selectedPath}
-            favorites={favorites}
+            selectedIds={selectedIds}
+            favoriteIds={favoriteIds}
+            multiSelectMode={multiSelectMode}
             menuMode={menuMode}
             tagsByPath={tagsByPath}
-            onSelect={onSelect}
+            onItemSelect={onItemSelect}
+            onClearSelection={onClearSelection}
             onToggleFavorite={onToggleFavorite}
             onCopy={onCopy}
             onMoveToGroup={onMoveToGroup}
@@ -237,6 +280,57 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
             onPermanentlyDelete={onPermanentlyDelete}
           />
         ) : renderEmptyContent()}
+
+        {showBar && (
+          <div className={styles.selectionBar}>
+            <span className={styles.selectionBarCount}>已选 {selectedIds.size} 项</span>
+            <div className={styles.selectionBarActions}>
+              {menuMode !== "trash" && (
+                <Button size="small" onClick={() => onToggleFavorite(selectedItems)}>
+                  {allFav ? "取消收藏" : "收藏"}
+                </Button>
+              )}
+              {menuMode !== "trash" && (
+                <Button size="small" onClick={() => onMoveToGroup(selectedItems)}>
+                  加入分组
+                </Button>
+              )}
+              {menuMode === "group" && onRemoveFromGroup && (
+                <Button size="small" onClick={() => onRemoveFromGroup(selectedItems)}>
+                  从当前分组移除
+                </Button>
+              )}
+              {menuMode !== "trash" && onAddTags && (
+                <Button size="small" onClick={() => onAddTags(selectedItems)}>
+                  管理标签
+                </Button>
+              )}
+              {menuMode === "trash" && onRestore && (
+                <Button size="small" onClick={() => onRestore(selectedItems)}>
+                  恢复
+                </Button>
+              )}
+              {menuMode === "trash" && onPermanentlyDelete && (
+                <Button size="small" onClick={() => onPermanentlyDelete(selectedItems)}>
+                  彻底删除
+                </Button>
+              )}
+              {menuMode !== "trash" && (
+                <Button size="small" onClick={() => onDelete(selectedItems)}>
+                  移入回收站
+                </Button>
+              )}
+              {multiSelectMode && (
+                <Button size="small" appearance="secondary" onClick={onToggleMultiSelect}>
+                  退出多选
+                </Button>
+              )}
+              <Button size="small" appearance="subtle" onClick={onClearSelection}>
+                清除选择
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -1,26 +1,70 @@
-import { makeStyles, tokens } from "@fluentui/react-components";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Menu, makeStyles, tokens } from "@fluentui/react-components";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+} from "react";
 import type { GridDensity, IndexedImage } from "../../types";
 import { EmojiGridItem } from "./EmojiGridItem";
-import type { EmojiItemMenuMode } from "./EmojiItemMenu";
+import { EmojiItemMenu, type EmojiItemMenuMode } from "./EmojiItemMenu";
+import type { SelectionMode } from "./useMultiSelection";
+
+/** Fluent Menu 的 positioning.target 结构（PositioningVirtualElement 的本地等价）。 */
+interface VirtualTarget {
+  getBoundingClientRect: () => {
+    x: number;
+    y: number;
+    top: number;
+    left: number;
+    bottom: number;
+    right: number;
+    width: number;
+    height: number;
+  };
+}
+
+function virtualTargetFromEvent(event: MouseEvent): VirtualTarget {
+  const { clientX, clientY } = event;
+  return {
+    getBoundingClientRect: () => ({
+      x: clientX,
+      y: clientY,
+      top: clientY,
+      left: clientX,
+      bottom: clientY + 1,
+      right: clientX + 1,
+      width: 1,
+      height: 1,
+    }),
+  };
+}
+
+function virtualTargetFromRect(rect: DOMRect): VirtualTarget {
+  return { getBoundingClientRect: () => rect };
+}
 
 interface EmojiGridProps {
   items: IndexedImage[];
   density: GridDensity;
-  selectedPath: string | null;
-  favorites: Set<string>;
+  selectedIds: Set<number>;
+  favoriteIds: Set<number>;
+  multiSelectMode: boolean;
   menuMode?: EmojiItemMenuMode;
   tagsByPath?: Record<string, string[]>;
-  onSelect: (item: IndexedImage) => void;
-  onToggleFavorite: (item: IndexedImage) => void;
-  onCopy: (item: IndexedImage) => void;
-  onMoveToGroup: (item: IndexedImage) => void;
-  onRemoveFromGroup?: (item: IndexedImage) => void;
-  onAddTags?: (item: IndexedImage) => void;
-  onShowInExplorer: (item: IndexedImage) => void;
-  onDelete: (item: IndexedImage) => void;
-  onRestore?: (item: IndexedImage) => void;
-  onPermanentlyDelete?: (item: IndexedImage) => void;
+  onItemSelect: (item: IndexedImage, mode: SelectionMode) => void;
+  onClearSelection: () => void;
+  onToggleFavorite: (items: IndexedImage[]) => void;
+  onCopy: (items: IndexedImage[]) => void;
+  onMoveToGroup: (items: IndexedImage[]) => void;
+  onRemoveFromGroup?: (items: IndexedImage[]) => void;
+  onAddTags?: (items: IndexedImage[]) => void;
+  onShowInExplorer: (items: IndexedImage[]) => void;
+  onDelete: (items: IndexedImage[]) => void;
+  onRestore?: (items: IndexedImage[]) => void;
+  onPermanentlyDelete?: (items: IndexedImage[]) => void;
 }
 
 const BATCH_SIZE = 72;
@@ -46,11 +90,13 @@ const useStyles = makeStyles({
 export function EmojiGrid({
   items,
   density,
-  selectedPath,
-  favorites,
+  selectedIds,
+  favoriteIds,
+  multiSelectMode,
   menuMode = "default",
   tagsByPath,
-  onSelect,
+  onItemSelect,
+  onClearSelection,
   onToggleFavorite,
   onCopy,
   onMoveToGroup,
@@ -65,6 +111,16 @@ export function EmojiGrid({
   const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const config = densityConfig[density];
+
+  // 共享右键/更多菜单：打开时把当前 target 项与光标锚点一起记下。
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [targetItems, setTargetItems] = useState<IndexedImage[]>([]);
+  const [contextTarget, setContextTarget] = useState<VirtualTarget | undefined>();
+
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.has(item.id)),
+    [items, selectedIds],
+  );
 
   useEffect(() => {
     setVisibleCount(BATCH_SIZE);
@@ -87,34 +143,85 @@ export function EmojiGrid({
     return () => observer.disconnect();
   }, [items.length, visibleCount]);
 
+  // 菜单打开期间选区若被外部改掉（Delete 键 / 批量条清除），关掉菜单避免 stale target。
+  useEffect(() => {
+    if (menuOpen && targetItems.some((item) => !selectedIds.has(item.id))) {
+      setMenuOpen(false);
+    }
+  }, [menuOpen, targetItems, selectedIds]);
+
+  function openMenuFor(item: IndexedImage, target: VirtualTarget) {
+    // 右键/点击「更多」时：目标项在现存多选内 → 菜单作用于整个多选；否则先单选该项。
+    const multi = selectedIds.has(item.id) && selectedIds.size > 1;
+    if (!multi) onItemSelect(item, "replace");
+    setTargetItems(multi ? selectedItems : [item]);
+    setContextTarget(target);
+    setMenuOpen(true);
+  }
+
+  function handleContextItem(event: MouseEvent<HTMLDivElement>, item: IndexedImage) {
+    event.preventDefault();
+    openMenuFor(item, virtualTargetFromEvent(event));
+  }
+
+  function handleMoreButton(event: MouseEvent<HTMLButtonElement>, item: IndexedImage) {
+    openMenuFor(item, virtualTargetFromRect(event.currentTarget.getBoundingClientRect()));
+  }
+
+  const menuFavorite = targetItems.length > 0 && targetItems.every((item) => favoriteIds.has(item.id));
+
   const visibleItems = useMemo(() => items.slice(0, visibleCount), [items, visibleCount]);
   const gridStyle = { "--emoji-tile-size": `${config.tile}px` } as CSSProperties;
 
   return (
     <>
-      <div className={styles.grid} style={gridStyle} role="listbox" aria-label="表情列表">
+      <div
+        className={styles.grid}
+        style={gridStyle}
+        role="listbox"
+        aria-label="表情列表"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) onClearSelection();
+        }}
+      >
         {visibleItems.map((item) => (
           <EmojiGridItem
             key={item.path}
             item={item}
-            selected={selectedPath === item.path}
-            favorite={favorites.has(item.path)}
+            selected={selectedIds.has(item.id)}
+            favorite={favoriteIds.has(item.id)}
             thumbnailSize={config.thumbnail}
-            menuMode={menuMode}
+            multiSelectMode={multiSelectMode}
             tags={tagsByPath?.[item.path] ?? []}
-            onSelect={onSelect}
+            onItemSelect={onItemSelect}
             onToggleFavorite={onToggleFavorite}
-            onCopy={onCopy}
-            onMoveToGroup={onMoveToGroup}
-            onRemoveFromGroup={onRemoveFromGroup}
-            onAddTags={onAddTags}
-            onShowInExplorer={onShowInExplorer}
-            onDelete={onDelete}
-            onRestore={onRestore}
-            onPermanentlyDelete={onPermanentlyDelete}
+            onOpenContextMenu={handleContextItem}
+            onOpenMoreButton={handleMoreButton}
           />
         ))}
       </div>
+
+      <Menu
+        open={menuOpen}
+        onOpenChange={(_, data) => setMenuOpen(data.open)}
+        positioning={{ target: contextTarget }}
+      >
+        <EmojiItemMenu
+          mode={menuMode}
+          multi={targetItems.length > 1}
+          favorite={menuFavorite}
+          onToggleFavorite={() => onToggleFavorite(targetItems)}
+          onCopy={() => onCopy(targetItems)}
+          onMoveToGroup={() => onMoveToGroup(targetItems)}
+          onRemoveFromGroup={onRemoveFromGroup ? () => onRemoveFromGroup(targetItems) : undefined}
+          onAddTags={onAddTags ? () => onAddTags(targetItems) : () => {}}
+          onShowInExplorer={() => onShowInExplorer(targetItems)}
+          onDelete={() => onDelete(targetItems)}
+          onRestore={onRestore ? () => onRestore(targetItems) : undefined}
+          onPermanentlyDelete={onPermanentlyDelete ? () => onPermanentlyDelete(targetItems) : undefined}
+        />
+      </Menu>
+
       {visibleCount < items.length && <div className={styles.sentinel} ref={sentinelRef} />}
     </>
   );

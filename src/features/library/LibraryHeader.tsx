@@ -2,11 +2,14 @@ import {
   Button,
   Dropdown,
   Option,
+  ToggleButton,
   Tooltip,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
 import {
+  CheckboxChecked20Filled,
+  CheckboxUnchecked20Regular,
   Grid20Filled,
   Grid20Regular,
   GridDots20Regular,
@@ -18,6 +21,8 @@ interface LibraryHeaderProps {
   count: number;
   sortOption: SortOption;
   density: GridDensity;
+  multiSelectMode: boolean;
+  onToggleMultiSelect: () => void;
   onSortChange: (option: SortOption) => void;
   onDensityChange: (density: GridDensity) => void;
 }
@@ -79,6 +84,8 @@ export function LibraryHeader({
   count,
   sortOption,
   density,
+  multiSelectMode,
+  onToggleMultiSelect,
   onSortChange,
   onDensityChange,
 }: LibraryHeaderProps) {
@@ -92,6 +99,17 @@ export function LibraryHeader({
       </div>
 
       <div className={styles.actions}>
+        <Tooltip content={multiSelectMode ? "退出多选" : "进入多选模式"} relationship="label">
+          <ToggleButton
+            size="small"
+            checked={multiSelectMode}
+            icon={multiSelectMode ? <CheckboxChecked20Filled /> : <CheckboxUnchecked20Regular />}
+            onClick={onToggleMultiSelect}
+          >
+            多选
+          </ToggleButton>
+        </Tooltip>
+
         <Dropdown
           className={styles.dropdown}
           size="small"

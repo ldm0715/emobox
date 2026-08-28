@@ -19,6 +19,8 @@ export type EmojiItemMenuMode = "default" | "trash" | "group";
 interface EmojiItemMenuProps {
   mode?: EmojiItemMenuMode;
   favorite: boolean;
+  /** true = 菜单操作的是多选选区；复制/查看文件位置是单项操作，多选时隐藏。 */
+  multi?: boolean;
   onToggleFavorite: () => void;
   onCopy: () => void;
   onMoveToGroup: () => void;
@@ -33,6 +35,7 @@ interface EmojiItemMenuProps {
 export function EmojiItemMenu({
   mode = "default",
   favorite,
+  multi = false,
   onToggleFavorite,
   onCopy,
   onMoveToGroup,
@@ -47,12 +50,16 @@ export function EmojiItemMenu({
     return (
       <MenuPopover>
         <MenuList>
-          <MenuItem icon={<ClipboardImage20Regular />} onClick={onCopy}>
-            复制到剪贴板
-          </MenuItem>
-          <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
-            查看文件位置
-          </MenuItem>
+          {!multi && (
+            <MenuItem icon={<ClipboardImage20Regular />} onClick={onCopy}>
+              复制到剪贴板
+            </MenuItem>
+          )}
+          {!multi && (
+            <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
+              查看文件位置
+            </MenuItem>
+          )}
           {onRestore && (
             <MenuItem icon={<ArrowUpload20Regular />} onClick={onRestore}>
               从回收站恢复
@@ -78,9 +85,11 @@ export function EmojiItemMenu({
           >
             {favorite ? "取消收藏" : "收藏"}
           </MenuItem>
-          <MenuItem icon={<ClipboardImage20Regular />} onClick={onCopy}>
-            复制到剪贴板
-          </MenuItem>
+          {!multi && (
+            <MenuItem icon={<ClipboardImage20Regular />} onClick={onCopy}>
+              复制到剪贴板
+            </MenuItem>
+          )}
           <MenuItem icon={<FolderArrowRight20Regular />} onClick={onMoveToGroup}>
             移至其他分组
           </MenuItem>
@@ -92,9 +101,11 @@ export function EmojiItemMenu({
           <MenuItem icon={<Tag20Regular />} onClick={onAddTags}>
             管理标签
           </MenuItem>
-          <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
-            查看文件位置
-          </MenuItem>
+          {!multi && (
+            <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
+              查看文件位置
+            </MenuItem>
+          )}
           <MenuItem icon={<Delete20Regular />} onClick={onDelete}>
             移入回收站
           </MenuItem>
@@ -112,18 +123,22 @@ export function EmojiItemMenu({
         >
           {favorite ? "取消收藏" : "收藏"}
         </MenuItem>
-        <MenuItem icon={<ClipboardImage20Regular />} onClick={onCopy}>
-          复制到剪贴板
-        </MenuItem>
+        {!multi && (
+          <MenuItem icon={<ClipboardImage20Regular />} onClick={onCopy}>
+            复制到剪贴板
+          </MenuItem>
+        )}
         <MenuItem icon={<FolderArrowRight20Regular />} onClick={onMoveToGroup}>
           加入分组
         </MenuItem>
         <MenuItem icon={<Tag20Regular />} onClick={onAddTags}>
           管理标签
         </MenuItem>
-        <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
-          查看文件位置
-        </MenuItem>
+        {!multi && (
+          <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
+            查看文件位置
+          </MenuItem>
+        )}
         <MenuItem icon={<Delete20Regular />} onClick={onDelete}>
           移入回收站
         </MenuItem>

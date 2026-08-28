@@ -21,18 +21,18 @@ cargo test  --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 ```
 
-验收标准是 `cargo check` + `cargo clippy -- -D warnings` + `cargo test` + `npm run build`（tsc + vite）+ `npx vitest run`（Phase 8 起浮层 `useQuickSearchQuery` 乱序测试）+ `MANUAL_ACCEPTANCE.md` 中的手动清单。
+验收标准是 `cargo check` + `cargo clippy -- -D warnings` + `cargo test` + `npm run build`（tsc + vite）+ `npx vitest run`（Phase 8 起浮层 `useQuickSearchQuery` 乱序测试、Phase 9 起 `useMultiSelection` 多选测试）+ `MANUAL_ACCEPTANCE.md` 中的手动清单。
 
 ## 高层架构
 
 ### 前端（`src/`，React 19 + TS + Fluent UI v9）
 
 - `src/main.tsx` 读取 `getCurrentWindow().label`，挂载 `<App />`（主窗口）或 `<QuickSearchWindow />`（浮层）。浮层是独立的 React 树，不是路由。
-- `src/App.tsx` 持有大部分 UI 状态。Phase 6 引入两层数据模型：`currentEmojis: IndexedEmoji[]`（按视图，网格的数据源）和 `indexedEmojis: IndexedEmoji[]`（"全部"缓存）。一个以 `[currentView, debouncedQuery, recentItems]` 为 key 的 useEffect，对非回收站/非最近使用的视图调用 `searchEmojis({view, query, ...})` 并重新填充 `currentEmojis`；网格的 `viewItems` 是 `currentEmojis` 的轻量 `IndexedImage` 投影。其他状态：`groups`、`tags`、`trashCount`、`favoriteIds: Set<number>`（基于 id，与旧 UI 用的 `favorites: Set<string>` 并行）、`selectedIds: Set<number>`、`searchQuery`（经 `useDebouncedValue` 200ms 防抖），以及两个对话框流程的 `moveToGroupState` / `tagPickerState`。
+- `src/App.tsx` 持有大部分 UI 状态。Phase 6 引入两层数据模型：`currentEmojis: IndexedEmoji[]`（按视图，网格的数据源）和 `indexedEmojis: IndexedEmoji[]`（"全部"缓存）。一个以 `[currentView, debouncedQuery, recentItems]` 为 key 的 useEffect，对非回收站/非最近使用的视图调用 `searchEmojis({view, query, ...})` 并重新填充 `currentEmojis`；网格的 `viewItems` 是 `currentEmojis` 的轻量 `IndexedImage` 投影。其他状态：`groups`、`tags`、`trashCount`、`favoriteIds: Set<number>`（基于 id，与旧 UI 用的 `favorites: Set<string>` 并行）、`searchQuery`（经 `useDebouncedValue` 200ms 防抖），以及两个对话框流程的 `moveToGroupState` / `tagPickerState`。**Phase 9 多选**：`selectedIds: Set<number>` 由 `useMultiSelection(filteredItems)` 托管（网格唯一选中源，旧 `selectedPath` 已删），另有 `multiSelectMode: boolean`（显式多选开关，头部「多选」按钮触发，开启后单击切换选中；切视图经 `prevViewRef` effect 统一清选区 + 关模式）。
 - `src/components/ThemeProvider.tsx` 是*设置*上下文（不只是主题）。把 `theme`、`sidebarCollapsed`、`defaultView`、`quickSearchShortcut`、`clipboardCollectShortcut` 持久化到 `localStorage: emobox.settings`，并通过 `getCurrentWindow().setTheme(...)` 把 `theme` 同步给原生窗口。默认快捷键来自 `src/config/shortcuts.ts`。
 - `src/lib/tauri.ts` 是唯一调用 `invoke()` 的地方。新增 Tauri 命令就在这里加类型化包装；不要从特性代码里直接调 `invoke`。Phase 6 加了约 20 个分组/标签/收藏/搜索/回收站包装。
 - `src/types.ts` 是共享契约的唯一来源。Phase 8 起 `IndexedImage`（7 字段，含 `id`，网格缩略图按 id 取）与 `IndexedEmoji`（13 字段，含 `id`、`sourceType`、`isFavorite`、`groupIds[]`、`tagIds[]`、`lastUsedAt`、`usageCount`）并存，`sourceType` 联合为 `"managed_import" | "clipboard"`（外部扫描已移除）。字段名用 camelCase，因为 Rust 侧用 `#[serde(rename_all = "camelCase")]`。
-- 特性文件夹：`features/import`（唯一的 `ImportMenu`，工具栏与空状态共用）、`features/library`（网格视图 + Phase 6 对话框 `GroupDialog` / `MoveToGroupDialog` / `TagPickerDialog` + `useDebouncedValue`）、`features/search`（浮层窗口内容）。Hook 紧挨着拥有它们的组件。
+- 特性文件夹：`features/import`（唯一的 `ImportMenu`，工具栏与空状态共用）、`features/library`（网格视图 + Phase 6 对话框 `GroupDialog` / `MoveToGroupDialog` / `TagPickerDialog` + `useDebouncedValue` + Phase 9 多选 `useMultiSelection` hook）、`features/search`（浮层窗口内容）。Hook 紧挨着拥有它们的组件。
 
 ### 后端（`src-tauri/src/`，Rust + Tauri 2）
 
@@ -68,7 +68,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 **压缩（Phase 8）**：受管副本静态图（PNG/JPG/WebP）任一边 >512px 缩到 512px 内再显式重编码（PNG Fast / JPEG q85 / WebP lossless）；GIF / APNG / 动画 WebP / 无法确认格式一律保持原始字节（`AssetService::animation_status` 内容级检测）。dHash 在压缩前对解码图计算（EXIF 方向已应用）。
 
-`EmojiLibraryView` 消费 `currentEmojis: IndexedEmoji[]`（按视图，由 `App.tsx` 在 `searchEmojis` 调用后设置）并投影为 `IndexedImage`（Phase 8 起 7 字段，含 `id`）供网格用。`App.tsx` 里按视图的 useEffect 选择正确的后端端点：四个列表视图（`all` / `favorites` / `ungrouped` / `group:N`）用 `search_emojis`，`trash` 用 `list_deleted_emojis`，`recent` 用本地 `recentItems`（客户端过滤）。网格的 `viewItems` 是 `currentEmojis` 的轻量 `IndexedImage` 投影。搜索框支持 `组名:标签` 精确语法（`list_indexed` 后端解析，NOCASE，空结果回退一次普通 LIKE；也支持 `组名:` / `:标签` / 全角冒号）。
+`EmojiLibraryView` 消费 `currentEmojis: IndexedEmoji[]`（按视图，由 `App.tsx` 在 `searchEmojis` 调用后设置）并投影为 `IndexedImage`（Phase 8 起 7 字段，含 `id`）供网格用。`App.tsx` 里按视图的 useEffect 选择正确的后端端点：四个列表视图（`all` / `favorites` / `ungrouped` / `group:N`）用 `search_emojis`，`trash` 用 `list_deleted_emojis`，`recent` 用本地 `recentItems`（客户端过滤）。网格的 `viewItems` 是 `currentEmojis` 的轻量 `IndexedImage` 投影。搜索框支持 `组名:标签` 精确语法（`list_indexed` 后端解析，NOCASE，空结果回退一次普通 LIKE；也支持 `组名:` / `:标签` / 全角冒号）。**网格选中与右键（Phase 9）**：`EmojiGrid` 持有一个共享受控 `Menu`（`EmojiItemMenu` 内容），用 `positioning={{ target }}` 光标定位（本地 `VirtualTarget` helper，事件/按钮 rect 两种锚点，不依赖 `usePositioningMouseTarget`）；`EmojiGridItem` 单击按 `multiSelectMode` 分发（开启=切换选中，否则=替换），Ctrl/Shift 仍可切换/范围；`EmojiItemMenu` 的 `multi` 为 true 时隐藏 复制/查看文件位置。选中 ≥2（多选模式下 ≥1）时 `EmojiLibraryView` 在 `.content` 底部浮出批量条（`LibraryHeader` 提供「多选」开关）。
 
 ## 快捷搜索浮层
 
@@ -101,10 +101,11 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 - 最近列表：最多 50 条，按 `path` 去重，按 `lastUsedAt` 降序。**Phase 6 起 SQLite 是事实源** —— `last_used_at` / `usage_count` 在 `emojis` 上，`RecentImagesState` 是内存缓存，`recent-images.json` 文件只导入。
 - 所有应跨重启持久化的 UI 状态都走 `ThemeProvider` / `localStorage: emobox.settings`（主题、侧栏折叠、默认视图、两个全局快捷键、`autoPaste`）。不要引入其他持久化后端。（分组 / 标签 / 收藏状态**不**走这里 —— 它们经 Phase 6 命令存在 SQLite。Phase 7 的目标窗口**仅内存** —— 绝不持久化其 HWND。）
 - **Phase 7 自动粘贴**是"先复制再输入模拟"流程，**不是**窗口消息粘贴。`paste_to_target_window` 从不返回 `Result::Err`；每个失败都是 `PasteResult::clipboardOnly`。目标窗口按会话作用域，在隐藏 / 失败 / TTL 时清空。`windows/` 模块是全 crate 唯一的 `unsafe`，藏在 `#[cfg(windows)]` 后面。`focus_restore.rs` **编译损坏**，必须先按 `CreateTrueCondition` + `FindAll` 改写修复，才能认为该功能可用。
+- **网格多选（Phase 9）**：`selectedIds` 是唯一选中源，由 `useMultiSelection(filteredItems)` 托管；prune 按 id 集合并行（排序变化不清、换视图/搜索收窄跟随可见集收缩）。批量 id 直接用视图项 `IndexedImage.id`（各视图含 recent 都真实）。批删/恢复/彻底删除后要同步剪 `currentEmojis` / `allItems` / `indexedEmojis` / `recentItems` / `favorites` / `favoriteIds` 并 `deselect`。切视图用 `prevViewRef` effect 统一清选区 + 关多选模式，**不要**在视图 effect（deps 含 `debouncedQuery` / `recentItems`）里清。键盘 Ctrl+A / Delete 走 `keyShortcutRef` latest-ref，输入框与模态弹窗打开时豁免。
 - Rust 侧把表情元数据持久化在 SQLite（`app_data_dir` 的 `emobox.sqlite3`）。无云端、无账号、无网络同步。
 - 支持的图片扩展：`png`、`jpg`、`jpeg`、`gif`、`webp`。检查点集中在 `scanner::supported_extension`（Rust）和 `useLibraryImport.ts` 的 `imageFilters`（TS）。
 - 未实现的功能必须在 UI 里可见地 `disabled`，不能静默假装成功。参见 `ImportMenu.tsx` 的模式。
-- Rust 单元测试在 `#[cfg(test)]` 模块里（例如 `asset_service.rs`、`import_service.rs`、`scanner.rs`、`recent.rs`、`clipboard.rs`、`shortcut_registry.rs`、`repositories/emoji_repository.rs`、`repositories/group_repository.rs`、`repositories/tag_repository.rs`、`services/trash_service.rs`、`perceptual_hash.rs`）。JS 层检查是 `npm run build`（tsc --noEmit + vite）+ `npx vitest run`（Phase 8 起，浮层 `useQuickSearchQuery` 请求乱序测试）。
+- Rust 单元测试在 `#[cfg(test)]` 模块里（例如 `asset_service.rs`、`import_service.rs`、`scanner.rs`、`recent.rs`、`clipboard.rs`、`shortcut_registry.rs`、`repositories/emoji_repository.rs`、`repositories/group_repository.rs`、`repositories/tag_repository.rs`、`services/trash_service.rs`、`perceptual_hash.rs`）。JS 层检查是 `npm run build`（tsc --noEmit + vite）+ `npx vitest run`（Phase 8 起浮层 `useQuickSearchQuery` 乱序测试 + Phase 9 起 `useMultiSelection` 多选测试）。
 
 ### PNG 编码是确定性的 —— 对剪贴板去重承重
 
@@ -140,8 +141,9 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 - 新增设置？扩展 `ThemeProvider.tsx` 的 `PersistedSettings`；自动持久化到 `localStorage: emobox.settings`。
 - 新增侧栏视图？把新值加进 `App.tsx` 的 `viewTitles`（以及 `SettingsMenu.tsx` 的默认视图下拉），扩展 `types.ts` 的 `LibraryView` 联合，并在 `App.tsx` 的按视图 useEffect 里加一个分支调用对应后端命令。新列表视图用 `searchEmojis({view: "..."})`；保留视图是 `all` / `favorites` / `ungrouped` / `group` / `search-recent` / `trash` —— SQL 由 `build_view_filter` 构建。
 - 新增分组 / 标签 / 收藏操作？CRUD 在 `group_repository.rs` / `tag_repository.rs`；关联在 `EmojiRepository::add_to_group` / `remove_from_group` / `add_tags` / `remove_tags`；批量收藏是 `EmojiRepository::set_favorite_for_ids`（单事务，无 N+1）。
-- 新增回收站操作？路由到 `trash_service` —— 永远不要在该模块外改文件。更新 `trash_service::TrashResult` 的消费者（Tauri 命令）和对话框（`TrashDeleteDialog` / `TrashPanel`）。
+- 新增网格选中 / 右键 / 批量操作？选中状态只在 `features/library/useMultiSelection.ts`（`selectedIds` 单一来源）；右键菜单是 `EmojiGrid` 里的共享 `Menu` + `EmojiItemMenu`（`multi` 区分批量）；批量处理器在 `App.tsx`，统一 `(items: IndexedImage[])` 数组签名。后端批量命令（`setEmojisFavorite` / `addEmojisToGroup` / `addTagsToEmojis` / `softDeleteToTrash` 等）已接受 `number[]`，不要再加单个 id 的新命令。
+- 新增回收站操作？路由到 `trash_service` —— 永远不要在该模块外改文件。更新 `trash_service::TrashResult` 的消费者（Tauri 命令）和前端回收站操作（`EmojiItemMenu` trash 模式 + 批量条；确认用 `window.confirm`，无 Fluent Dialog）。
 - 新增剪贴板*写*行为？`clipboard.rs` 是边界。别忘了 `record_image_used` 回写，让 SQLite 的 `last_used_at` / `usage_count` 保持最新。
 - 新增剪贴板*读*行为？`clipboard_collect.rs` 是边界；RGBA 必须经 `AssetService::stage_dynamic_image` 以保持 PNG 编码确定性。
 - 新增搜索行为？统一路径是 `EmojiRepository::list_indexed(options, query, tag_ids)` —— 绝不要在别处写平行 SQL 字符串。锁步参数绑定（SQL `?` 与 params Vec 同步 push）+ `parse_exact_query` 精确语法是唯一做这事的地方；你要加新方法就复刻这个模式。
-- 实现历史和各阶段设计笔记：`docs/implementation-plan.md`、`docs/windows-image-clipboard.md`、`docs/system-tray-recent-usage.md`、`docs/search-overlay-global-shortcut.md`、`docs/phase5-clipboard-probe-results.md`、`docs/phase6-groups-tags-trash.md`、`docs/phase7-chat-paste.md`、`docs/phase8-import-optimization.md`。README 有产品级概览；AGENTS.md 有仓库约定。
+- 实现历史和各阶段设计笔记：`docs/implementation-plan.md`、`docs/windows-image-clipboard.md`、`docs/system-tray-recent-usage.md`、`docs/search-overlay-global-shortcut.md`、`docs/phase5-clipboard-probe-results.md`、`docs/phase6-groups-tags-trash.md`、`docs/phase7-chat-paste.md`、`docs/phase8-import-optimization.md`、`docs/phase9-multiselect-context-menu.md`。README 有产品级概览；AGENTS.md 有仓库约定。

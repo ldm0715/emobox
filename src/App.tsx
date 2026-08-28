@@ -23,6 +23,7 @@ import { GroupDialog } from "./features/library/GroupDialog";
 import { MoveToGroupDialog } from "./features/library/MoveToGroupDialog";
 import { TagPickerDialog } from "./features/library/TagPickerDialog";
 import { useDebouncedValue } from "./features/library/useDebouncedValue";
+import { useMultiSelection, type SelectionMode } from "./features/library/useMultiSelection";
 import {
   addTagsToEmojis,
   copyImageToClipboard,
@@ -135,8 +136,11 @@ export function App() {
   const [tags, setTags] = useState<Tag[]>([]);
   // 回收站数量
   const [trashCount, setTrashCount] = useState(0);
-  // 多选（id-based，新组件用）
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  // 多选状态由 useMultiSelection 托管（见 filteredItems 之后的调用点）。
+  // clearSelectionRef 让定义较早的 prepareAfterImport 也能触发清空。
+  const clearSelectionRef = useRef<() => void>(() => {});
+  // 键盘快捷键的 latest-handler 容器：keydown effect deps 保持 []，避免闭包过期。
+  const keyShortcutRef = useRef<(event: globalThis.KeyboardEvent) => void>(() => {});
   // GroupDialog 状态
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [groupDialogBusy, setGroupDialogBusy] = useState(false);
@@ -157,8 +161,9 @@ export function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOption, setSortOption] = useState<SortOption>("name-asc");
   const [density, setDensity] = useState<GridDensity>("comfortable");
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [recentItems, setRecentItems] = useState<RecentImageRecord[]>([]);
+  // 显式多选模式：开启后单击即切换选中，关闭时清空选区。
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
 
   const debouncedQuery = useDebouncedValue(searchQuery, 200);
 
@@ -483,8 +488,7 @@ export function App() {
   const prepareAfterImport = useCallback(async () => {
     setCurrentView("all");
     setSearchQuery("");
-    setSelectedPath(null);
-    setSelectedIds(new Set());
+    clearSelectionRef.current();
     await refreshLibrary();
     await refreshSidebar();
   }, [refreshLibrary, refreshSidebar]);
@@ -656,7 +660,9 @@ export function App() {
       if (event.ctrlKey && event.key.toLocaleLowerCase() === "f") {
         event.preventDefault();
         document.querySelector<HTMLInputElement>("[data-emobox-main-search] input")?.focus();
+        return;
       }
+      keyShortcutRef.current(event);
     }
 
     window.addEventListener("keydown", handleWindowKeyDown);
@@ -667,8 +673,6 @@ export function App() {
   useEffect(() => {
     let disposed = false;
     setViewLoading(true);
-    setSelectedIds(new Set());
-    setSelectedPath(null);
     const trimmedQuery = debouncedQuery.trim();
     (async () => {
       try {
@@ -839,49 +843,58 @@ export function App() {
     return outcome.reason;
   }, [dispatchToast, setClipboardCollectShortcut]);
 
-  const toggleFavorite = useCallback(async (item: IndexedImage) => {
-    // 找到对应 IndexedEmoji
-    const emoji = indexedEmojis.find((e) => e.path === item.path);
-    if (!emoji) return;
-    const next = !emoji.isFavorite;
+  const toggleFavorite = useCallback(async (items: IndexedImage[]) => {
+    const ids = items.map((item) => item.id);
+    if (ids.length === 0) return;
+    const allFav = ids.every((id) => favoriteIds.has(id));
+    const next = !allFav;
+    const idSet = new Set(ids);
+
+    const syncFavorites = (curr: Set<string>, target: boolean) => {
+      const s = new Set(curr);
+      let changed = false;
+      for (const item of items) {
+        if (target) {
+          if (!s.has(item.path)) {
+            s.add(item.path);
+            changed = true;
+          }
+        } else if (s.delete(item.path)) changed = true;
+      }
+      return changed ? s : curr;
+    };
+    const syncFavoriteIds = (curr: Set<number>, target: boolean) => {
+      const s = new Set(curr);
+      let changed = false;
+      for (const id of ids) {
+        if (target) {
+          if (!s.has(id)) {
+            s.add(id);
+            changed = true;
+          }
+        } else if (s.delete(id)) changed = true;
+      }
+      return changed ? s : curr;
+    };
+
     // 乐观更新
     setIndexedEmojis((curr) =>
-      curr.map((e) => (e.id === emoji.id ? { ...e, isFavorite: next } : e)),
+      curr.map((e) => (idSet.has(e.id) ? { ...e, isFavorite: next } : e)),
     );
-    setFavorites((curr) => {
-      const s = new Set(curr);
-      if (next) s.add(item.path);
-      else s.delete(item.path);
-      return s;
-    });
-    setFavoriteIds((curr) => {
-      const s = new Set(curr);
-      if (next) s.add(emoji.id);
-      else s.delete(emoji.id);
-      return s;
-    });
+    setFavorites((curr) => syncFavorites(curr, next));
+    setFavoriteIds((curr) => syncFavoriteIds(curr, next));
     try {
-      await setEmojisFavorite([emoji.id], next);
+      await setEmojisFavorite(ids, next);
     } catch (e) {
       // 回滚
       setIndexedEmojis((curr) =>
-        curr.map((it) => (it.id === emoji.id ? { ...it, isFavorite: !next } : it)),
+        curr.map((e) => (idSet.has(e.id) ? { ...e, isFavorite: !next } : e)),
       );
-      setFavorites((curr) => {
-        const s = new Set(curr);
-        if (!next) s.add(item.path);
-        else s.delete(item.path);
-        return s;
-      });
-      setFavoriteIds((curr) => {
-        const s = new Set(curr);
-        if (!next) s.add(emoji.id);
-        else s.delete(emoji.id);
-        return s;
-      });
+      setFavorites((curr) => syncFavorites(curr, !next));
+      setFavoriteIds((curr) => syncFavoriteIds(curr, !next));
       setError(`更新收藏失败：${getErrorMessage(e)}`);
     }
-  }, [indexedEmojis, setError]);
+  }, [favoriteIds, setError]);
 
   const viewItems = useMemo(() => {
     // currentEmojis 已经是后端按 view 过滤好的；recent 走 IndexedImage 派生
@@ -913,6 +926,239 @@ export function App() {
     });
     return filtered;
   }, [currentView, sortOption, viewItems]);
+
+  // ===== 多选：hook 托管 selectedIds / anchor / Shift 范围 =====
+  const { selectedIds, selectOnly, toggle, rangeSelect, selectAll, clear, deselect } =
+    useMultiSelection(filteredItems);
+
+  clearSelectionRef.current = clear;
+
+  const indexedById = useMemo(
+    () => new Map(indexedEmojis.map((e) => [e.id, e])),
+    [indexedEmojis],
+  );
+
+  const handleItemSelect = useCallback(
+    (item: IndexedImage, mode: SelectionMode) => {
+      if (mode === "toggle") toggle(item.id);
+      else if (mode === "range") rangeSelect(item.id);
+      else selectOnly(item.id);
+    },
+    [toggle, rangeSelect, selectOnly],
+  );
+
+  const handleToggleMultiSelect = useCallback(() => {
+    if (multiSelectMode) clear();
+    setMultiSelectMode((prev) => !prev);
+  }, [multiSelectMode, clear]);
+
+  // 只在真正切换视图时清空选区（覆盖侧栏切换 / 移入分组跳转 / 导入 / 删组所有路径）。
+  const prevViewRef = useRef(currentView);
+  useEffect(() => {
+    if (prevViewRef.current !== currentView) {
+      clear();
+      setMultiSelectMode(false);
+      prevViewRef.current = currentView;
+    }
+  }, [currentView, clear]);
+
+  // ===== 批量操作（items 数组；单选时传 [item]）=====
+  async function handleDelete(items: IndexedImage[]) {
+    const ids = items.map((item) => item.id);
+    if (ids.length === 0) return;
+    const label = ids.length === 1 ? `「${items[0].name}」` : `这 ${ids.length} 个表情`;
+    if (!window.confirm(`将${label}移入回收站？\n可以从侧栏「回收站」恢复。`)) return;
+    try {
+      await softDeleteToTrash(ids);
+      const idSet = new Set(ids);
+      const pathSet = new Set(items.map((item) => item.path));
+      setCurrentEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
+      setAllItems((curr) => curr.filter((i) => !idSet.has(i.id)));
+      setIndexedEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
+      setRecentItems((curr) => curr.filter((r) => !idSet.has(r.item.id)));
+      setFavorites((curr) => {
+        let changed = false;
+        const s = new Set(curr);
+        for (const p of pathSet) if (s.delete(p)) changed = true;
+        return changed ? s : curr;
+      });
+      setFavoriteIds((curr) => {
+        let changed = false;
+        const s = new Set(curr);
+        for (const id of ids) if (s.delete(id)) changed = true;
+        return changed ? s : curr;
+      });
+      deselect(ids);
+      await refreshSidebar();
+      dispatchToast(
+        <Toast>
+          <ToastTitle>已移入回收站</ToastTitle>
+        </Toast>,
+        { intent: "info" },
+      );
+    } catch (e) {
+      setError(`移入回收站失败：${getErrorMessage(e)}`);
+    }
+  }
+
+  async function handleRestore(items: IndexedImage[]) {
+    const ids = items.map((item) => item.id);
+    if (ids.length === 0) return;
+    try {
+      const { restoreFromTrash } = await import("./lib/tauri");
+      await restoreFromTrash(ids);
+      const idSet = new Set(ids);
+      setCurrentEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
+      setRecentItems((curr) => curr.filter((r) => !idSet.has(r.item.id)));
+      deselect(ids);
+      await refreshSidebar();
+      dispatchToast(
+        <Toast>
+          <ToastTitle>已从回收站恢复</ToastTitle>
+        </Toast>,
+        { intent: "success" },
+      );
+    } catch (e) {
+      setError(`恢复失败：${getErrorMessage(e)}`);
+    }
+  }
+
+  async function handlePermanentlyDelete(items: IndexedImage[]) {
+    const ids = items.map((item) => item.id);
+    if (ids.length === 0) return;
+    const label = ids.length === 1 ? `「${items[0].name}」` : `这 ${ids.length} 个表情`;
+    if (!window.confirm(`确定要彻底删除${label}？\n此操作不可撤销。`)) return;
+    try {
+      const { permanentlyDeleteEmojis } = await import("./lib/tauri");
+      await permanentlyDeleteEmojis(ids);
+      const idSet = new Set(ids);
+      const pathSet = new Set(items.map((item) => item.path));
+      setCurrentEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
+      setAllItems((curr) => curr.filter((i) => !idSet.has(i.id)));
+      setIndexedEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
+      setRecentItems((curr) => curr.filter((r) => !idSet.has(r.item.id)));
+      setFavorites((curr) => {
+        let changed = false;
+        const s = new Set(curr);
+        for (const p of pathSet) if (s.delete(p)) changed = true;
+        return changed ? s : curr;
+      });
+      setFavoriteIds((curr) => {
+        let changed = false;
+        const s = new Set(curr);
+        for (const id of ids) if (s.delete(id)) changed = true;
+        return changed ? s : curr;
+      });
+      deselect(ids);
+      await refreshSidebar();
+      dispatchToast(
+        <Toast>
+          <ToastTitle>已彻底删除</ToastTitle>
+        </Toast>,
+        { intent: "info" },
+      );
+    } catch (e) {
+      setError(`彻底删除失败：${getErrorMessage(e)}`);
+    }
+  }
+
+  async function handleRemoveFromGroup(items: IndexedImage[]) {
+    const groupId = parseInt(currentView.slice(6), 10);
+    if (!Number.isFinite(groupId)) return;
+    const ids = items.map((item) => item.id);
+    if (ids.length === 0) return;
+    const group = groups.find((g) => g.id === groupId);
+    try {
+      const { removeEmojisFromGroup } = await import("./lib/tauri");
+      await removeEmojisFromGroup(groupId, ids);
+      const idSet = new Set(ids);
+      setCurrentEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
+      deselect(ids);
+      await refreshSidebar();
+      dispatchToast(
+        <Toast>
+          <ToastTitle>已从「{group?.name ?? "分组"}」移除</ToastTitle>
+        </Toast>,
+        { intent: "success" },
+      );
+    } catch (e) {
+      setError(`从分组移除失败：${getErrorMessage(e)}`);
+    }
+  }
+
+  function handleMoveToGroup(items: IndexedImage[]) {
+    const ids = items.map((item) => item.id);
+    if (ids.length === 0) return;
+    setMoveToGroupState({ emojiIds: ids });
+  }
+
+  function handleAddTags(items: IndexedImage[]) {
+    const ids = items.map((item) => item.id);
+    if (ids.length === 0) return;
+    // 初选 = 所有选中项 tagIds 的交集（弹窗 diff 对全集生效）。
+    const sets = ids.map((id) => new Set(indexedById.get(id)?.tagIds ?? []));
+    const inter = new Set<number>(sets[0] ?? []);
+    for (const s of sets.slice(1)) {
+      for (const t of [...inter]) if (!s.has(t)) inter.delete(t);
+    }
+    setTagPickerState({ emojiIds: ids, initiallySelectedTagIds: Array.from(inter) });
+  }
+
+  async function handleCopy(items: IndexedImage[]) {
+    if (items.length !== 1) return;
+    const item = items[0];
+    try {
+      await copyImageToClipboard(item.path);
+      dispatchToast(
+        <Toast>
+          <ToastTitle>已复制 {item.name}</ToastTitle>
+        </Toast>,
+        { intent: "success" },
+      );
+    } catch (e) {
+      setError(`复制失败：${getErrorMessage(e)}`);
+    }
+  }
+
+  async function handleShowInExplorer(items: IndexedImage[]) {
+    if (items.length !== 1) return;
+    try {
+      await showInExplorer(items[0].path);
+    } catch (e) {
+      setError(`查看文件位置失败：${getErrorMessage(e)}`);
+    }
+  }
+
+  // ===== Ctrl+A 全选 / Delete 批量回收站（latest-ref，keydown effect deps 保持 []）=====
+  keyShortcutRef.current = (event) => {
+    // 模态弹窗打开时豁免，避免在弹窗内误触发批量操作。
+    const dialogOpen =
+      groupDialogOpen || moveToGroupState !== null || tagPickerState !== null || settingsOpen;
+    if (dialogOpen) return;
+
+    const el = event.target instanceof HTMLElement ? event.target : null;
+    const editable = !!el && (
+      el.tagName === "INPUT" ||
+      el.tagName === "TEXTAREA" ||
+      el.isContentEditable ||
+      el.getAttribute("role") === "textbox"
+    );
+
+    if (event.ctrlKey && event.key.toLocaleLowerCase() === "a") {
+      if (editable) return;
+      event.preventDefault();
+      selectAll();
+      return;
+    }
+
+    if (event.key === "Delete") {
+      if (editable || currentView === "trash") return;
+      const selItems = filteredItems.filter((item) => selectedIds.has(item.id));
+      if (selItems.length === 0) return;
+      event.preventDefault();
+      void handleDelete(selItems);
+    }
+  };
 
   const currentTitle =
     viewTitles[currentView as keyof typeof viewTitles] ??
@@ -948,7 +1194,7 @@ export function App() {
             quickSearchShortcut={quickSearchShortcut}
             shortcutRegistered={shortcutRegistered}
             onViewChange={(v) => {
-              setSelectedIds(new Set());
+              clear();
               setCurrentView(v);
             }}
             onOpenQuickSearch={() => void openQuickSearch()}
@@ -996,8 +1242,9 @@ export function App() {
           query={searchQuery}
           density={density}
           sortOption={sortOption}
-          selectedPath={selectedPath}
-          favorites={favorites}
+          selectedIds={selectedIds}
+          favoriteIds={favoriteIds}
+          multiSelectMode={multiSelectMode}
           importing={isImporting}
           error={error}
           tagsByPath={tagsByPath}
@@ -1008,138 +1255,18 @@ export function App() {
           onCollectFromClipboard={() => void handleCollectFromClipboard()}
           onDensityChange={setDensity}
           onSortChange={setSortOption}
-          onSelect={(item) => setSelectedPath(item.path)}
+          onToggleMultiSelect={handleToggleMultiSelect}
+          onItemSelect={handleItemSelect}
+          onClearSelection={clear}
           onToggleFavorite={toggleFavorite}
-          onCopy={async (item) => {
-            try {
-              await copyImageToClipboard(item.path);
-              dispatchToast(
-                <Toast>
-                  <ToastTitle>已复制 {item.name}</ToastTitle>
-                </Toast>,
-                { intent: "success" },
-              );
-            } catch (e) {
-              setError(`复制失败：${getErrorMessage(e)}`);
-            }
-          }}
-          onMoveToGroup={async (item) => {
-            const emoji = indexedEmojis.find((x) => x.path === item.path);
-            if (!emoji) return;
-            setMoveToGroupState({ emojiIds: [emoji.id] });
-          }}
-          onAddTags={async (item) => {
-            const emoji = currentEmojis.find((x) => x.path === item.path);
-            if (!emoji) return;
-            setTagPickerState({
-              emojiIds: [emoji.id],
-              initiallySelectedTagIds: emoji.tagIds,
-            });
-          }}
-          onRemoveFromGroup={async (item) => {
-            const groupId = parseInt(currentView.slice(6), 10);
-            if (!Number.isFinite(groupId)) return;
-            const emoji = currentEmojis.find((x) => x.path === item.path);
-            if (!emoji) return;
-            const group = groups.find((g) => g.id === groupId);
-            try {
-              const { removeEmojisFromGroup } = await import("./lib/tauri");
-              await removeEmojisFromGroup(groupId, [emoji.id]);
-              setCurrentEmojis((curr) => curr.filter((e) => e.id !== emoji.id));
-              await refreshSidebar();
-              dispatchToast(
-                <Toast>
-                  <ToastTitle>已从「{group?.name ?? "分组"}」移除</ToastTitle>
-                </Toast>,
-                { intent: "success" },
-              );
-            } catch (e) {
-              setError(`从分组移除失败：${getErrorMessage(e)}`);
-            }
-          }}
-          onShowInExplorer={async (item) => {
-            try {
-              await showInExplorer(item.path);
-            } catch (e) {
-              setError(`查看文件位置失败：${getErrorMessage(e)}`);
-            }
-          }}
-          onDelete={async (item) => {
-            const emoji = indexedEmojis.find((x) => x.path === item.path);
-            if (!emoji) return;
-            if (!window.confirm(`将「${item.name}」移入回收站？\n可以从侧栏「回收站」恢复。`)) return;
-            try {
-              await softDeleteToTrash([emoji.id]);
-              // 立即从当前视图移除
-              setCurrentEmojis((curr) => curr.filter((e) => e.id !== emoji.id));
-              setAllItems((curr) => curr.filter((i) => i.path !== item.path));
-              setIndexedEmojis((curr) => curr.filter((e) => e.id !== emoji.id));
-              setFavorites((curr) => {
-                if (!curr.has(item.path)) return curr;
-                const s = new Set(curr);
-                s.delete(item.path);
-                return s;
-              });
-              setFavoriteIds((curr) => {
-                if (!curr.has(emoji.id)) return curr;
-                const s = new Set(curr);
-                s.delete(emoji.id);
-                return s;
-              });
-              setSelectedIds((curr) => {
-                if (!curr.has(emoji.id)) return curr;
-                const s = new Set(curr);
-                s.delete(emoji.id);
-                return s;
-              });
-              await refreshSidebar();
-              dispatchToast(
-                <Toast>
-                  <ToastTitle>已移入回收站</ToastTitle>
-                </Toast>,
-                { intent: "info" },
-              );
-            } catch (e) {
-              setError(`移入回收站失败：${getErrorMessage(e)}`);
-            }
-          }}
-          onRestore={async (item) => {
-            const emoji = currentEmojis.find((x) => x.path === item.path);
-            if (!emoji) return;
-            try {
-              const { restoreFromTrash } = await import("./lib/tauri");
-              await restoreFromTrash([emoji.id]);
-              setCurrentEmojis((curr) => curr.filter((e) => e.id !== emoji.id));
-              await refreshSidebar();
-              dispatchToast(
-                <Toast>
-                  <ToastTitle>已从回收站恢复</ToastTitle>
-                </Toast>,
-                { intent: "success" },
-              );
-            } catch (e) {
-              setError(`恢复失败：${getErrorMessage(e)}`);
-            }
-          }}
-          onPermanentlyDelete={async (item) => {
-            const emoji = currentEmojis.find((x) => x.path === item.path);
-            if (!emoji) return;
-            if (!window.confirm(`确定要彻底删除「${item.name}」？\n此操作不可撤销。`)) return;
-            try {
-              const { permanentlyDeleteEmojis } = await import("./lib/tauri");
-              await permanentlyDeleteEmojis([emoji.id]);
-              setCurrentEmojis((curr) => curr.filter((e) => e.id !== emoji.id));
-              await refreshSidebar();
-              dispatchToast(
-                <Toast>
-                  <ToastTitle>已彻底删除</ToastTitle>
-                </Toast>,
-                { intent: "info" },
-              );
-            } catch (e) {
-              setError(`彻底删除失败：${getErrorMessage(e)}`);
-            }
-          }}
+          onCopy={handleCopy}
+          onMoveToGroup={handleMoveToGroup}
+          onRemoveFromGroup={handleRemoveFromGroup}
+          onAddTags={handleAddTags}
+          onShowInExplorer={handleShowInExplorer}
+          onDelete={handleDelete}
+          onRestore={handleRestore}
+          onPermanentlyDelete={handlePermanentlyDelete}
         />
       </AppShell>
 
