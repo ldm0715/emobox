@@ -14,7 +14,6 @@ import {
   Search20Regular,
 } from "@fluentui/react-icons";
 import type { KeyboardEvent } from "react";
-import { AppIcon } from "../components/AppIcon";
 import { ImportMenu } from "../features/import/ImportMenu";
 import { ThemeQuickMenu } from "./ThemeQuickMenu";
 
@@ -117,7 +116,6 @@ export function AppToolbar({
             onClick={onToggleSidebar}
           />
         </Tooltip>
-        <AppIcon />
         {!sidebarCollapsed && <span className={styles.title}>表情匣</span>}
       </div>
 
