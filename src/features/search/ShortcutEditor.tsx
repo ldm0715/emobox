@@ -28,7 +28,7 @@ interface ShortcutEditorProps {
 const useStyles = makeStyles({
   root: {
     display: "grid",
-    gap: tokens.spacingVerticalS,
+    gap: tokens.spacingVerticalM,
   },
   controls: {
     display: "grid",
@@ -40,8 +40,8 @@ const useStyles = makeStyles({
   },
   help: {
     color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
-    lineHeight: tokens.lineHeightBase200,
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase300,
   },
 });
 
