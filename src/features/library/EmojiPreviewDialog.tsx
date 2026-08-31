@@ -32,6 +32,8 @@ interface EmojiPreviewDialogProps {
   groupNames: string[];
   /** 标签名（App 由 indexedById.tagIds + tagById 解析）。 */
   tagNames: string[];
+  /** 只读模式（回收站）：隐藏 收藏/复制 操作，只保留查看与关闭。 */
+  readOnly?: boolean;
   onOpenChange: (open: boolean) => void;
   onCopy: (item: IndexedImage) => void;
   onToggleFavorite: (item: IndexedImage) => void;
@@ -141,6 +143,7 @@ export function EmojiPreviewDialog({
   favorite,
   groupNames,
   tagNames,
+  readOnly = false,
   onOpenChange,
   onCopy,
   onToggleFavorite,
@@ -214,15 +217,19 @@ export function EmojiPreviewDialog({
             </div>
 
             <DialogActions className={styles.actions}>
-              <Button
-                icon={favorite ? <Star20Filled /> : <Star20Regular />}
-                onClick={() => onToggleFavorite(item)}
-              >
-                {favorite ? "取消收藏" : "收藏"}
-              </Button>
-              <Button icon={<Copy20Regular />} onClick={() => onCopy(item)}>
-                复制
-              </Button>
+              {!readOnly && (
+                <>
+                  <Button
+                    icon={favorite ? <Star20Filled /> : <Star20Regular />}
+                    onClick={() => onToggleFavorite(item)}
+                  >
+                    {favorite ? "取消收藏" : "收藏"}
+                  </Button>
+                  <Button icon={<Copy20Regular />} onClick={() => onCopy(item)}>
+                    复制
+                  </Button>
+                </>
+              )}
               <DialogTrigger disableButtonEnhancement>
                 <Button appearance="subtle" icon={<Dismiss20Regular />}>
                   关闭

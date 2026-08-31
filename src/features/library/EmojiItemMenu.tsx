@@ -47,19 +47,11 @@ export function EmojiItemMenu({
   onPermanentlyDelete,
 }: EmojiItemMenuProps) {
   if (mode === "trash") {
+    // 回收站只允许 恢复 / 彻底删除——复制与查看文件位置对已进回收站的素材不合理
+    //（查看会暴露 assets/trash 内部路径，复制会绕过恢复流程取用已删除文件）。
     return (
       <MenuPopover>
         <MenuList>
-          {!multi && (
-            <MenuItem icon={<ClipboardImage20Regular />} onClick={onCopy}>
-              复制到剪贴板
-            </MenuItem>
-          )}
-          {!multi && (
-            <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
-              查看文件位置
-            </MenuItem>
-          )}
           {onRestore && (
             <MenuItem icon={<ArrowUpload20Regular />} onClick={onRestore}>
               从回收站恢复

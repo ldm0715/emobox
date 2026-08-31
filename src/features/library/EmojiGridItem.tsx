@@ -213,6 +213,8 @@ export function EmojiGridItemBase({
   const { gifSrc, handleGifError } = useGifPreview(item, hovered);
 
   // 单击/双击消歧：Ctrl/Shift/多选模式立即选中；普通单击 250ms 后复制；双击开预览。
+  // 回收站（trash）例外：复制不可用，普通单击退化为选中（replace），
+  // 方便连点几张后走批量条/右键菜单的 恢复/彻底删除。
   const { handleClick, handleDoubleClick } = useClickIntent({
     isImmediate: (event) => event.ctrlKey || event.metaKey || event.shiftKey || multiSelectMode,
     onImmediate: (event) => {
@@ -220,7 +222,10 @@ export function EmojiGridItemBase({
       else if (event.shiftKey) onItemSelect(item, "range");
       else onItemSelect(item, "toggle");
     },
-    onSingle: () => onCopy([item]),
+    onSingle: () => {
+      if (menuMode === "trash") onItemSelect(item, "replace");
+      else onCopy([item]);
+    },
     onDouble: () => onOpenPreview(item),
   });
 
@@ -289,16 +294,18 @@ export function EmojiGridItemBase({
               />
             </Tooltip>
           )}
-          <Tooltip content="复制" relationship="label">
-            <Button
-              className={styles.actionButton}
-              size="small"
-              appearance="subtle"
-              aria-label="复制"
-              icon={<Copy20Regular />}
-              onClick={() => onCopy([item])}
-            />
-          </Tooltip>
+          {menuMode !== "trash" && (
+            <Tooltip content="复制" relationship="label">
+              <Button
+                className={styles.actionButton}
+                size="small"
+                appearance="subtle"
+                aria-label="复制"
+                icon={<Copy20Regular />}
+                onClick={() => onCopy([item])}
+              />
+            </Tooltip>
+          )}
           <Tooltip content="更多操作" relationship="label">
             <Button
               className={styles.actionButton}

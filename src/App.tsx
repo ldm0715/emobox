@@ -1440,6 +1440,7 @@ export function App() {
         favorite={previewItem !== null && favoriteIds.has(previewItem.id)}
         groupNames={previewMeta.groupNames}
         tagNames={previewMeta.tagNames}
+        readOnly={currentView === "trash"}
         onOpenChange={(open) => {
           if (!open) setPreviewItem(null);
         }}
