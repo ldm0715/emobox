@@ -9,6 +9,7 @@ import type {
   PasteResult,
   RecentImageRecord,
   SearchOptions,
+  SearchResult,
   ShortcutRegistrationStatus,
   StorageInfo,
   Tag,
@@ -206,8 +207,8 @@ export function setEmojisFavorite(
   return invoke<void>("set_emojis_favorite", { ids, isFavorite });
 }
 
-export function searchEmojis(options: SearchOptions): Promise<IndexedEmoji[]> {
-  return invoke<IndexedEmoji[]>("search_emojis", { options });
+export function searchEmojis(options: SearchOptions): Promise<SearchResult> {
+  return invoke<SearchResult>("search_emojis", { options });
 }
 
 export function softDeleteToTrash(ids: number[]): Promise<TrashResult> {
@@ -226,8 +227,11 @@ export function emptyTrash(): Promise<TrashResult> {
   return invoke<TrashResult>("empty_trash");
 }
 
-export function listDeletedEmojis(): Promise<IndexedEmoji[]> {
-  return invoke<IndexedEmoji[]>("list_deleted_emojis");
+export function listDeletedEmojis(options?: {
+  limit?: number;
+  offset?: number;
+}): Promise<SearchResult> {
+  return invoke<SearchResult>("list_deleted_emojis", options);
 }
 
 export function showInExplorer(path: string): Promise<void> {

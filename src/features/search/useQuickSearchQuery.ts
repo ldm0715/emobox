@@ -32,10 +32,10 @@ export function useQuickSearchQuery(activationId: number, reloadToken: number) {
       : { view: "all" as const, sort: "recent" as const, limit: 30, offset: 0 };
 
     searchEmojis(options)
-      .then((emojis) => {
+      .then((result) => {
         if (cancelled || seq !== requestSeq.current) return;
         setItems(
-          emojis.map((e) => ({
+          result.items.map((e) => ({
             id: e.id,
             name: e.name,
             path: e.path,

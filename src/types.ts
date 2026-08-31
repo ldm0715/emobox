@@ -151,15 +151,30 @@ export type SearchView =
   | "search-recent"
   | "trash";
 
+/** 服务端排序字面量（Phase 17 排序下推）：与 Rust `list_indexed_impl` 的 ORDER BY 分支一一对应。 */
+export type SearchSort =
+  | "recent"
+  | "name-asc"
+  | "name-desc"
+  | "format"
+  | "added-time"
+  | "modified-time";
+
 export interface SearchOptions {
   view: SearchView;
   query?: string;
   groupId?: number;
   tagIds?: number[];
   favoriteOnly?: boolean;
-  sort?: "recent";
+  sort?: SearchSort;
   limit?: number;
   offset?: number;
+}
+
+/** 分页查询结果：当页条目 + 符合过滤条件的总数（与 items 同一搜索回退级计数）。 */
+export interface SearchResult {
+  items: IndexedEmoji[];
+  total: number;
 }
 
 export interface TrashFailure {

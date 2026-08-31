@@ -24,12 +24,22 @@ interface EmojiLibraryViewProps {
   title: string;
   allItemCount: number;
   items: IndexedImage[];
+  /** 当前视图总数（后端 total，Phase 17 分页）。header「共 N 张」显示它。 */
+  total: number;
+  /** 还有未加载的页（触发网格哨兵 loadMore）。 */
+  hasMore: boolean;
+  onLoadMore: () => void;
+  /** 视图/搜索词/排序的复合 key：变化时网格重置渐进渲染量（追加页不清零）。 */
+  resetKey: string;
   query: string;
   density: GridDensity;
   sortOption: SortOption;
   selectedIds: Set<number>;
   favoriteIds: Set<number>;
   multiSelectMode: boolean;
+  /** 已加载项是否已全部选中（全选按钮的切换态）。 */
+  allSelected: boolean;
+  onToggleSelectAll: () => void;
   importing: boolean;
   error: string;
   onClearError: () => void;
@@ -135,12 +145,18 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     title,
     allItemCount,
     items,
+    total,
+    hasMore,
+    onLoadMore,
+    resetKey,
     query,
     density,
     sortOption,
     selectedIds,
     favoriteIds,
     multiSelectMode,
+    allSelected,
+    onToggleSelectAll,
     importing,
     error,
     onClearError,
@@ -238,10 +254,12 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     <section className={styles.root}>
       <LibraryHeader
         title={title}
-        count={items.length}
+        count={total}
         sortOption={sortOption}
         density={density}
         multiSelectMode={multiSelectMode}
+        allSelected={allSelected}
+        onToggleSelectAll={onToggleSelectAll}
         onToggleMultiSelect={onToggleMultiSelect}
         onSortChange={onSortChange}
         onDensityChange={onDensityChange}
@@ -267,6 +285,9 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
             multiSelectMode={multiSelectMode}
             menuMode={menuMode}
             tagsByPath={tagsByPath}
+            hasMore={hasMore}
+            onLoadMore={onLoadMore}
+            resetKey={resetKey}
             onItemSelect={onItemSelect}
             onClearSelection={onClearSelection}
             onToggleFavorite={onToggleFavorite}

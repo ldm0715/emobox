@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { IndexedEmoji } from "../../types";
+import type { IndexedEmoji, SearchResult } from "../../types";
 import { useQuickSearchQuery } from "./useQuickSearchQuery";
 
 // 隔离 Tauri 层：mock searchEmojis，捕获每次调用的 options 与可控的 deferred promise。
@@ -18,16 +18,21 @@ vi.mock("../library/useDebouncedValue", () => ({
 import { searchEmojis } from "../../lib/tauri";
 
 interface Deferred {
-  promise: Promise<IndexedEmoji[]>;
-  resolve: (value: IndexedEmoji[]) => void;
+  promise: Promise<SearchResult>;
+  resolve: (value: SearchResult) => void;
 }
 
 function deferred(): Deferred {
-  let resolve!: (value: IndexedEmoji[]) => void;
-  const promise = new Promise<IndexedEmoji[]>((res) => {
+  let resolve!: (value: SearchResult) => void;
+  const promise = new Promise<SearchResult>((res) => {
     resolve = res;
   });
   return { promise, resolve };
+}
+
+/** Phase 17 起 search_emojis 返回分页结构 { items, total }，测试统一走本包装。 */
+function resolveItems(def: Deferred, items: IndexedEmoji[]) {
+  def.resolve({ items, total: items.length });
 }
 
 function makeEmoji(id: number, name: string): IndexedEmoji {
@@ -84,9 +89,9 @@ describe("useQuickSearchQuery 请求乱序防护", () => {
 
     // 新请求（b）先落地，旧请求（a）后落地——旧结果必须被丢弃。
     await act(async () => {
-      calls[2].def.resolve([makeEmoji(2, "new")]);
-      calls[1].def.resolve([makeEmoji(1, "old")]);
-      calls[0].def.resolve([]);
+      resolveItems(calls[2].def, [makeEmoji(2, "new")]);
+      resolveItems(calls[1].def, [makeEmoji(1, "old")]);
+      resolveItems(calls[0].def, []);
     });
 
     expect(result.current.items.map((item) => item.id)).toEqual([2]);
@@ -100,8 +105,8 @@ describe("useQuickSearchQuery 请求乱序防护", () => {
 
     act(() => result.current.setQuery("猫猫"));
     await act(async () => {
-      calls[1].def.resolve([makeEmoji(1, "x")]);
-      calls[0].def.resolve([]);
+      resolveItems(calls[1].def, [makeEmoji(1, "x")]);
+      resolveItems(calls[0].def, []);
     });
 
     // 库变更 → rerender 触发新一轮搜索，query 保持，且带上 sort 语义。
@@ -124,7 +129,7 @@ describe("useQuickSearchQuery 请求乱序防护", () => {
     const pending = calls[0];
     unmount();
     await act(async () => {
-      pending.def.resolve([makeEmoji(9, "after-unmount")]);
+      resolveItems(pending.def, [makeEmoji(9, "after-unmount")]);
     });
     // 到达这里即没有抛错 / 没有 React 状态更新告警。
     expect(true).toBe(true);

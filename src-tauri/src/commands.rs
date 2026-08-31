@@ -4,11 +4,10 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::scanner::IndexedEmoji;
 use crate::{
     clipboard, clipboard_collect, database, quick_search,
     repositories::{
-        emoji_repository::{EmojiRepository, ListOptions},
+        emoji_repository::{EmojiRepository, ListOptions, SearchPage},
         group_repository::{GroupRepository, GroupRow},
         tag_repository::{TagRepository, TagRow},
     },
@@ -562,7 +561,7 @@ pub fn set_emojis_favorite(
 pub fn search_emojis(
     database_state: State<'_, database::DatabaseState>,
     options: SearchOptions,
-) -> Result<Vec<IndexedEmoji>, String> {
+) -> Result<SearchPage, String> {
     let connection = database_state.connect()?;
     let limit = options.limit.unwrap_or(DEFAULT_SEARCH_LIMIT);
     let offset = options.offset.unwrap_or(0);
@@ -638,9 +637,15 @@ pub async fn empty_trash(
 #[tauri::command]
 pub fn list_deleted_emojis(
     database_state: State<'_, database::DatabaseState>,
-) -> Result<Vec<IndexedEmoji>, String> {
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<SearchPage, String> {
     let connection = database_state.connect()?;
-    EmojiRepository::list_deleted(&connection)
+    EmojiRepository::list_deleted(
+        &connection,
+        limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
+        offset.unwrap_or(0),
+    )
 }
 
 #[tauri::command]

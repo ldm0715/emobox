@@ -54,6 +54,11 @@ interface EmojiGridProps {
   multiSelectMode: boolean;
   menuMode?: EmojiItemMenuMode;
   tagsByPath?: Record<string, string[]>;
+  /** 还有未加载数据页（Phase 17）：哨兵触发 onLoadMore 拉下一页。 */
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  /** 视图/搜索词/排序复合 key：变化才重置渐进渲染量（追加页不回跳）。 */
+  resetKey: string;
   onItemSelect: (item: IndexedImage, mode: SelectionMode) => void;
   onClearSelection: () => void;
   onToggleFavorite: (items: IndexedImage[]) => void;
@@ -95,6 +100,9 @@ export function EmojiGrid({
   multiSelectMode,
   menuMode = "default",
   tagsByPath,
+  hasMore = false,
+  onLoadMore,
+  resetKey,
   onItemSelect,
   onClearSelection,
   onToggleFavorite,
@@ -111,6 +119,10 @@ export function EmojiGrid({
   const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const config = densityConfig[density];
+  // onLoadMore 来自 App 的 useCallback（依赖 currentEmojis 等，身份常变），
+  // 经 ref 转发避免 observer effect 频繁重建。
+  const onLoadMoreRef = useRef(onLoadMore);
+  onLoadMoreRef.current = onLoadMore;
 
   // 共享右键/更多菜单：打开时把当前 target 项与光标锚点一起记下。
   const [menuOpen, setMenuOpen] = useState(false);
@@ -122,18 +134,36 @@ export function EmojiGrid({
     [items, selectedIds],
   );
 
+  // Phase 17：只在视图/搜索词/排序切换（resetKey 变化）时重置渲染量——
+  // 追加数据页时 items 引用也变，但不能把渲染量打回 72 造成滚动跳变。
+  const prevResetKeyRef = useRef(resetKey);
   useEffect(() => {
-    setVisibleCount(BATCH_SIZE);
-  }, [items]);
+    if (prevResetKeyRef.current !== resetKey) {
+      prevResetKeyRef.current = resetKey;
+      setVisibleCount(BATCH_SIZE);
+    }
+  }, [resetKey]);
+
+  // 本地删除让 items 收缩时收口渲染量（slice 本身安全，这里保持状态干净）。
+  useEffect(() => {
+    setVisibleCount((current) => Math.min(current, Math.max(items.length, BATCH_SIZE)));
+  }, [items.length]);
+
+  const canRevealMore = visibleCount < items.length;
+  // 已渲染完全部已加载项、且后端还有下一页 → 哨兵改拉数据。
+  const needsNextPage = hasMore && !canRevealMore;
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel || visibleCount >= items.length) return;
+    if (!sentinel || (!canRevealMore && !needsNextPage)) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
+        if (!entries[0]?.isIntersecting) return;
+        if (canRevealMore) {
           setVisibleCount((current) => Math.min(current + BATCH_SIZE, items.length));
+        } else if (needsNextPage) {
+          onLoadMoreRef.current?.();
         }
       },
       { rootMargin: "360px" },
@@ -141,7 +171,7 @@ export function EmojiGrid({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [items.length, visibleCount]);
+  }, [items.length, canRevealMore, needsNextPage]);
 
   // 菜单打开期间选区若被外部改掉（Delete 键 / 批量条清除），关掉菜单避免 stale target。
   useEffect(() => {
@@ -222,7 +252,9 @@ export function EmojiGrid({
         />
       </Menu>
 
-      {visibleCount < items.length && <div className={styles.sentinel} ref={sentinelRef} />}
+      {(canRevealMore || needsNextPage) && (
+        <div className={styles.sentinel} ref={sentinelRef} />
+      )}
     </>
   );
 }

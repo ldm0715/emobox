@@ -58,6 +58,8 @@ import type {
   LibraryView,
   ManagedImportSummary,
   RecentImageRecord,
+  SearchOptions,
+  SearchResult,
   SortOption,
   StorageInfo,
   Tag,
@@ -89,16 +91,48 @@ const useStyles = makeStyles({
   },
 });
 
-function toLegacyImage(emoji: IndexedEmoji): IndexedImage {
-  return {
-    id: emoji.id,
-    name: emoji.name,
-    path: emoji.path,
-    extension: emoji.extension,
-    width: emoji.width,
-    height: emoji.height,
-    sizeBytes: emoji.sizeBytes,
-  };
+/** 主窗口分页每页条数（Phase 17）。网格本身另有 72/批的渐进渲染（EmojiGrid）。 */
+const PAGE_SIZE = 200;
+
+/**
+ * 按视图构造第 offset 页的请求（Phase 17）。recent 视图数据源在客户端（不请求）。
+ * trash 走 listDeletedEmojis（kind: "deleted"），其余走 searchEmojis —— 排序
+ * 已下推到 SQL（sort 字面量与后端 ORDER BY 分支一一对应）。
+ */
+function viewPageRequest(
+  view: LibraryView,
+  query: string,
+  sort: SortOption,
+  offset: number,
+): { kind: "search"; options: SearchOptions } | { kind: "deleted"; offset: number } | null {
+  if (view === "trash") return { kind: "deleted", offset };
+  if (view === "recent") return null;
+  if (view === "favorites") {
+    return { kind: "search", options: { view: "favorites", query, sort, limit: PAGE_SIZE, offset } };
+  }
+  if (view === "ungrouped") {
+    return { kind: "search", options: { view: "ungrouped", query, sort, limit: PAGE_SIZE, offset } };
+  }
+  if (view.startsWith("group:")) {
+    const groupId = parseInt(view.slice(6), 10);
+    if (!Number.isFinite(groupId)) return null;
+    return { kind: "search", options: { view: "group", groupId, query, sort, limit: PAGE_SIZE, offset } };
+  }
+  return { kind: "search", options: { view: "all", query, sort, limit: PAGE_SIZE, offset } };
+}
+
+/** 执行一次视图页请求（视图 effect 与 loadMore 共用）。recent → null。 */
+async function fetchViewPage(
+  view: LibraryView,
+  query: string,
+  sort: SortOption,
+  offset: number,
+): Promise<SearchResult | null> {
+  const request = viewPageRequest(view, query, sort, offset);
+  if (!request) return null;
+  return request.kind === "deleted"
+    ? listDeletedEmojis({ limit: PAGE_SIZE, offset: request.offset })
+    : searchEmojis(request.options);
 }
 
 export function App() {
@@ -125,14 +159,18 @@ export function App() {
     collectFromClipboard,
   } = useLibraryImport();
 
-  // 当前视图对应的表情（IndexedEmoji 13 字段）。
+  // 当前视图已加载的表情（IndexedEmoji 13 字段）。Phase 17 分页：只持有已加载页，
+  // 滚动到底经 loadMore 追加；总数在 viewTotal，不在数组长度里。
   const [currentEmojis, setCurrentEmojis] = useState<IndexedEmoji[]>([]);
-  // 完整数据：IndexedEmoji 13 字段（用于跨视图引用 + 收藏同步）。
-  const [indexedEmojis, setIndexedEmojis] = useState<IndexedEmoji[]>([]);
-  // 兼容旧 UI 的 IndexedImage 派生（from allItems 视图）。
-  const [allItems, setAllItems] = useState<IndexedImage[]>([]);
-  // 收藏：path-based（兼容现有 UI）+ id-based（后端操作）
-  const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
+  // 当前视图总数（后端 total），header「共 N 张」与 hasMore 判定用。
+  const [viewTotal, setViewTotal] = useState(0);
+  // 还有未加载的页（currentEmojis.length < viewTotal）。
+  const [hasMore, setHasMore] = useState(false);
+  // 侧栏计数（后端 total，Phase 17 起与已加载条数解耦）。
+  const [allCount, setAllCount] = useState(0);
+  const [favoriteCount, setFavoriteCount] = useState(0);
+  // 收藏 id 集（后端操作用）。Phase 17 起从每次页面加载合并 + 乐观更新维护，
+  // 不再依赖一次性全量抓取。
   const [favoriteIds, setFavoriteIds] = useState<Set<number>>(() => new Set());
   // 关系
   const [groups, setGroups] = useState<LibraryGroup[]>([]);
@@ -142,6 +180,15 @@ export function App() {
   // 多选状态由 useMultiSelection 托管（见 filteredItems 之后的调用点）。
   // clearSelectionRef 让定义较早的 prepareAfterImport 也能触发清空。
   const clearSelectionRef = useRef<() => void>(() => {});
+  // 视图请求序号：视图/搜索词/排序变化时递增，loadMore 的迟到的追加响应
+  // 据此丢弃（与浮层 requestSeq 同思路）。
+  const viewSeqRef = useRef(0);
+  // loadMore 防重入（哨兵可能连续触发）。
+  const loadingMoreRef = useRef(false);
+  // 下一页 offset 游标：按「服务端返回的行数」前进（而非本地 currentEmojis 长度）。
+  // 本地删除/去重会让 currentEmojis 与服务端结果集错位，若用其长度做 offset，
+  // 全被去重的页会永远请求同一 offset 造成死循环。
+  const nextOffsetRef = useRef(0);
   // 键盘快捷键的 latest-handler 容器：keydown effect deps 保持 []，避免闭包过期。
   const keyShortcutRef = useRef<(event: globalThis.KeyboardEvent) => void>(() => {});
   // 剪贴板收藏的 latest-handler 容器：事件监听 effect 不随设置变化重注册，
@@ -204,40 +251,47 @@ export function App() {
   const [clipboardCollectError, setClipboardCollectError] = useState("");
   const lastClipboardCollectErrorToast = useRef("");
 
+  // Phase 17：refreshLibrary 只拉计数（SQL LIMIT 0 + total），不再全量抓 500 行。
+  // 收藏标志改为随每页加载合并（mergeFavoriteFlags）。
   const refreshLibrary = useCallback(async () => {
     try {
-      // 拉取完整 IndexedEmoji（带 id 和收藏标志）
-      const items = await searchEmojis({
-        view: "all",
-        limit: 500,
-        offset: 0,
-      });
-      setIndexedEmojis(items);
-      setAllItems(items.map(toLegacyImage));
-      // 同步收藏 id 集合
-      const favIds = new Set<number>();
-      for (const item of items) {
-        if (item.isFavorite) {
-          favIds.add(item.id);
-        }
-      }
-      setFavoriteIds(favIds);
-      setFavorites(new Set(items.filter((i) => i.isFavorite).map((i) => i.path)));
+      const [allResult, favoritesResult] = await Promise.all([
+        searchEmojis({ view: "all", limit: 0 }),
+        searchEmojis({ view: "favorites", limit: 0 }),
+      ]);
+      setAllCount(allResult.total);
+      setFavoriteCount(favoritesResult.total);
     } catch (loadError) {
       setError(`无法读取本地表情库：${getErrorMessage(loadError)}`);
     }
   }, [setError]);
+
+  // 从页面加载结果合并收藏标志（只增不减；取消收藏经 toggleFavorite 的乐观
+  // 更新维护，不存在其他取消收藏入口）。
+  const mergeFavoriteFlags = useCallback((items: IndexedEmoji[]) => {
+    setFavoriteIds((curr) => {
+      let changed = false;
+      const next = new Set(curr);
+      for (const item of items) {
+        if (item.isFavorite && !next.has(item.id)) {
+          next.add(item.id);
+          changed = true;
+        }
+      }
+      return changed ? next : curr;
+    });
+  }, []);
 
   const refreshSidebar = useCallback(async () => {
     try {
       const [g, t, deleted] = await Promise.allSettled([
         listGroups(),
         listTags(),
-        listDeletedEmojis(),
+        listDeletedEmojis({ limit: 0 }),
       ]);
       if (g.status === "fulfilled") setGroups(g.value);
       if (t.status === "fulfilled") setTags(t.value);
-      if (deleted.status === "fulfilled") setTrashCount(deleted.value.length);
+      if (deleted.status === "fulfilled") setTrashCount(deleted.value.total);
     } catch {
       // ignore
     }
@@ -325,7 +379,6 @@ export function App() {
             return { ...it, tagIds: Array.from(next) };
           });
         setCurrentEmojis(updateTags);
-        setIndexedEmojis(updateTags);
         await refreshSidebar();
         setTagPickerState(null);
         dispatchToast(
@@ -683,18 +736,22 @@ export function App() {
     return () => window.removeEventListener("keydown", handleWindowKeyDown);
   }, []);
 
-  // 视图变化时重新拉取（后端真正按 view 过滤 + 搜索 query 跨字段 OR）
+  // 视图变化时重新拉取第 1 页（后端按 view 过滤 + 搜索 query 跨字段 OR + 排序下推）。
+  // Phase 17：sortOption 变化也重拉第 1 页（服务端排序）；viewSeqRef 作废在途的
+  // loadMore 追加响应。
   useEffect(() => {
     let disposed = false;
+    viewSeqRef.current += 1;
+    const seq = viewSeqRef.current;
     setViewLoading(true);
     const trimmedQuery = debouncedQuery.trim();
     (async () => {
       try {
         let items: IndexedEmoji[] = [];
-        if (currentView === "trash") {
-          items = await listDeletedEmojis();
-        } else if (currentView === "recent") {
-          // recent 走 IndexedImage 派生（已有 recentItems 通道），保留后端填充的分组/标签关系。
+        let total = 0;
+        if (currentView === "recent") {
+          // recent 走 IndexedImage 派生（已有 recentItems 通道，上限 50，不分页），
+          // 保留后端填充的分组/标签关系。
           items = recentItems.map((r) => ({
             id: r.item.id,
             name: r.item.name,
@@ -715,58 +772,63 @@ export function App() {
           }));
           // 客户端按 query 过滤：精确语法（组*标签）走与后端一致的回退阶梯，否则普通子串。
           items = filterItemsByQuery(items, trimmedQuery, groups, tags);
-        } else if (currentView === "favorites") {
-          items = await searchEmojis({
-            view: "favorites",
-            query: trimmedQuery,
-            limit: 500,
-            offset: 0,
-          });
-        } else if (currentView === "ungrouped") {
-          items = await searchEmojis({
-            view: "ungrouped",
-            query: trimmedQuery,
-            limit: 500,
-            offset: 0,
-          });
-        } else if (currentView.startsWith("group:")) {
-          const groupId = parseInt(currentView.slice(6), 10);
-          if (Number.isFinite(groupId)) {
-            items = await searchEmojis({
-              view: "group",
-              groupId,
-              query: trimmedQuery,
-              limit: 500,
-              offset: 0,
-            });
-          }
+          total = items.length;
         } else {
-          // "all" 默认
-          items = await searchEmojis({
-            view: "all",
-            query: trimmedQuery,
-            limit: 500,
-            offset: 0,
-          });
+          const result = await fetchViewPage(currentView, trimmedQuery, sortOption, 0);
+          if (!result) throw new Error("当前视图不可用");
+          items = result.items;
+          total = result.total;
         }
-        if (disposed) return;
+        if (disposed || seq !== viewSeqRef.current) return;
         setCurrentEmojis(items);
-        // 同步 allItems（用于其他派生）
-        if (currentView === "all") {
-          setAllItems(items.map(toLegacyImage));
-          setIndexedEmojis(items);
-        }
+        setViewTotal(total);
+        setHasMore(items.length < total);
+        nextOffsetRef.current = items.length;
+        mergeFavoriteFlags(items);
       } catch (e) {
-        if (!disposed) setError(`读取视图失败：${getErrorMessage(e)}`);
+        if (!disposed && seq === viewSeqRef.current) {
+          setError(`读取视图失败：${getErrorMessage(e)}`);
+        }
       } finally {
-        if (!disposed) setViewLoading(false);
+        if (!disposed && seq === viewSeqRef.current) setViewLoading(false);
       }
     })();
     return () => {
       disposed = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentView, debouncedQuery, recentItems, groups, tags]);
+  }, [currentView, debouncedQuery, sortOption, recentItems, groups, tags]);
+
+  // Phase 17 无限滚动：滚动到底（EmojiGrid 哨兵）时按 nextOffsetRef 追加下一页。
+  // seq 守卫丢弃视图/搜索词/排序已切换的迟到响应；追加按 id 去重防删除导致的
+  // offset 漂移；offset 游标按服务端行数前进（见 nextOffsetRef 注释）。
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMore) return;
+    const seq = viewSeqRef.current;
+    const offset = nextOffsetRef.current;
+    const trimmedQuery = debouncedQuery.trim();
+    loadingMoreRef.current = true;
+    try {
+      const result = await fetchViewPage(currentView, trimmedQuery, sortOption, offset);
+      if (seq !== viewSeqRef.current || !result) return;
+      nextOffsetRef.current = offset + result.items.length;
+      const existing = new Set(currentEmojis.map((e) => e.id));
+      const fresh = result.items.filter((e) => !existing.has(e.id));
+      if (fresh.length > 0) {
+        setCurrentEmojis((curr) => {
+          const seen = new Set(curr.map((e) => e.id));
+          return [...curr, ...result.items.filter((e) => !seen.has(e.id))];
+        });
+      }
+      setViewTotal(result.total);
+      setHasMore(nextOffsetRef.current < result.total);
+      mergeFavoriteFlags(result.items);
+    } catch (e) {
+      setError(`加载更多失败：${getErrorMessage(e)}`);
+    } finally {
+      loadingMoreRef.current = false;
+    }
+  }, [currentView, debouncedQuery, sortOption, currentEmojis, hasMore, setError, mergeFavoriteFlags]);
 
   const openQuickSearch = useCallback(async () => {
     try {
@@ -861,21 +923,7 @@ export function App() {
     if (ids.length === 0) return;
     const allFav = ids.every((id) => favoriteIds.has(id));
     const next = !allFav;
-    const idSet = new Set(ids);
 
-    const syncFavorites = (curr: Set<string>, target: boolean) => {
-      const s = new Set(curr);
-      let changed = false;
-      for (const item of items) {
-        if (target) {
-          if (!s.has(item.path)) {
-            s.add(item.path);
-            changed = true;
-          }
-        } else if (s.delete(item.path)) changed = true;
-      }
-      return changed ? s : curr;
-    };
     const syncFavoriteIds = (curr: Set<number>, target: boolean) => {
       const s = new Set(curr);
       let changed = false;
@@ -890,24 +938,24 @@ export function App() {
       return changed ? s : curr;
     };
 
-    // 乐观更新
-    setIndexedEmojis((curr) =>
-      curr.map((e) => (idSet.has(e.id) ? { ...e, isFavorite: next } : e)),
+    // 乐观更新（当前视图 + 收藏 id 集）
+    setCurrentEmojis((curr) =>
+      curr.map((e) => (ids.includes(e.id) ? { ...e, isFavorite: next } : e)),
     );
-    setFavorites((curr) => syncFavorites(curr, next));
     setFavoriteIds((curr) => syncFavoriteIds(curr, next));
     try {
       await setEmojisFavorite(ids, next);
+      // 收藏计数（侧栏）只有后端知道真值，成功后刷新。
+      void refreshLibrary();
     } catch (e) {
       // 回滚
-      setIndexedEmojis((curr) =>
-        curr.map((e) => (idSet.has(e.id) ? { ...e, isFavorite: !next } : e)),
+      setCurrentEmojis((curr) =>
+        curr.map((e) => (ids.includes(e.id) ? { ...e, isFavorite: !next } : e)),
       );
-      setFavorites((curr) => syncFavorites(curr, !next));
       setFavoriteIds((curr) => syncFavoriteIds(curr, !next));
       setError(`更新收藏失败：${getErrorMessage(e)}`);
     }
-  }, [favoriteIds, setError]);
+  }, [favoriteIds, setError, refreshLibrary]);
 
   const viewItems = useMemo(() => {
     // currentEmojis 已经是后端按 view 过滤好的；recent 走 IndexedImage 派生
@@ -928,10 +976,11 @@ export function App() {
   }, [currentView, currentEmojis, recentItems]);
 
   const filteredItems = useMemo(() => {
-    // 搜索过滤已由后端 searchEmojis 处理（query 跨字段 OR 匹配）。
-    // 这里只做客户端排序。
+    // 搜索过滤与排序均由后端 searchEmojis 处理（Phase 17 排序下推，offset 分页
+    // 的前提）。recent 视图数据源在客户端（上限 50），保留客户端排序。
+    if (currentView !== "recent") return viewItems;
     const filtered = [...viewItems];
-    if (currentView !== "recent") filtered.sort((left, right) => {
+    filtered.sort((left, right) => {
       if (sortOption === "name-desc") return right.name.localeCompare(left.name, "zh-CN");
       if (sortOption === "format") {
         const extensionOrder = left.extension.localeCompare(right.extension, "en");
@@ -952,10 +1001,19 @@ export function App() {
 
   clearSelectionRef.current = clear;
 
+  // 标签交集初选只需覆盖选中项，而选中项必在当前视图已加载集内（Phase 17 起
+  // 从 currentEmojis 派生，不再依赖全量缓存）。
   const indexedById = useMemo(
-    () => new Map(indexedEmojis.map((e) => [e.id, e])),
-    [indexedEmojis],
+    () => new Map(currentEmojis.map((e) => [e.id, e])),
+    [currentEmojis],
   );
+
+  // 全选按钮（Phase 17）：只作用于已加载项（filteredItems）；全选了则退化为取消全选。
+  const allSelected = selectedIds.size > 0 && selectedIds.size >= filteredItems.length;
+  const handleToggleSelectAll = useCallback(() => {
+    if (selectedIds.size > 0 && selectedIds.size >= filteredItems.length) clear();
+    else selectAll();
+  }, [selectedIds, filteredItems, clear, selectAll]);
 
   const handleItemSelect = useCallback(
     (item: IndexedImage, mode: SelectionMode) => {
@@ -982,6 +1040,9 @@ export function App() {
   }, [currentView, clear]);
 
   // ===== 批量操作（items 数组；单选时传 [item]）=====
+  // 本地剪辑后 viewTotal 同步递减；hasMore 保持不变 —— 哨兵会自动 loadMore
+  // 回填刚腾出的位置（追加按 id 去重，offset 漂移安全）。侧栏/头部计数经
+  // refreshLibrary（后端 total）刷新。
   async function handleDelete(items: IndexedImage[]) {
     const ids = items.map((item) => item.id);
     if (ids.length === 0) return;
@@ -990,25 +1051,18 @@ export function App() {
     try {
       await softDeleteToTrash(ids);
       const idSet = new Set(ids);
-      const pathSet = new Set(items.map((item) => item.path));
       setCurrentEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
-      setAllItems((curr) => curr.filter((i) => !idSet.has(i.id)));
-      setIndexedEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
       setRecentItems((curr) => curr.filter((r) => !idSet.has(r.item.id)));
-      setFavorites((curr) => {
-        let changed = false;
-        const s = new Set(curr);
-        for (const p of pathSet) if (s.delete(p)) changed = true;
-        return changed ? s : curr;
-      });
       setFavoriteIds((curr) => {
         let changed = false;
         const s = new Set(curr);
         for (const id of ids) if (s.delete(id)) changed = true;
         return changed ? s : curr;
       });
+      setViewTotal((curr) => Math.max(0, curr - ids.length));
       deselect(ids);
       await refreshSidebar();
+      void refreshLibrary();
       dispatchToast(
         <Toast>
           <ToastTitle>已移入回收站</ToastTitle>
@@ -1029,8 +1083,10 @@ export function App() {
       const idSet = new Set(ids);
       setCurrentEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
       setRecentItems((curr) => curr.filter((r) => !idSet.has(r.item.id)));
+      setViewTotal((curr) => Math.max(0, curr - ids.length));
       deselect(ids);
       await refreshSidebar();
+      void refreshLibrary();
       dispatchToast(
         <Toast>
           <ToastTitle>已从回收站恢复</ToastTitle>
@@ -1051,23 +1107,15 @@ export function App() {
       const { permanentlyDeleteEmojis } = await import("./lib/tauri");
       await permanentlyDeleteEmojis(ids);
       const idSet = new Set(ids);
-      const pathSet = new Set(items.map((item) => item.path));
       setCurrentEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
-      setAllItems((curr) => curr.filter((i) => !idSet.has(i.id)));
-      setIndexedEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
       setRecentItems((curr) => curr.filter((r) => !idSet.has(r.item.id)));
-      setFavorites((curr) => {
-        let changed = false;
-        const s = new Set(curr);
-        for (const p of pathSet) if (s.delete(p)) changed = true;
-        return changed ? s : curr;
-      });
       setFavoriteIds((curr) => {
         let changed = false;
         const s = new Set(curr);
         for (const id of ids) if (s.delete(id)) changed = true;
         return changed ? s : curr;
       });
+      setViewTotal((curr) => Math.max(0, curr - ids.length));
       deselect(ids);
       await refreshSidebar();
       dispatchToast(
@@ -1206,8 +1254,8 @@ export function App() {
           <LibrarySidebar
             collapsed={sidebarCollapsed}
             currentView={currentView}
-            allCount={allItems.length}
-            favoriteCount={favorites.size}
+            allCount={allCount}
+            favoriteCount={favoriteCount}
             trashCount={trashCount}
             groups={groups}
             quickSearchShortcut={quickSearchShortcut}
@@ -1264,14 +1312,20 @@ export function App() {
         <EmojiLibraryView
           view={currentView}
           title={currentTitle}
-          allItemCount={allItems.length}
+          allItemCount={allCount}
           items={filteredItems}
+          total={viewTotal}
+          hasMore={hasMore}
+          onLoadMore={() => void loadMore()}
+          resetKey={`${currentView}|${debouncedQuery}|${sortOption}`}
           query={searchQuery}
           density={density}
           sortOption={sortOption}
           selectedIds={selectedIds}
           favoriteIds={favoriteIds}
           multiSelectMode={multiSelectMode}
+          allSelected={allSelected}
+          onToggleSelectAll={handleToggleSelectAll}
           importing={isImporting}
           error={error}
           tagsByPath={tagsByPath}

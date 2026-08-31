@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::Serialize;
 
 use crate::{
     perceptual_hash::{from_db, hamming_distance},
@@ -75,10 +76,21 @@ pub struct ListOptions<'a> {
     pub view: &'a str,
     pub group_id: Option<i64>,
     pub favorite_only: bool,
-    /// 排序偏好：`"recent"` → 最近使用优先（未用过的按导入时间排后）。默认空。
+    /// 排序偏好（字面量，SQL ORDER BY 分支输出，无注入面）：
+    /// `"recent"` → 最近使用优先；`"name-asc"` / `"name-desc"` / `"format"` /
+    /// `"added-time"` / `"modified-time"` → 主窗口网格的五种排序。默认空 →
+    /// 收藏优先 + 导入时间倒序。
     pub sort: Option<String>,
     pub limit: u32,
     pub offset: u32,
+}
+
+/// 分页查询结果：当页条目 + 符合过滤条件的总数（与 items 同一搜索模式计数）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPage {
+    pub items: Vec<IndexedEmoji>,
+    pub total: i64,
 }
 
 pub struct EmojiRelations {
@@ -512,70 +524,71 @@ impl EmojiRepository {
     /// `:` / `：` 保留为别名）走**精确 AND**（NOCASE 精确匹配分组名 / 标签名）；
     /// 精确命中为空时依次回退到「组精确 + 标签 LIKE」→「组名子串（分组/文件名/
     /// 标签名任一）+ 标签 LIKE」→ 普通 LIKE（跨字段 OR）。无分隔符 → 直接普通 LIKE。
+    ///
+    /// 返回当页条目 + 总数。**回退级判定与 offset 无关**（`resolve_search_mode`
+    /// 用 COUNT 探测，offset=0 语义）：否则翻页时第 1 级在 offset 处必然为空，
+    /// 会错误地一路回退到 PlainLike。
     pub fn list_indexed(
         connection: &Connection,
         options: &ListOptions<'_>,
         query: &str,
         tag_ids: &[i64],
-    ) -> Result<Vec<IndexedEmoji>, String> {
+    ) -> Result<SearchPage, String> {
         let trimmed = query.trim();
+        let mode = Self::resolve_search_mode(connection, options, trimmed, tag_ids)?;
+        let items = Self::list_indexed_impl(connection, options, trimmed, tag_ids, mode)?;
+        let total = Self::count_indexed(connection, options, trimmed, tag_ids, mode)?;
+        Ok(SearchPage { items, total })
+    }
+
+    /// 回退级判定：COUNT 探测（与 offset/limit 无关，即 offset=0 语义下各级是否非空）。
+    fn resolve_search_mode(
+        connection: &Connection,
+        options: &ListOptions<'_>,
+        trimmed: &str,
+        tag_ids: &[i64],
+    ) -> Result<SearchMode, String> {
         let Some((group, tag)) = parse_exact_query(trimmed) else {
-            return Self::list_indexed_impl(
-                connection,
-                options,
-                trimmed,
-                tag_ids,
-                SearchMode::PlainLike,
-            );
+            return Ok(SearchMode::PlainLike);
         };
-        let exact =
-            Self::list_indexed_impl(connection, options, trimmed, tag_ids, SearchMode::Exact)?;
-        if !exact.is_empty() {
-            return Ok(exact);
+        if Self::count_indexed(connection, options, trimmed, tag_ids, SearchMode::Exact)? > 0 {
+            return Ok(SearchMode::Exact);
         }
         // 只有标签部分存在时 Lenient 才有意义（组精确 + 标签 LIKE）。
-        if tag.is_some() {
-            let lenient = Self::list_indexed_impl(
-                connection,
-                options,
-                trimmed,
-                tag_ids,
-                SearchMode::Lenient,
-            )?;
-            if !lenient.is_empty() {
-                return Ok(lenient);
-            }
+        if tag.is_some()
+            && Self::count_indexed(connection, options, trimmed, tag_ids, SearchMode::Lenient)? > 0
+        {
+            return Ok(SearchMode::Lenient);
         }
         // 组名精确匹配不到（分组不存在 / 表情未归组）时，让组名子串去命中
         // 分组名 / 文件名 / 标签名，再叠加标签条件 —— 未归组的包也能 `包名*表情`。
-        if group.is_some() {
-            let fuzzy = Self::list_indexed_impl(
+        if group.is_some()
+            && Self::count_indexed(
                 connection,
                 options,
                 trimmed,
                 tag_ids,
                 SearchMode::FuzzyGroup,
-            )?;
-            if !fuzzy.is_empty() {
-                return Ok(fuzzy);
-            }
+            )? > 0
+        {
+            return Ok(SearchMode::FuzzyGroup);
         }
         log::debug!("精确搜索无结果，回退普通 LIKE：query={trimmed}");
-        Self::list_indexed_impl(connection, options, trimmed, tag_ids, SearchMode::PlainLike)
+        Ok(SearchMode::PlainLike)
     }
 
-    /// 锁步参数绑定：SQL 的 `?` 出现顺序与 `params` Vec 完全一致，不再用手工编号。
-    /// ORDER BY 由 Rust 按 `view` / `sort` 分支输出字面量，不绑定 view 参数。
-    fn list_indexed_impl(
-        connection: &Connection,
+    /// 与 `list_indexed_impl` 共享同一套锁步 WHERE 构建（视图过滤 + 搜索模式 +
+    /// tag_ids 除法语义），供 COUNT 探测 / 总数统计复用 —— 保证计数与列表命中
+    /// 同一结果集。锁步绑定规则同下。
+    fn build_search_where(
         options: &ListOptions<'_>,
         trimmed: &str,
         tag_ids: &[i64],
         mode: SearchMode,
-    ) -> Result<Vec<IndexedEmoji>, String> {
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    ) -> String {
         let mut where_clause = String::from("WHERE is_deleted = 0");
-        let view_clause = build_view_filter(options, &mut params);
+        let view_clause = build_view_filter(options, params);
         if !view_clause.is_empty() {
             where_clause.push(' ');
             where_clause.push_str(&view_clause);
@@ -682,16 +695,43 @@ impl EmojiRepository {
             }
         }
 
+        where_clause
+    }
+
+    /// 锁步参数绑定：SQL 的 `?` 出现顺序与 `params` Vec 完全一致，不再用手工编号。
+    /// ORDER BY 由 Rust 按 `view` / `sort` 分支输出字面量，不绑定 view 参数。
+    fn list_indexed_impl(
+        connection: &Connection,
+        options: &ListOptions<'_>,
+        trimmed: &str,
+        tag_ids: &[i64],
+        mode: SearchMode,
+    ) -> Result<Vec<IndexedEmoji>, String> {
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let where_clause = Self::build_search_where(options, trimmed, tag_ids, mode, &mut params);
+
         // ORDER BY：view / sort 是自家常量，直接分支输出字面量，无注入面。
+        // 每个分支都带 `e.id` 决胜列 —— offset 分页要求全序确定，否则翻页
+        // 可能重复/漏行（SQLite 对并列键的顺序不做稳定性保证）。
         let order_by = match options.sort.as_deref() {
             Some("recent") => {
                 "(e.last_used_at IS NULL) ASC, e.last_used_at DESC, \
-                 COALESCE(e.imported_at, e.indexed_at) DESC"
+                 COALESCE(e.imported_at, e.indexed_at) DESC, e.id DESC"
             }
-            _ if options.view == "search-recent" => "e.last_used_at DESC",
+            Some("name-asc") => "e.original_filename COLLATE NOCASE ASC, e.id ASC",
+            Some("name-desc") => "e.original_filename COLLATE NOCASE DESC, e.id DESC",
+            Some("format") => {
+                "e.file_extension COLLATE NOCASE ASC, \
+                  e.original_filename COLLATE NOCASE ASC, e.id ASC"
+            }
+            Some("added-time") => "COALESCE(e.imported_at, e.indexed_at) DESC, e.id DESC",
+            Some("modified-time") => {
+                "COALESCE(e.updated_at, e.imported_at, e.indexed_at) DESC, e.id DESC"
+            }
+            _ if options.view == "search-recent" => "e.last_used_at DESC, e.id DESC",
             _ => {
                 "e.is_favorite DESC, COALESCE(e.imported_at, e.indexed_at) DESC, \
-                  e.original_filename COLLATE NOCASE ASC"
+                  e.original_filename COLLATE NOCASE ASC, e.id DESC"
             }
         };
 
@@ -728,8 +768,40 @@ impl EmojiRepository {
         Ok(items)
     }
 
-    /// 回收站列表。path 投影 COALESCE 三参数：trash_path 优先，managed_path 次之，source_path 兜底。
-    pub fn list_deleted(connection: &Connection) -> Result<Vec<IndexedEmoji>, String> {
+    /// 与 `list_indexed_impl` 同一 WHERE 的 COUNT。`limit`/`offset` 不参与。
+    fn count_indexed(
+        connection: &Connection,
+        options: &ListOptions<'_>,
+        trimmed: &str,
+        tag_ids: &[i64],
+        mode: SearchMode,
+    ) -> Result<i64, String> {
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let where_clause = Self::build_search_where(options, trimmed, tag_ids, mode, &mut params);
+        let sql = format!("SELECT COUNT(*) FROM emojis e {where_clause}");
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("无法准备表情计数查询：{error}"))?;
+        let bound_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        statement
+            .query_row(rusqlite::params_from_iter(bound_refs), |row| row.get(0))
+            .map_err(|error| format!("无法读取表情计数：{error}"))
+    }
+
+    /// 回收站列表（分页）。path 投影 COALESCE 三参数：trash_path 优先，managed_path 次之，source_path 兜底。
+    /// ORDER BY 已带 id 决胜列，offset 分页全序确定。
+    pub fn list_deleted(
+        connection: &Connection,
+        limit: u32,
+        offset: u32,
+    ) -> Result<SearchPage, String> {
+        let total: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM emojis WHERE is_deleted = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("无法读取回收站计数：{error}"))?;
         let mut statement = connection
             .prepare(
                 r#"
@@ -742,17 +814,18 @@ impl EmojiRepository {
                 FROM emojis
                 WHERE is_deleted = 1
                 ORDER BY deleted_at DESC, id DESC
+                LIMIT ? OFFSET ?
                 "#,
             )
             .map_err(|error| format!("无法准备回收站列表查询：{error}"))?;
         let rows = statement
-            .query_map([], row_to_indexed_emoji)
+            .query_map(params![limit as i64, offset as i64], row_to_indexed_emoji)
             .map_err(|error| format!("无法读取回收站列表：{error}"))?;
         let mut items: Vec<IndexedEmoji> = rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("无法解析回收站列表：{error}"))?;
         Self::fill_relations(connection, &mut items)?;
-        Ok(items)
+        Ok(SearchPage { items, total })
     }
 
     /// 复制使用回写：更新 last_used_at + usage_count。
@@ -1603,7 +1676,8 @@ mod tests {
             "a",
             &[tag_id],
         )
-        .expect("query");
+        .expect("query")
+        .items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "a.png");
 
@@ -1614,13 +1688,16 @@ mod tests {
             "a",
             &[tag_id],
         )
-        .expect("query all");
+        .expect("query all")
+        .items;
         assert_eq!(items.len(), 1);
 
         // limit=1 截断。
         let mut opts = list_opts("all", None, None);
         opts.limit = 1;
-        let items = EmojiRepository::list_indexed(&connection, &opts, "", &[]).expect("limit");
+        let items = EmojiRepository::list_indexed(&connection, &opts, "", &[])
+            .expect("limit")
+            .items;
         assert_eq!(items.len(), 1);
     }
 
@@ -1638,7 +1715,8 @@ mod tests {
             "cat:cool",
             &[],
         )
-        .expect("exact");
+        .expect("exact")
+        .items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "a.png");
     }
@@ -1653,14 +1731,16 @@ mod tests {
         // 组名:（仅分组）。
         let items =
             EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "猫猫:", &[])
-                .expect("group only");
+                .expect("group only")
+                .items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "a.png");
 
         // :标签（仅标签）。
         let items =
             EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), ":表情", &[])
-                .expect("tag only");
+                .expect("tag only")
+                .items;
         assert_eq!(items.len(), 2);
     }
 
@@ -1678,7 +1758,8 @@ mod tests {
             "foo:bar",
             &[],
         )
-        .expect("fallback");
+        .expect("fallback")
+        .items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "foo:bar.png");
     }
@@ -1695,7 +1776,8 @@ mod tests {
             "猫猫：表情",
             &[],
         )
-        .expect("full-width colon");
+        .expect("full-width colon")
+        .items;
         assert_eq!(items.len(), 1);
     }
 
@@ -1713,7 +1795,8 @@ mod tests {
             "cat*cool",
             &[],
         )
-        .expect("exact");
+        .expect("exact")
+        .items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "a.png");
     }
@@ -1728,14 +1811,16 @@ mod tests {
         // 组名*（仅分组）。
         let items =
             EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "猫猫*", &[])
-                .expect("group only");
+                .expect("group only")
+                .items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "a.png");
 
         // *标签（仅标签）。
         let items =
             EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "*表情", &[])
-                .expect("tag only");
+                .expect("tag only")
+                .items;
         assert_eq!(items.len(), 2);
     }
 
@@ -1751,7 +1836,8 @@ mod tests {
             "猫猫＊表情",
             &[],
         )
-        .expect("full-width star");
+        .expect("full-width star")
+        .items;
         assert_eq!(items.len(), 1);
     }
 
@@ -1782,7 +1868,8 @@ mod tests {
             "猫猫*开心.png",
             &[],
         )
-        .expect("exact full");
+        .expect("exact full")
+        .items;
         assert_eq!(exact.len(), 1);
         assert_eq!(exact[0].name, "开心.png");
 
@@ -1793,7 +1880,8 @@ mod tests {
             "猫猫*开心",
             &[],
         )
-        .expect("lenient stem");
+        .expect("lenient stem")
+        .items;
         assert_eq!(lenient.len(), 1);
         assert_eq!(lenient[0].name, "开心.png");
     }
@@ -1811,7 +1899,8 @@ mod tests {
             "猫猫*开心",
             &[],
         )
-        .expect("lenient partial");
+        .expect("lenient partial")
+        .items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "a.png");
     }
@@ -1837,14 +1926,16 @@ mod tests {
             "2233*来吗",
             &[],
         )
-        .expect("fuzzy group");
+        .expect("fuzzy group")
+        .items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "[2233绘梦酱_吹哨子].png");
 
         // 只搜标签仍精确命中两个。
         let items =
             EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "*来吗", &[])
-                .expect("tag only");
+                .expect("tag only")
+                .items;
         assert_eq!(items.len(), 2);
     }
 
@@ -1859,7 +1950,8 @@ mod tests {
         // 组名部分单独存在、精确组不存在 → FuzzyGroup 按文件名子串命中。
         let items =
             EmojiRepository::list_indexed(&connection, &list_opts("all", None, None), "2233*", &[])
-                .expect("fuzzy group only");
+                .expect("fuzzy group only")
+                .items;
         assert_eq!(items.len(), 2);
     }
 
@@ -1876,9 +1968,208 @@ mod tests {
             "",
             &[],
         )
-        .expect("sort recent");
+        .expect("sort recent")
+        .items;
         assert_eq!(items[0].name, "used.png", "用过的最前");
         assert_eq!(items.len(), 2, "未用过的也包含（全库）");
+    }
+
+    #[test]
+    fn list_indexed_exact_syntax_pagination_keeps_stage_beyond_offset() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        // 精确空（标签存的是"开心大笑"不是"开心"）→ Lenient 命中 3 条。
+        insert_indexed_emoji(&mut connection, "l1.png", Some("猫猫"), &["开心大笑"], None);
+        insert_indexed_emoji(&mut connection, "l2.png", Some("猫猫"), &["开心大笑"], None);
+        insert_indexed_emoji(&mut connection, "l3.png", Some("猫猫"), &["开心大笑"], None);
+        // PlainLike 诱饵：文件名字面包含整段 query。
+        insert_indexed_emoji(&mut connection, "猫猫*开心.png", None, &[], None);
+
+        // offset 超出 Lenient 命中数：旧实现（按当页结果判空回退）会一路
+        // 回退到 PlainLike 返回诱饵行；新实现（COUNT 探测选级）应保持
+        // Lenient —— 空页 + 正确 total。
+        let mut beyond = list_opts("all", None, None);
+        beyond.limit = 2;
+        beyond.offset = 3;
+        let page = EmojiRepository::list_indexed(&connection, &beyond, "猫猫*开心", &[])
+            .expect("beyond lenient");
+        assert_eq!(page.total, 3, "total 按 Lenient 级计数");
+        assert!(
+            page.items.is_empty(),
+            "offset 3 超出 3 条命中，应返回空页而非回退"
+        );
+
+        // 同一 query 在 offset 0 下正常命中 Lenient 全量 3 条、不含诱饵。
+        let page = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, None),
+            "猫猫*开心",
+            &[],
+        )
+        .expect("lenient full");
+        assert_eq!(page.items.len(), 3);
+        assert!(
+            page.items.iter().all(|item| item.name.starts_with('l')),
+            "只命中 Lenient 行，不含诱饵"
+        );
+    }
+
+    #[test]
+    fn list_indexed_sort_name_asc_and_desc() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        insert_indexed_emoji(&mut connection, "b.png", None, &[], None);
+        insert_indexed_emoji(&mut connection, "a.png", None, &[], None);
+        insert_indexed_emoji(&mut connection, "c.png", None, &[], None);
+
+        let asc = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, Some("name-asc")),
+            "",
+            &[],
+        )
+        .expect("name asc")
+        .items;
+        let desc = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, Some("name-desc")),
+            "",
+            &[],
+        )
+        .expect("name desc")
+        .items;
+        assert_eq!(
+            asc.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["a.png", "b.png", "c.png"]
+        );
+        assert_eq!(
+            desc.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["c.png", "b.png", "a.png"]
+        );
+    }
+
+    #[test]
+    fn list_indexed_sort_format_orders_extension_then_name() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let b = insert_indexed_emoji(&mut connection, "b.png", None, &[], None);
+        let a = insert_indexed_emoji(&mut connection, "a.png", None, &[], None);
+        let c = insert_indexed_emoji(&mut connection, "c.png", None, &[], None);
+        // 扩展名：b=gif < a=jpg < c=png；同扩展名内按文件名。
+        connection
+            .execute(
+                "UPDATE emojis SET file_extension = 'gif' WHERE id = ?1",
+                [b],
+            )
+            .expect("set gif");
+        connection
+            .execute(
+                "UPDATE emojis SET file_extension = 'jpg' WHERE id = ?1",
+                [a],
+            )
+            .expect("set jpg");
+
+        let items = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, Some("format")),
+            "",
+            &[],
+        )
+        .expect("format")
+        .items;
+        assert_eq!(
+            items.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["b.png", "a.png", "c.png"]
+        );
+    }
+
+    #[test]
+    fn list_indexed_sort_added_and_modified_time_orders_desc() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let old = insert_indexed_emoji(&mut connection, "old.png", None, &[], None);
+        let mid = insert_indexed_emoji(&mut connection, "mid.png", None, &[], None);
+        let new = insert_indexed_emoji(&mut connection, "new.png", None, &[], None);
+        connection
+            .execute("UPDATE emojis SET imported_at = 100 WHERE id = ?1", [old])
+            .expect("set imported old");
+        connection
+            .execute("UPDATE emojis SET imported_at = 200 WHERE id = ?1", [mid])
+            .expect("set imported mid");
+        connection
+            .execute("UPDATE emojis SET imported_at = 300 WHERE id = ?1", [new])
+            .expect("set imported new");
+        // updated_at 与 imported_at 交叉：modified 排序应看 updated_at。
+        connection
+            .execute("UPDATE emojis SET updated_at = 50 WHERE id = ?1", [new])
+            .expect("set updated new");
+
+        let added = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, Some("added-time")),
+            "",
+            &[],
+        )
+        .expect("added time")
+        .items;
+        assert_eq!(
+            added.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["new.png", "mid.png", "old.png"],
+            "added-time 按导入时间新→旧"
+        );
+
+        let modified = EmojiRepository::list_indexed(
+            &connection,
+            &list_opts("all", None, Some("modified-time")),
+            "",
+            &[],
+        )
+        .expect("modified time")
+        .items;
+        // mid/old 的 updated_at NULL → 回退 imported_at（200/100），new=50 最旧排最后。
+        assert_eq!(
+            modified.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["mid.png", "old.png", "new.png"],
+            "modified-time 优先 updated_at，缺失回退 imported_at"
+        );
+    }
+
+    #[test]
+    fn list_deleted_paginates_with_total() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        for name in ["a.png", "b.png", "c.png", "d.png"] {
+            let id = insert_indexed_emoji(&mut connection, name, None, &[], None);
+            connection
+                .execute(
+                    "UPDATE emojis SET is_deleted = 1, deleted_at = 100 WHERE id = ?1",
+                    [id],
+                )
+                .expect("soft delete");
+        }
+
+        let page1 = EmojiRepository::list_deleted(&connection, 2, 0).expect("page 1");
+        assert_eq!(page1.total, 4);
+        assert_eq!(page1.items.len(), 2);
+
+        let page2 = EmojiRepository::list_deleted(&connection, 2, 2).expect("page 2");
+        assert_eq!(page2.total, 4);
+        assert_eq!(page2.items.len(), 2);
+        assert_eq!(
+            page1
+                .items
+                .iter()
+                .chain(page2.items.iter())
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["d.png", "c.png", "b.png", "a.png"],
+            "deleted_at 相同时按 id DESC 决胜，两页拼起来无重复无遗漏"
+        );
+
+        // limit 0 = 纯计数用法（侧栏 trashCount）。
+        let count_only = EmojiRepository::list_deleted(&connection, 0, 0).expect("count only");
+        assert_eq!(count_only.total, 4);
+        assert!(count_only.items.is_empty());
     }
 
     #[test]

@@ -22,6 +22,9 @@ interface LibraryHeaderProps {
   sortOption: SortOption;
   density: GridDensity;
   multiSelectMode: boolean;
+  /** 已加载项是否已全部选中（全选按钮切换为「取消全选」）。 */
+  allSelected: boolean;
+  onToggleSelectAll: () => void;
   onToggleMultiSelect: () => void;
   onSortChange: (option: SortOption) => void;
   onDensityChange: (density: GridDensity) => void;
@@ -87,6 +90,8 @@ export function LibraryHeader({
   sortOption,
   density,
   multiSelectMode,
+  allSelected,
+  onToggleSelectAll,
   onToggleMultiSelect,
   onSortChange,
   onDensityChange,
@@ -111,6 +116,14 @@ export function LibraryHeader({
             多选
           </ToggleButton>
         </Tooltip>
+
+        {multiSelectMode && (
+          <Tooltip content={allSelected ? "取消全选（已加载项）" : "全选已加载项"} relationship="label">
+            <Button size="small" onClick={onToggleSelectAll}>
+              {allSelected ? "取消全选" : "全选"}
+            </Button>
+          </Tooltip>
+        )}
 
         <Dropdown
           className={styles.dropdown}
