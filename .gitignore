@@ -8,3 +8,4 @@ Thumbs.db
 static/
 
 src-tauri/gen/
+.zcode/
