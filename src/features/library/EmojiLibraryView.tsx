@@ -54,6 +54,10 @@ interface EmojiLibraryViewProps {
   onClearSelection: () => void;
   onToggleFavorite: (items: IndexedImage[]) => void;
   onCopy: (items: IndexedImage[]) => void;
+  /** 双击卡片打开大图预览。 */
+  onOpenPreview: (item: IndexedImage) => void;
+  /** 点击卡片上的 Tag 按该标签筛选。 */
+  onTagClick: (tag: string) => void;
   onMoveToGroup: (items: IndexedImage[]) => void;
   onRemoveFromGroup?: (items: IndexedImage[]) => void;
   onAddTags?: (items: IndexedImage[]) => void;
@@ -171,6 +175,8 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     onClearSelection,
     onToggleFavorite,
     onCopy,
+    onOpenPreview,
+    onTagClick,
     onMoveToGroup,
     onRemoveFromGroup,
     onAddTags,
@@ -292,6 +298,8 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
             onClearSelection={onClearSelection}
             onToggleFavorite={onToggleFavorite}
             onCopy={onCopy}
+            onOpenPreview={onOpenPreview}
+            onTagClick={onTagClick}
             onMoveToGroup={onMoveToGroup}
             onRemoveFromGroup={onRemoveFromGroup}
             onAddTags={onAddTags}

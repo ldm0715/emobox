@@ -19,6 +19,7 @@ import { SettingsDialog } from "./app/SettingsMenu";
 import { useAppSettings } from "./components/ThemeProvider";
 import { useLibraryImport } from "./features/import/useLibraryImport";
 import { EmojiLibraryView } from "./features/library/EmojiLibraryView";
+import { EmojiPreviewDialog } from "./features/library/EmojiPreviewDialog";
 import { GroupDialog } from "./features/library/GroupDialog";
 import { MoveToGroupDialog } from "./features/library/MoveToGroupDialog";
 import { TagPickerDialog } from "./features/library/TagPickerDialog";
@@ -139,6 +140,12 @@ export function App() {
   const styles = useStyles();
   const toasterId = useId("emobox-toaster");
   const { dispatchToast } = useToastController(toasterId);
+  // 复制 toast 防重/去双弹状态：
+  // - localCopyToastRef：handleCopy 直接弹 toast 前打的标（事件到达时据此跳过，
+  //   避免同一次复制弹两条）。主窗口复制不依赖事件链路，HMR 残留的失效监听不影响反馈。
+  // - lastCopyToastRef：监听器（浮层复制路径）自己的 1.2s 同图防重，兜住重复投递。
+  const localCopyToastRef = useRef({ path: "", at: 0 });
+  const lastCopyToastRef = useRef({ path: "", at: 0 });
   const {
     sidebarCollapsed,
     setSidebarCollapsed,
@@ -218,6 +225,8 @@ export function App() {
   const [recentItems, setRecentItems] = useState<RecentImageRecord[]>([]);
   // 显式多选模式：开启后单击即切换选中，关闭时清空选区。
   const [multiSelectMode, setMultiSelectMode] = useState(false);
+  // 双击卡片打开的大图预览项（App 持有：keyShortcutRef 豁免与复制/收藏句柄都在这层）。
+  const [previewItem, setPreviewItem] = useState<IndexedImage | null>(null);
 
   const debouncedQuery = useDebouncedValue(searchQuery, 200);
 
@@ -228,14 +237,24 @@ export function App() {
     return m;
   }, [tags]);
 
-  // path → tag 名字数组
+  // path → tag 名字数组（names 数组按 emoji 引用缓存，乐观收藏更新等
+  // currentEmojis 引用变化时不重建 → tags prop 身份稳定，memo 不失效）。
+  const tagsByPathCacheRef = useRef<{ tagById: Map<number, Tag>; names: WeakMap<object, string[]> }>({
+    tagById,
+    names: new WeakMap(),
+  });
   const tagsByPath = useMemo(() => {
+    // tagById 变化（建/改/删标签）时缓存整体失效，避免改名后读旧名。
+    if (tagsByPathCacheRef.current.tagById !== tagById) {
+      tagsByPathCacheRef.current = { tagById, names: new WeakMap() };
+    }
+    const cache = tagsByPathCacheRef.current.names;
     const result: Record<string, string[]> = {};
     for (const e of currentEmojis) {
-      const names: string[] = [];
-      for (const id of e.tagIds) {
-        const t = tagById.get(id);
-        if (t) names.push(t.name);
+      let names = cache.get(e);
+      if (!names) {
+        names = e.tagIds.map((id) => tagById.get(id)?.name).filter((name): name is string => !!name);
+        cache.set(e, names);
       }
       if (names.length > 0) result[e.path] = names;
     }
@@ -416,6 +435,14 @@ export function App() {
         payload.recent,
         ...current.filter((record) => record.item.path !== payload.item.path),
       ].slice(0, 50));
+      const now = Date.now();
+      // 主窗口自己的复制：handleCopy 已直接弹过（见 localCopyToastRef），跳过。
+      const local = localCopyToastRef.current;
+      if (local.path === payload.item.path && now - local.at < 3000) return;
+      // 其余来源（快捷搜索浮层的复制在主窗口报信）+ 防重复投递：同一张图 1.2s 内只弹一次。
+      const last = lastCopyToastRef.current;
+      if (last.path === payload.item.path && now - last.at < 1200) return;
+      lastCopyToastRef.current = { path: payload.item.path, at: now };
       dispatchToast(
         <Toast>
           <ToastTitle>已复制 {payload.item.name}</ToastTitle>
@@ -918,10 +945,14 @@ export function App() {
     return outcome.reason;
   }, [dispatchToast, setClipboardCollectShortcut]);
 
+  // favoriteIds 经 latest-ref 读取：回调身份不随收藏集变化（memo(EmojiGridItem) 前提）。
+  const favoriteIdsRef = useRef(favoriteIds);
+  favoriteIdsRef.current = favoriteIds;
+
   const toggleFavorite = useCallback(async (items: IndexedImage[]) => {
     const ids = items.map((item) => item.id);
     if (ids.length === 0) return;
-    const allFav = ids.every((id) => favoriteIds.has(id));
+    const allFav = ids.every((id) => favoriteIdsRef.current.has(id));
     const next = !allFav;
 
     const syncFavoriteIds = (curr: Set<number>, target: boolean) => {
@@ -955,24 +986,35 @@ export function App() {
       setFavoriteIds((curr) => syncFavoriteIds(curr, !next));
       setError(`更新收藏失败：${getErrorMessage(e)}`);
     }
-  }, [favoriteIds, setError, refreshLibrary]);
+  }, [setError, refreshLibrary]);
 
+  // 投影缓存：同一 IndexedEmoji 引用 → 同一 IndexedImage 对象。翻页追加/乐观收藏
+  // 更新时未变化项保持对象身份，memo(EmojiGridItem) 只重渲染真正变化的卡片。
+  const viewItemsCacheRef = useRef(new WeakMap<object, IndexedImage>());
   const viewItems = useMemo(() => {
     // currentEmojis 已经是后端按 view 过滤好的；recent 走 IndexedImage 派生
     if (currentView === "recent") {
       return recentItems.map((record) => record.item);
     }
-    return currentEmojis.map((e) => ({
-      id: e.id,
-      name: e.name,
-      path: e.path,
-      extension: e.extension,
-      width: e.width,
-      height: e.height,
-      sizeBytes: e.sizeBytes,
-      importedAt: e.importedAt,
-      modifiedAt: e.modifiedAt,
-    }));
+    const cache = viewItemsCacheRef.current;
+    return currentEmojis.map((e) => {
+      let item = cache.get(e);
+      if (!item) {
+        item = {
+          id: e.id,
+          name: e.name,
+          path: e.path,
+          extension: e.extension,
+          width: e.width,
+          height: e.height,
+          sizeBytes: e.sizeBytes,
+          importedAt: e.importedAt,
+          modifiedAt: e.modifiedAt,
+        };
+        cache.set(e, item);
+      }
+      return item;
+    });
   }, [currentView, currentEmojis, recentItems]);
 
   const filteredItems = useMemo(() => {
@@ -999,6 +1041,20 @@ export function App() {
   const { selectedIds, selectOnly, toggle, rangeSelect, selectAll, clear, deselect } =
     useMultiSelection(filteredItems);
 
+  // rangeSelect 依赖 anchorId（每次选区变化都换新），经 latest-ref 转发，
+  // 保持 handleItemSelect 身份稳定（memo(EmojiGridItem) 前提）。
+  const rangeSelectRef = useRef(rangeSelect);
+  rangeSelectRef.current = rangeSelect;
+
+  const handleItemSelect = useCallback(
+    (item: IndexedImage, mode: SelectionMode) => {
+      if (mode === "toggle") toggle(item.id);
+      else if (mode === "range") rangeSelectRef.current(item.id);
+      else selectOnly(item.id);
+    },
+    [toggle, selectOnly],
+  );
+
   clearSelectionRef.current = clear;
 
   // 标签交集初选只需覆盖选中项，而选中项必在当前视图已加载集内（Phase 17 起
@@ -1008,21 +1064,26 @@ export function App() {
     [currentEmojis],
   );
 
+  // 大图预览的分组/标签名（previewItem 必来自当前视图已加载集，indexedById 覆盖它）。
+  const previewMeta = useMemo(() => {
+    if (!previewItem) return { groupNames: [] as string[], tagNames: [] as string[] };
+    const emoji = indexedById.get(previewItem.id);
+    return {
+      groupNames: (emoji?.groupIds ?? [])
+        .map((id) => groups.find((g) => g.id === id)?.name)
+        .filter((name): name is string => !!name),
+      tagNames: (emoji?.tagIds ?? [])
+        .map((id) => tagById.get(id)?.name)
+        .filter((name): name is string => !!name),
+    };
+  }, [previewItem, indexedById, groups, tagById]);
+
   // 全选按钮（Phase 17）：只作用于已加载项（filteredItems）；全选了则退化为取消全选。
   const allSelected = selectedIds.size > 0 && selectedIds.size >= filteredItems.length;
   const handleToggleSelectAll = useCallback(() => {
     if (selectedIds.size > 0 && selectedIds.size >= filteredItems.length) clear();
     else selectAll();
   }, [selectedIds, filteredItems, clear, selectAll]);
-
-  const handleItemSelect = useCallback(
-    (item: IndexedImage, mode: SelectionMode) => {
-      if (mode === "toggle") toggle(item.id);
-      else if (mode === "range") rangeSelect(item.id);
-      else selectOnly(item.id);
-    },
-    [toggle, rangeSelect, selectOnly],
-  );
 
   const handleToggleMultiSelect = useCallback(() => {
     if (multiSelectMode) clear();
@@ -1171,21 +1232,33 @@ export function App() {
     setTagPickerState({ emojiIds: ids, initiallySelectedTagIds: Array.from(inter) });
   }
 
-  async function handleCopy(items: IndexedImage[]) {
+  // 点击卡片 Tag → 注入 `*标签` 精确搜索（后端 list_indexed 与 recent 客户端
+  // searchSyntax 都支持该语法）。useCallback 保持身份稳定（卡片 memo 前提）。
+  const handleTagClick = useCallback((tag: string) => {
+    setSearchQuery(`*${tag}`);
+  }, []);
+
+  // useCallback：经 EmojiGridItem 传到底，身份不稳定会打破卡片 memo。
+  // 成功 toast 直接用命令返回的 outcome 弹（不依赖 image-copied 事件链路——
+  // 事件监听在长 dev 会话的 HMR 残留下可能失效，曾导致复制无任何反馈）；
+  // 事件监听器侧凭 localCopyToastRef 标记跳过同一次复制，避免双弹。
+  const handleCopy = useCallback(async (items: IndexedImage[]) => {
     if (items.length !== 1) return;
     const item = items[0];
+    localCopyToastRef.current = { path: item.path, at: Date.now() };
     try {
-      await copyImageToClipboard(item.path);
+      const outcome = await copyImageToClipboard(item.path);
       dispatchToast(
         <Toast>
           <ToastTitle>已复制 {item.name}</ToastTitle>
+          <ToastBody>{outcome.message}</ToastBody>
         </Toast>,
         { intent: "success" },
       );
     } catch (e) {
       setError(`复制失败：${getErrorMessage(e)}`);
     }
-  }
+  }, [dispatchToast, setError]);
 
   async function handleShowInExplorer(items: IndexedImage[]) {
     if (items.length !== 1) return;
@@ -1200,7 +1273,8 @@ export function App() {
   keyShortcutRef.current = (event) => {
     // 模态弹窗打开时豁免，避免在弹窗内误触发批量操作。
     const dialogOpen =
-      groupDialogOpen || moveToGroupState !== null || tagPickerState !== null || settingsOpen;
+      groupDialogOpen || moveToGroupState !== null || tagPickerState !== null || settingsOpen ||
+      previewItem !== null;
     if (dialogOpen) return;
 
     const el = event.target instanceof HTMLElement ? event.target : null;
@@ -1341,6 +1415,8 @@ export function App() {
           onClearSelection={clear}
           onToggleFavorite={toggleFavorite}
           onCopy={handleCopy}
+          onOpenPreview={setPreviewItem}
+          onTagClick={handleTagClick}
           onMoveToGroup={handleMoveToGroup}
           onRemoveFromGroup={handleRemoveFromGroup}
           onAddTags={handleAddTags}
@@ -1350,6 +1426,19 @@ export function App() {
           onPermanentlyDelete={handlePermanentlyDelete}
         />
       </AppShell>
+
+      <EmojiPreviewDialog
+        open={previewItem !== null}
+        item={previewItem}
+        favorite={previewItem !== null && favoriteIds.has(previewItem.id)}
+        groupNames={previewMeta.groupNames}
+        tagNames={previewMeta.tagNames}
+        onOpenChange={(open) => {
+          if (!open) setPreviewItem(null);
+        }}
+        onCopy={(item) => void handleCopy([item])}
+        onToggleFavorite={(item) => toggleFavorite([item])}
+      />
 
       <SettingsDialog
         open={settingsOpen}

@@ -1,5 +1,6 @@
 import { Menu, makeStyles, tokens } from "@fluentui/react-components";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -63,6 +64,10 @@ interface EmojiGridProps {
   onClearSelection: () => void;
   onToggleFavorite: (items: IndexedImage[]) => void;
   onCopy: (items: IndexedImage[]) => void;
+  /** 双击卡片打开大图预览。 */
+  onOpenPreview: (item: IndexedImage) => void;
+  /** 点击卡片上的 Tag 按该标签筛选。 */
+  onTagClick: (tag: string) => void;
   onMoveToGroup: (items: IndexedImage[]) => void;
   onRemoveFromGroup?: (items: IndexedImage[]) => void;
   onAddTags?: (items: IndexedImage[]) => void;
@@ -73,6 +78,9 @@ interface EmojiGridProps {
 }
 
 const BATCH_SIZE = 72;
+
+/** 无标签项的稳定空数组：避免每次渲染新建 [] 打破 EmojiGridItem 的 memo。 */
+const EMPTY_TAGS: string[] = [];
 
 const densityConfig: Record<GridDensity, { tile: number; thumbnail: number }> = {
   compact: { tile: 104, thumbnail: 144 },
@@ -107,6 +115,8 @@ export function EmojiGrid({
   onClearSelection,
   onToggleFavorite,
   onCopy,
+  onOpenPreview,
+  onTagClick,
   onMoveToGroup,
   onRemoveFromGroup,
   onAddTags,
@@ -189,14 +199,18 @@ export function EmojiGrid({
     setMenuOpen(true);
   }
 
-  function handleContextItem(event: MouseEvent<HTMLDivElement>, item: IndexedImage) {
-    event.preventDefault();
-    openMenuFor(item, virtualTargetFromEvent(event));
-  }
+  // openMenuFor 随选区变化，经 latest-ref 转发保持 handler 身份稳定（memo 前提）。
+  const openMenuForRef = useRef(openMenuFor);
+  openMenuForRef.current = openMenuFor;
 
-  function handleMoreButton(event: MouseEvent<HTMLButtonElement>, item: IndexedImage) {
-    openMenuFor(item, virtualTargetFromRect(event.currentTarget.getBoundingClientRect()));
-  }
+  const handleContextItem = useCallback((event: MouseEvent<HTMLDivElement>, item: IndexedImage) => {
+    event.preventDefault();
+    openMenuForRef.current(item, virtualTargetFromEvent(event));
+  }, []);
+
+  const handleMoreButton = useCallback((event: MouseEvent<HTMLButtonElement>, item: IndexedImage) => {
+    openMenuForRef.current(item, virtualTargetFromRect(event.currentTarget.getBoundingClientRect()));
+  }, []);
 
   const menuFavorite = targetItems.length > 0 && targetItems.every((item) => favoriteIds.has(item.id));
 
@@ -221,10 +235,15 @@ export function EmojiGrid({
             selected={selectedIds.has(item.id)}
             favorite={favoriteIds.has(item.id)}
             thumbnailSize={config.thumbnail}
+            density={density}
             multiSelectMode={multiSelectMode}
-            tags={tagsByPath?.[item.path] ?? []}
+            menuMode={menuMode}
+            tags={tagsByPath?.[item.path] ?? EMPTY_TAGS}
             onItemSelect={onItemSelect}
             onToggleFavorite={onToggleFavorite}
+            onCopy={onCopy}
+            onOpenPreview={onOpenPreview}
+            onTagClick={onTagClick}
             onOpenContextMenu={handleContextItem}
             onOpenMoreButton={handleMoreButton}
           />

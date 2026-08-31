@@ -10,6 +10,8 @@ import {
 import {
   CheckboxChecked20Filled,
   CheckboxUnchecked20Regular,
+  Apps20Filled,
+  Apps20Regular,
   Grid20Filled,
   Grid20Regular,
   GridDots20Regular,
@@ -164,7 +166,7 @@ export function LibraryHeader({
               size="small"
               appearance={density === "large" ? "subtle" : "transparent"}
               aria-pressed={density === "large"}
-              icon={<Grid20Regular />}
+              icon={density === "large" ? <Apps20Filled /> : <Apps20Regular />}
               onClick={() => onDensityChange("large")}
             />
           </Tooltip>
