@@ -355,12 +355,19 @@ pub async fn collect_image_from_clipboard(
     app: AppHandle,
     database_state: State<'_, database::DatabaseState>,
     skip_perceptual_dedup: Option<bool>,
+    download_web_gif: Option<bool>,
 ) -> Result<clipboard_collect::ClipboardCollectOutcome, String> {
     let db_state = database_state.inner().clone();
     let skip = skip_perceptual_dedup.unwrap_or(false);
+    let download_web_gif = download_web_gif.unwrap_or(false);
     let app_for_task = app.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        clipboard_collect::collect_image_from_clipboard(&app_for_task, &db_state, skip)
+        clipboard_collect::collect_image_from_clipboard(
+            &app_for_task,
+            &db_state,
+            skip,
+            download_web_gif,
+        )
     })
     .await
     .map_err(|error| format!("剪贴板收藏任务意外中止：{error}"))?;

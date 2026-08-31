@@ -82,58 +82,59 @@ impl AssetService {
         let (sha256_original, file_size_original) =
             copy_and_hash(&canonical_source, temporary_file.path())?;
 
-        // 2) 解码一次（EXIF 方向 + 动画首帧）。解码失败按原有行为中止导入。
-        let decoded = decode_for_import(temporary_file.path())?;
-        let (mut width, mut height) = decoded.dimensions();
-        // dHash 在压缩前对原始解码结果计算，跨格式/分辨率稳定。
-        let perceptual_hash = Some(perceptual_hash::dhash(&decoded));
-
-        // 3) 动画 / 无法确认静态 → 保持原始字节，不缩放不重编码。
-        let animation = animation_status(temporary_file.path(), &file_extension);
-        let mut sha256 = sha256_original;
-        let mut file_size = file_size_original;
-        let mut stored = decoded;
-        match animation {
-            AnimationStatus::Static
-                if width > MAX_IMPORT_DIMENSION || height > MAX_IMPORT_DIMENSION =>
-            {
-                let scaled = stored.thumbnail(MAX_IMPORT_DIMENSION, MAX_IMPORT_DIMENSION);
-                let (scaled_width, scaled_height) = scaled.dimensions();
-                // 覆盖临时文件为重编码后的受管副本字节；SHA 对存储字节算。
-                sha256 =
-                    Self::encode_scaled_image(&scaled, temporary_file.path(), &file_extension)?;
-                file_size = fs::metadata(temporary_file.path())
-                    .map_err(|error| {
-                        format!(
-                            "无法读取临时素材信息 {}：{error}",
-                            temporary_file.path().display()
-                        )
-                    })?
-                    .len();
-                width = scaled_width;
-                height = scaled_height;
-                stored = scaled;
-            }
-            AnimationStatus::Unknown => {
-                log::warn!(
-                    "无法确认图片是否为动画，保持原始字节：{}",
-                    canonical_source.display()
-                );
-            }
-            _ => {}
-        }
-
-        Ok(StagedAsset {
+        stage_temporary(
             temporary_file,
             original_filename,
             file_extension,
-            file_size,
+            sha256_original,
+            file_size_original,
+        )
+    }
+
+    /// 原始字节（如剪贴板 "image/gif" 格式）的 staged 入口。
+    ///
+    /// 与 `stage_file` 共用 staging 语义：SHA 对**写入字节**计算；
+    /// GIF 经 `animation_status` 判 `Animated` → 原始字节保留（不缩放不重编码），
+    /// 缩略图取首帧。GIF 动画从这里进受管库。
+    pub fn stage_bytes(
+        emojis_directory: &Path,
+        bytes: &[u8],
+        file_extension: &str,
+        original_filename: &str,
+    ) -> Result<StagedAsset, String> {
+        let temporary_path = temporary_path(emojis_directory, "emoji", file_extension);
+        let temporary_file = TemporaryFile::new(temporary_path);
+        // 写临时文件 + 哈希（源已在内存，直接一遍写入）。
+        let file = File::create(temporary_file.path()).map_err(|error| {
+            format!(
+                "无法创建临时素材 {}：{error}",
+                temporary_file.path().display()
+            )
+        })?;
+        let mut writer = BufWriter::new(file);
+        writer.write_all(bytes).map_err(|error| {
+            format!(
+                "写入临时素材 {} 失败：{error}",
+                temporary_file.path().display()
+            )
+        })?;
+        writer.flush().map_err(|error| {
+            format!(
+                "刷新临时素材 {} 失败：{error}",
+                temporary_file.path().display()
+            )
+        })?;
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        let sha256 = hex_digest(hasher.finalize().as_slice());
+
+        stage_temporary(
+            temporary_file,
+            original_filename.to_string(),
+            file_extension.to_string(),
             sha256,
-            width,
-            height,
-            perceptual_hash,
-            decoded: stored,
-        })
+            bytes.len() as u64,
+        )
     }
 
     pub fn open_in_explorer(directory: &Path) -> Result<(), String> {
@@ -267,6 +268,71 @@ impl AssetService {
     }
 }
 
+/// 解码一次（EXIF 方向 + 动画首帧）→ dHash → 动画检测：
+/// `Static` 且 >512px 才缩放重编码（SHA/size 改为存储字节）；
+/// `Animated` / `Unknown` 一律保留原始字节。
+/// `stage_file`（磁盘源）与 `stage_bytes`（内存源）共用这段语义。
+fn stage_temporary(
+    temporary_file: TemporaryFile,
+    original_filename: String,
+    file_extension: String,
+    sha256_original: String,
+    file_size_original: u64,
+) -> Result<StagedAsset, String> {
+    // 解码失败按原有行为中止导入。
+    let decoded = decode_for_import(temporary_file.path())?;
+    let (mut width, mut height) = decoded.dimensions();
+    // dHash 在压缩前对原始解码结果计算，跨格式/分辨率稳定。
+    let perceptual_hash = Some(perceptual_hash::dhash(&decoded));
+
+    // 动画 / 无法确认静态 → 保持原始字节，不缩放不重编码。
+    let animation = animation_status(temporary_file.path(), &file_extension);
+    let mut sha256 = sha256_original;
+    let mut file_size = file_size_original;
+    let mut stored = decoded;
+    match animation {
+        AnimationStatus::Static
+            if width > MAX_IMPORT_DIMENSION || height > MAX_IMPORT_DIMENSION =>
+        {
+            let scaled = stored.thumbnail(MAX_IMPORT_DIMENSION, MAX_IMPORT_DIMENSION);
+            let (scaled_width, scaled_height) = scaled.dimensions();
+            // 覆盖临时文件为重编码后的受管副本字节；SHA 对存储字节算。
+            sha256 =
+                AssetService::encode_scaled_image(&scaled, temporary_file.path(), &file_extension)?;
+            file_size = fs::metadata(temporary_file.path())
+                .map_err(|error| {
+                    format!(
+                        "无法读取临时素材信息 {}：{error}",
+                        temporary_file.path().display()
+                    )
+                })?
+                .len();
+            width = scaled_width;
+            height = scaled_height;
+            stored = scaled;
+        }
+        AnimationStatus::Unknown => {
+            log::warn!(
+                "无法确认图片是否为动画，保持原始字节：{}",
+                temporary_file.path().display()
+            );
+        }
+        _ => {}
+    }
+
+    Ok(StagedAsset {
+        temporary_file,
+        original_filename,
+        file_extension,
+        file_size,
+        sha256,
+        width,
+        height,
+        perceptual_hash,
+        decoded: stored,
+    })
+}
+
 /// 解码一张图，应用 EXIF 方向、取动画首帧。返回"业务上正确的朝向"的解码结果，
 /// 供 `stage_file` 与感知哈希惰性回填共用。无 EXIF / 读取方向失败 → 安全回退为不变换。
 pub(crate) fn decode_for_import(path: &Path) -> Result<DynamicImage, String> {
@@ -309,6 +375,12 @@ fn animation_status(path: &Path, extension: &str) -> AnimationStatus {
 }
 
 const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+/// 字节级 GIF magic 校验（"GIF87a" / "GIF89a"）。剪贴板读路径（clipboard_collect）
+/// 与写路径（clipboard.rs）在进入 GIF 管线前用它防御非 GIF 字节。
+pub(crate) fn is_gif_bytes(bytes: &[u8]) -> bool {
+    bytes.len() >= 6 && (&bytes[..6] == b"GIF87a" || &bytes[..6] == b"GIF89a")
+}
 
 /// 扫描 PNG chunk：`IDAT` 前发现 `acTL` → 动画（APNG）。
 /// 校验边界 / 长度 / 整数溢出；任何异常 → `None`（Unknown，保守）。
@@ -800,6 +872,42 @@ mod tests {
         );
         assert!(staged.perceptual_hash.is_some());
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stage_bytes_gif_keeps_original_bytes() {
+        let root = test_root("stage-bytes");
+        let source = root.join("anim.gif");
+        pattern(48, 32).save(&source).expect("write gif");
+        let gif_bytes = fs::read(&source).expect("read gif");
+
+        let staged = AssetService::stage_bytes(&root, &gif_bytes, "gif", "clipboard-x.gif")
+            .expect("stage_bytes should succeed");
+
+        assert_eq!(staged.file_extension, "gif");
+        assert_eq!(staged.original_filename, "clipboard-x.gif");
+        assert_eq!(
+            staged.sha256,
+            sha256_hex(&gif_bytes),
+            "SHA 必须对原始字节计算"
+        );
+        assert_eq!(staged.file_size, gif_bytes.len() as u64);
+        assert_eq!((staged.width, staged.height), (48, 32));
+        assert!(staged.perceptual_hash.is_some(), "首帧 dHash 应存在");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn is_gif_bytes_checks_magic() {
+        assert!(super::is_gif_bytes(b"GIF87arest"));
+        assert!(super::is_gif_bytes(b"GIF89arest"));
+        assert!(!super::is_gif_bytes(b"GIF86a")); // 错版本
+        assert!(!super::is_gif_bytes(b"GIF")); // 太短
+        assert!(!super::is_gif_bytes(b""));
+        assert!(!super::is_gif_bytes(&[
+            0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A
+        ]));
+        assert!(!super::is_gif_bytes(b"gif89a-lowercase")); // 大小写敏感（magic 是固定大写）
     }
 
     /// 构造一个"看起来像 PNG"但截断的文件 → 必须 Unknown（保守保留原字节）。

@@ -247,6 +247,39 @@ impl ImportService {
         )
     }
 
+    /// 从原始字节（剪贴板 "image/gif" 注册格式）导入素材，保留动画。
+    ///
+    /// 与 `import_dynamic_image` 同构：入口取 `IMPORT_LOCK`，双通道去重
+    /// （SHA-256 对**原始 gif 字节**计算 —— 同一 GIF 反复收藏、或与磁盘导入的
+    /// 同一 GIF 都会撞 SHA），dHash 对首帧计算，DB 失败回滚已落盘文件。
+    /// `source_type` 固定 `"clipboard"`（自动文件名标签随之跳过）。
+    pub fn import_bytes(
+        context: &ImportContext,
+        bytes: Vec<u8>,
+        file_extension: &str,
+        original_filename: &str,
+        skip_perceptual_dedup: bool,
+    ) -> Result<ImportOneOutcome, String> {
+        let _guard = lock_import();
+        let mut connection = database::open_connection(&context.database_path)?;
+        let staged = AssetService::stage_bytes(
+            &context.emojis_directory,
+            &bytes,
+            file_extension,
+            original_filename,
+        )?;
+        commit_staged_as_source_type(
+            &mut connection,
+            context,
+            staged,
+            "clipboard",
+            original_filename,
+            None,
+            ImportGroup::None,
+            skip_perceptual_dedup,
+        )
+    }
+
     /// 文件夹导入：递归复制所有受支持图片进受管库。
     ///
     /// - 每个**顶层子文件夹**自动建同名分组（懒建：仅当该子文件夹第一张图
@@ -1293,6 +1326,83 @@ mod tests {
                 .count(),
             1
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_bytes_inserts_clipboard_gif_with_original_bytes() {
+        let root = test_root("bytes-gif");
+        let context = context(&root);
+        // 用 image crate 的 gif 编码器造一张（静态）GIF —— animation_status 对
+        // gif 恒为 Animated，受管副本必须保留原始字节。
+        let gif_path = root.join("source.gif");
+        DynamicImage::ImageRgba8(smooth_pattern(32, 32))
+            .save(&gif_path)
+            .expect("write gif");
+        let gif_bytes = fs::read(&gif_path).expect("read gif bytes");
+
+        let outcome = ImportService::import_bytes(
+            &context,
+            gif_bytes.clone(),
+            "gif",
+            "clipboard-test.gif",
+            false,
+        )
+        .expect("import_bytes should succeed");
+
+        let item = match outcome {
+            ImportOneOutcome::Imported { item, .. } => item,
+            other => panic!("expected Imported, got {other:?}"),
+        };
+        assert_eq!(item.extension, "gif");
+        let managed = fs::read(&item.path).expect("read managed gif");
+        assert_eq!(managed, gif_bytes, "受管 GIF 必须保留原始字节（动画不丢）");
+
+        // source_type='clipboard' 且不打文件名标签（clipboard 跳过自动标签）。
+        let connection = open_connection(&context.database_path).expect("open database");
+        let (source_type, tag_count): (String, i64) = connection
+            .query_row(
+                "SELECT e.source_type, \
+                 (SELECT COUNT(*) FROM emoji_tags t WHERE t.emoji_id = e.id) \
+                 FROM emojis e WHERE e.source_type = 'clipboard'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("query clipboard row");
+        assert_eq!(source_type, "clipboard");
+        assert_eq!(tag_count, 0, "clipboard 来源不打文件名标签");
+
+        assert_eq!(
+            fs::read_dir(&context.thumbnails_directory)
+                .expect("read thumbnails")
+                .count(),
+            1,
+            "缩略图（首帧）应生成"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_bytes_dedupes_on_second_call() {
+        let root = test_root("bytes-dedupe");
+        let context = context(&root);
+        let gif_path = root.join("source.gif");
+        DynamicImage::ImageRgba8(smooth_pattern(16, 16))
+            .save(&gif_path)
+            .expect("write gif");
+        let gif_bytes = fs::read(&gif_path).expect("read gif bytes");
+
+        let first =
+            ImportService::import_bytes(&context, gif_bytes.clone(), "gif", "first.gif", false)
+                .expect("first import");
+        assert!(matches!(first, ImportOneOutcome::Imported { .. }));
+
+        // 同一 GIF 字节再收藏 → SHA-256 精确命中。
+        let second = ImportService::import_bytes(&context, gif_bytes, "gif", "second.gif", false)
+            .expect("second import");
+        assert!(matches!(second, ImportOneOutcome::ExactDuplicate));
 
         let _ = fs::remove_dir_all(root);
     }

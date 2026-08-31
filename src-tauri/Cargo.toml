@@ -20,6 +20,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+# 网页 GIF 下载（设置开关控制；仅 http/https，超时 + 大小上限防护）
+ureq = "2"
 tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
@@ -37,4 +39,6 @@ windows = { version = "0.61", features = [
     "Win32_System_Ole",
     "Win32_System_Variant",
     "Win32_UI_Accessibility",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
 ] }
