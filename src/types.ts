@@ -52,6 +52,8 @@ export interface LibraryGroup {
   count: number;
   sortOrder: number;
   isPinned: boolean;
+  /** 自定义侧栏图标名（groupIcons.ts 注册表标识），null = 默认文件夹。 */
+  icon: string | null;
 }
 
 export interface Tag {

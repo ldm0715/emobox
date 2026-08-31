@@ -9,8 +9,8 @@ import {
   type SearchBoxChangeEvent,
 } from "@fluentui/react-components";
 import {
-  PanelLeftContract20Regular,
-  PanelLeftExpand20Regular,
+  PanelLeftContract24Regular,
+  PanelLeftExpand24Regular,
   Search20Regular,
 } from "@fluentui/react-icons";
 import type { KeyboardEvent } from "react";
@@ -50,6 +50,10 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
+  },
+  // 展开侧栏按钮：右移 4px，与侧栏内容留出呼吸位（全量对齐图标列的 8px 偏多）。
+  sidebarToggle: {
+    marginLeft: tokens.spacingHorizontalXS,
   },
   title: {
     overflow: "hidden",
@@ -110,9 +114,10 @@ export function AppToolbar({
       <div className={styles.brand}>
         <Tooltip content={sidebarCollapsed ? "展开侧栏" : "收起侧栏"} relationship="label">
           <Button
+            className={styles.sidebarToggle}
             appearance="subtle"
             aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
-            icon={sidebarCollapsed ? <PanelLeftExpand20Regular /> : <PanelLeftContract20Regular />}
+            icon={sidebarCollapsed ? <PanelLeftExpand24Regular /> : <PanelLeftContract24Regular />}
             onClick={onToggleSidebar}
           />
         </Tooltip>

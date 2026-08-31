@@ -156,6 +156,10 @@ export function setGroupPinned(id: number, pinned: boolean): Promise<void> {
   return invoke<void>("set_group_pinned", { id, pinned });
 }
 
+export function setGroupIcon(id: number, icon: string | null): Promise<void> {
+  return invoke<void>("set_group_icon", { id, icon });
+}
+
 export function listTags(): Promise<Tag[]> {
   return invoke<Tag[]>("list_tags");
 }

@@ -21,6 +21,7 @@ import { useLibraryImport } from "./features/import/useLibraryImport";
 import { EmojiLibraryView } from "./features/library/EmojiLibraryView";
 import { EmojiPreviewDialog } from "./features/library/EmojiPreviewDialog";
 import { GroupDialog } from "./features/library/GroupDialog";
+import { GroupIconPickerDialog } from "./features/library/GroupIconPickerDialog";
 import { MoveToGroupDialog } from "./features/library/MoveToGroupDialog";
 import { TagPickerDialog } from "./features/library/TagPickerDialog";
 import { useDebouncedValue } from "./features/library/useDebouncedValue";
@@ -42,6 +43,7 @@ import {
   renameGroup,
   searchEmojis,
   setEmojisFavorite,
+  setGroupIcon,
   setGroupPinned,
   showInExplorer,
   showQuickSearch,
@@ -149,6 +151,8 @@ export function App() {
   const {
     sidebarCollapsed,
     setSidebarCollapsed,
+    sidebarGroupsCollapsed,
+    setSidebarGroupsCollapsed,
     defaultView,
     quickSearchShortcut,
     setQuickSearchShortcut,
@@ -204,6 +208,8 @@ export function App() {
   const collectFromClipboardRef = useRef<() => void>(() => {});
   // GroupDialog 状态
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  // 正在更改图标的分组（null = 选择器关闭）。
+  const [iconPickerGroup, setIconPickerGroup] = useState<LibraryGroup | null>(null);
   const [groupDialogBusy, setGroupDialogBusy] = useState(false);
   // 加入分组弹窗状态
   const [moveToGroupState, setMoveToGroupState] = useState<{
@@ -1274,7 +1280,7 @@ export function App() {
     // 模态弹窗打开时豁免，避免在弹窗内误触发批量操作。
     const dialogOpen =
       groupDialogOpen || moveToGroupState !== null || tagPickerState !== null || settingsOpen ||
-      previewItem !== null;
+      iconPickerGroup !== null || previewItem !== null;
     if (dialogOpen) return;
 
     const el = event.target instanceof HTMLElement ? event.target : null;
@@ -1327,6 +1333,7 @@ export function App() {
         sidebar={
           <LibrarySidebar
             collapsed={sidebarCollapsed}
+            groupsCollapsed={sidebarGroupsCollapsed}
             currentView={currentView}
             allCount={allCount}
             favoriteCount={favoriteCount}
@@ -1380,6 +1387,8 @@ export function App() {
                 setError(`置顶操作失败：${getErrorMessage(e)}`);
               }
             }}
+            onToggleGroupsCollapsed={() => setSidebarGroupsCollapsed(!sidebarGroupsCollapsed)}
+            onEditGroupIcon={(group) => setIconPickerGroup(group)}
           />
         }
       >
@@ -1463,10 +1472,11 @@ export function App() {
           open={groupDialogOpen}
           busy={groupDialogBusy}
           onOpenChange={setGroupDialogOpen}
-          onSubmit={async (name) => {
+          onSubmit={async (name, icon) => {
             setGroupDialogBusy(true);
             try {
-              await createGroup(name);
+              const group = await createGroup(name);
+              if (icon) await setGroupIcon(group.id, icon);
               await refreshSidebar();
               setGroupDialogOpen(false);
               dispatchToast(
@@ -1478,6 +1488,27 @@ export function App() {
             } finally {
               setGroupDialogBusy(false);
             }
+          }}
+        />
+      )}
+
+      {iconPickerGroup && (
+        <GroupIconPickerDialog
+          open
+          groupName={iconPickerGroup.name}
+          currentIcon={iconPickerGroup.icon}
+          onOpenChange={(open) => {
+            if (!open) setIconPickerGroup(null);
+          }}
+          onSelect={async (icon) => {
+            await setGroupIcon(iconPickerGroup.id, icon);
+            await refreshSidebar();
+            dispatchToast(
+              <Toast>
+                <ToastTitle>{icon === null ? "已恢复默认图标" : "分组图标已更新"}</ToastTitle>
+              </Toast>,
+              { intent: "success" },
+            );
           }}
         />
       )}
@@ -1517,7 +1548,7 @@ function GroupDialogLite(props: {
   open: boolean;
   busy: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (name: string) => Promise<void>;
+  onSubmit: (name: string, icon: string | null) => Promise<void>;
 }) {
   return <GroupDialog {...props} mode="create" />;
 }

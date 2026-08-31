@@ -34,6 +34,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         6,
         include_str!("../../migrations/0006_add_group_pinned.sql"),
     ),
+    (7, include_str!("../../migrations/0007_add_group_icon.sql")),
 ];
 
 #[derive(Clone)]
@@ -250,7 +251,7 @@ mod tests {
                 row.get(0)
             })
             .expect("count migrations");
-        assert_eq!(migration_count, 6);
+        assert_eq!(migration_count, 7);
 
         let columns = connection
             .prepare("PRAGMA table_info(emojis)")
@@ -308,6 +309,10 @@ mod tests {
         assert!(
             group_columns.iter().any(|column| column == "is_pinned"),
             "migration 6 应给 groups 加 is_pinned 列"
+        );
+        assert!(
+            group_columns.iter().any(|column| column == "icon"),
+            "migration 7 应给 groups 加 icon 列"
         );
     }
 

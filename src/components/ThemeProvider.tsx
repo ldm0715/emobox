@@ -27,6 +27,8 @@ type ResolvedTheme = "light" | "dark";
 interface PersistedSettings {
   theme: ThemePreference;
   sidebarCollapsed: boolean;
+  /** 「我的分组」区折叠状态（侧栏展开态专用）。 */
+  sidebarGroupsCollapsed: boolean;
   defaultView: DefaultLibraryView;
   quickSearchShortcut: string;
   clipboardCollectShortcut: string;
@@ -50,6 +52,7 @@ interface SettingsContextValue extends PersistedSettings {
   resolvedTheme: ResolvedTheme;
   setTheme: (theme: ThemePreference) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  setSidebarGroupsCollapsed: (collapsed: boolean) => void;
   setDefaultView: (view: DefaultLibraryView) => void;
   setQuickSearchShortcut: (shortcut: string) => void;
   setClipboardCollectShortcut: (shortcut: string) => void;
@@ -65,6 +68,7 @@ const fontFamily = '"Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Micr
 const defaultSettings: PersistedSettings = {
   theme: "light",
   sidebarCollapsed: false,
+  sidebarGroupsCollapsed: false,
   defaultView: "all",
   quickSearchShortcut: DEFAULT_QUICK_SEARCH_SHORTCUT,
   clipboardCollectShortcut: DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
@@ -125,6 +129,8 @@ function readSettings(): PersistedSettings {
     return {
       theme: isTheme(parsed.theme) ? parsed.theme : isTheme(legacyTheme) ? legacyTheme : defaultSettings.theme,
       sidebarCollapsed: typeof parsed.sidebarCollapsed === "boolean" ? parsed.sidebarCollapsed : false,
+      sidebarGroupsCollapsed:
+        typeof parsed.sidebarGroupsCollapsed === "boolean" ? parsed.sidebarGroupsCollapsed : false,
       defaultView: isDefaultView(parsed.defaultView) ? parsed.defaultView : defaultSettings.defaultView,
       quickSearchShortcut: isShortcut(parsed.quickSearchShortcut)
         ? parsed.quickSearchShortcut
@@ -190,6 +196,8 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       resolvedTheme,
       setTheme: (theme) => setSettings((current) => ({ ...current, theme })),
       setSidebarCollapsed: (sidebarCollapsed) => setSettings((current) => ({ ...current, sidebarCollapsed })),
+      setSidebarGroupsCollapsed: (sidebarGroupsCollapsed) =>
+        setSettings((current) => ({ ...current, sidebarGroupsCollapsed })),
       setDefaultView: (defaultView) => setSettings((current) => ({ ...current, defaultView })),
       setQuickSearchShortcut: (quickSearchShortcut) => setSettings((current) => ({
         ...current,

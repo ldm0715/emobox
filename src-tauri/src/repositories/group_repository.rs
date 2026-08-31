@@ -11,6 +11,8 @@ pub struct GroupRow {
     pub sort_order: i64,
     pub count: i64,
     pub is_pinned: bool,
+    /// 自定义侧栏图标名（groupIcons.ts 注册表里的标识），NULL = 默认文件夹。
+    pub icon: Option<String>,
 }
 
 impl GroupRepository {
@@ -22,7 +24,7 @@ impl GroupRepository {
                        (SELECT COUNT(*) FROM emojis e
                         JOIN emoji_groups eg ON eg.emoji_id = e.id
                         WHERE eg.group_id = g.id AND e.is_deleted = 0) AS count,
-                       g.is_pinned
+                       g.is_pinned, g.icon
                 FROM groups g
                 ORDER BY g.is_pinned DESC, g.sort_order ASC, g.id ASC
                 "#,
@@ -36,6 +38,7 @@ impl GroupRepository {
                     sort_order: row.get(2)?,
                     count: row.get(3)?,
                     is_pinned: row.get(4)?,
+                    icon: row.get(5)?,
                 })
             })
             .map_err(|error| format!("无法读取分组列表：{error}"))?;
@@ -77,6 +80,7 @@ impl GroupRepository {
             sort_order: 0,
             count: 0,
             is_pinned: false,
+            icon: None,
         })
     }
 
@@ -123,7 +127,7 @@ impl GroupRepository {
 
         let row = connection
             .query_row(
-                "SELECT id, name, sort_order, is_pinned FROM groups WHERE id = ?1",
+                "SELECT id, name, sort_order, is_pinned, icon FROM groups WHERE id = ?1",
                 [id],
                 |row| {
                     Ok(GroupRow {
@@ -132,6 +136,7 @@ impl GroupRepository {
                         sort_order: row.get(2)?,
                         count: 0,
                         is_pinned: row.get(3)?,
+                        icon: row.get(4)?,
                     })
                 },
             )
@@ -176,6 +181,32 @@ impl GroupRepository {
             .map_err(|error| format!("无法更新分组置顶状态：{error}"))?;
         if updated == 0 {
             return Err(format!("找不到要置顶的分组：{id}"));
+        }
+        Ok(())
+    }
+
+    /// 设置分组自定义侧栏图标。只影响侧栏展示，不刷新组内表情的修改时间、
+    /// 不调 notify_library_changed（与 `set_group_pinned` 同理 —— 纯侧栏外观）。
+    /// 空串/纯空白视为清除（回到默认文件夹图标）。
+    pub fn set_group_icon(
+        connection: &Connection,
+        id: i64,
+        icon: Option<&str>,
+    ) -> Result<(), String> {
+        let normalized = icon.map(str::trim).filter(|value| !value.is_empty());
+        if let Some(value) = normalized
+            && value.len() > 64
+        {
+            return Err("分组图标名过长（上限 64 字符）。".to_string());
+        }
+        let updated = connection
+            .execute(
+                "UPDATE groups SET icon = ?1, updated_at = ?2 WHERE id = ?3",
+                params![normalized, unix_time_millis(), id],
+            )
+            .map_err(|error| format!("无法更新分组图标：{error}"))?;
+        if updated == 0 {
+            return Err(format!("找不到要设置图标的分组：{id}"));
         }
         Ok(())
     }
@@ -381,6 +412,48 @@ mod tests {
         // 不存在的 id → 报错。
         let err =
             GroupRepository::set_group_pinned(&connection, 9999, true).expect_err("missing id");
+        assert!(err.contains("找不到"));
+    }
+
+    #[test]
+    fn set_group_icon_sets_and_clears() {
+        let mut connection = fresh();
+        let group = GroupRepository::create_group(&mut connection, "猫猫").expect("create");
+
+        // 新建分组默认无图标。
+        let list = GroupRepository::list_groups(&connection).expect("list");
+        assert_eq!(list[0].icon, None);
+
+        // 设置 → list_groups 可见。
+        GroupRepository::set_group_icon(&connection, group.id, Some("AnimalCat"))
+            .expect("set icon");
+        let list = GroupRepository::list_groups(&connection).expect("list after set");
+        assert_eq!(list[0].icon.as_deref(), Some("AnimalCat"));
+
+        // 空串/空白 → 清回 NULL。
+        GroupRepository::set_group_icon(&connection, group.id, Some("   ")).expect("clear icon");
+        let list = GroupRepository::list_groups(&connection).expect("list after clear");
+        assert_eq!(list[0].icon, None);
+
+        // None 同样清除；重命名后 icon 保留。
+        GroupRepository::set_group_icon(&connection, group.id, Some("AnimalCat"))
+            .expect("set again");
+        GroupRepository::set_group_icon(&connection, group.id, None).expect("clear via none");
+        GroupRepository::set_group_icon(&connection, group.id, Some("AnimalCat"))
+            .expect("set third");
+        let renamed =
+            GroupRepository::rename_group(&mut connection, group.id, "狗狗").expect("rename");
+        assert_eq!(renamed.icon.as_deref(), Some("AnimalCat"));
+
+        // 超长图标名 → 报错。
+        let too_long = "x".repeat(65);
+        let err = GroupRepository::set_group_icon(&connection, group.id, Some(&too_long))
+            .expect_err("too long");
+        assert!(err.contains("过长"));
+
+        // 不存在的 id → 报错。
+        let err = GroupRepository::set_group_icon(&connection, 9999, Some("Star"))
+            .expect_err("missing id");
         assert!(err.contains("找不到"));
     }
 }

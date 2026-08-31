@@ -46,6 +46,7 @@ pub struct GroupDto {
     pub count: i64,
     pub sort_order: i64,
     pub is_pinned: bool,
+    pub icon: Option<String>,
 }
 
 impl From<GroupRow> for GroupDto {
@@ -56,6 +57,7 @@ impl From<GroupRow> for GroupDto {
             count: row.count,
             sort_order: row.sort_order,
             is_pinned: row.is_pinned,
+            icon: row.icon,
         }
     }
 }
@@ -437,6 +439,17 @@ pub fn set_group_pinned(
 ) -> Result<(), String> {
     let connection = database_state.connect()?;
     GroupRepository::set_group_pinned(&connection, id, pinned)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_group_icon(
+    database_state: State<'_, database::DatabaseState>,
+    id: i64,
+    icon: Option<String>,
+) -> Result<(), String> {
+    let connection = database_state.connect()?;
+    GroupRepository::set_group_icon(&connection, id, icon.as_deref())?;
     Ok(())
 }
 

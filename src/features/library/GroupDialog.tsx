@@ -8,10 +8,13 @@ import {
   DialogTrigger,
   Input,
   makeStyles,
+  mergeClasses,
   tokens,
 } from "@fluentui/react-components";
+import { Folder24Regular } from "@fluentui/react-icons";
 import { useEffect, useState } from "react";
 import { getErrorMessage } from "../../lib/tauri";
+import { POPULAR_GROUP_ICONS, findGroupIconEntry } from "./groupIcons";
 
 const useStyles = makeStyles({
   surface: {
@@ -31,6 +34,42 @@ const useStyles = makeStyles({
     color: tokens.colorPaletteRedForeground1,
     fontSize: tokens.fontSizeBase200,
   },
+  iconLabel: {
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200,
+  },
+  iconRow: {
+    // 固定 9 列网格：默认项 + 18 个常用图标 = 恰好两整行，不随窗口宽度错行。
+    display: "grid",
+    gridTemplateColumns: "repeat(9, 1fr)",
+    columnGap: tokens.spacingHorizontalXS,
+    rowGap: tokens.spacingHorizontalXS,
+  },
+  iconOption: {
+    width: "100%",
+    height: "36px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+    color: tokens.colorNeutralForeground2,
+    backgroundColor: "transparent",
+    border: "none",
+    borderRadius: tokens.borderRadiusMedium,
+    cursor: "pointer",
+    ":hover": {
+      backgroundColor: tokens.colorNeutralBackground1Hover,
+    },
+    ":focus-visible": {
+      outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: "-2px",
+    },
+  },
+  iconOptionSelected: {
+    color: tokens.colorBrandForeground1,
+    backgroundColor: tokens.colorSubtleBackgroundSelected,
+    border: `1px solid ${tokens.colorBrandStroke1}`,
+  },
 });
 
 interface GroupDialogProps {
@@ -39,7 +78,7 @@ interface GroupDialogProps {
   initialName?: string;
   busy?: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (name: string) => Promise<void>;
+  onSubmit: (name: string, icon: string | null) => Promise<void>;
 }
 
 export function GroupDialog({
@@ -52,11 +91,14 @@ export function GroupDialog({
 }: GroupDialogProps) {
   const styles = useStyles();
   const [name, setName] = useState(initialName);
+  // 新建时的分组图标；null = 默认文件夹。重命名模式不展示图标行。
+  const [icon, setIcon] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (open) {
       setName(initialName);
+      setIcon(null);
       setError("");
     }
   }, [open, initialName]);
@@ -67,7 +109,7 @@ export function GroupDialog({
   async function handleSubmit() {
     if (!canSubmit) return;
     try {
-      await onSubmit(trimmed);
+      await onSubmit(trimmed, icon);
       onOpenChange(false);
     } catch (e) {
       setError(getErrorMessage(e));
@@ -93,6 +135,50 @@ export function GroupDialog({
                 if (e.key === "Enter") void handleSubmit();
               }}
             />
+            {mode === "create" && (
+              <div>
+                <span className={styles.iconLabel}>图标（可选，创建后可随时更改）</span>
+                <div className={styles.iconRow}>
+                  <button
+                    type="button"
+                    aria-label="默认文件夹图标"
+                    aria-pressed={icon === null}
+                    title="默认"
+                    disabled={busy}
+                    className={mergeClasses(
+                      styles.iconOption,
+                      icon === null && styles.iconOptionSelected,
+                    )}
+                    onClick={() => setIcon(null)}
+                  >
+                    <Folder24Regular />
+                  </button>
+                  {POPULAR_GROUP_ICONS.map((iconName) => {
+                    const entry = findGroupIconEntry(iconName);
+                    if (!entry) return null;
+                    const IconComponent = entry.component;
+                    const selected = icon === iconName;
+                    return (
+                      <button
+                        type="button"
+                        key={iconName}
+                        aria-label={entry.label}
+                        aria-pressed={selected}
+                        title={entry.label}
+                        disabled={busy}
+                        className={mergeClasses(
+                          styles.iconOption,
+                          selected && styles.iconOptionSelected,
+                        )}
+                        onClick={() => setIcon(iconName)}
+                      >
+                        <IconComponent />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {error && <span className={styles.error}>{error}</span>}
             <div className={styles.actions}>
               <DialogTrigger disableButtonEnhancement>
