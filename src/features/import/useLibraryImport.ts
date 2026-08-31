@@ -22,14 +22,16 @@ function toUserMessage(error: unknown): string {
   return "导入失败，请确认文件仍然存在且可以访问。";
 }
 
-export function useLibraryImport() {
+/**
+ * 导入/剪贴板收藏动作集。错误不持有内部 state，统一经 onError 回调抛给调用方
+ * （App 传入 notifyError → error toast；统一通知模型见 App.tsx notifyError 注释）。
+ */
+export function useLibraryImport(onError: (message: string) => void) {
   const [isImporting, setIsImporting] = useState(false);
-  const [error, setError] = useState("");
 
   // 文件夹导入：递归复制进受管库，顶层子文件夹自动建同名分组。
   const importFolder = useCallback(
     async (skipPerceptualDedup = false): Promise<FolderImportSummary | null> => {
-      setError("");
       try {
         const selected = await open({
           directory: true,
@@ -44,11 +46,11 @@ export function useLibraryImport() {
           setIsImporting(false);
         }
       } catch (dialogError) {
-        setError(toUserMessage(dialogError));
+        onError(toUserMessage(dialogError));
         return null;
       }
     },
-    [],
+    [onError],
   );
 
   const importPaths = useCallback(
@@ -58,21 +60,19 @@ export function useLibraryImport() {
     ): Promise<ManagedImportSummary | null> => {
       if (paths.length === 0) return null;
       setIsImporting(true);
-      setError("");
       try {
         return await importManagedPaths(paths, skipPerceptualDedup);
       } catch (importError) {
-        setError(toUserMessage(importError));
+        onError(toUserMessage(importError));
         return null;
       } finally {
         setIsImporting(false);
       }
     },
-    [],
+    [onError],
   );
 
   const importImages = useCallback(async (): Promise<ManagedImportSummary | null> => {
-    setError("");
     try {
       const selected = await open({
         directory: false,
@@ -84,28 +84,25 @@ export function useLibraryImport() {
       if (!paths || paths.length === 0) return null;
       return await importPaths(paths);
     } catch (dialogError) {
-      setError(toUserMessage(dialogError));
+      onError(toUserMessage(dialogError));
       return null;
     }
-  }, [importPaths]);
+  }, [importPaths, onError]);
 
   const collectFromClipboard = useCallback(
     async (skipPerceptualDedup = false, downloadWebGif = false) => {
-      setError("");
       try {
         return await collectImageFromClipboard(skipPerceptualDedup, downloadWebGif);
       } catch (invokeError) {
-        setError(toUserMessage(invokeError));
+        onError(toUserMessage(invokeError));
         return null;
       }
     },
-    [],
+    [onError],
   );
 
   return {
     isImporting,
-    error,
-    setError,
     importImages,
     importFolder,
     importPaths,

@@ -130,6 +130,20 @@ async function fetchViewPage(
 export function App() {
   const toasterId = useId("emobox-toaster");
   const { dispatchToast } = useToastController(toasterId);
+  // 统一通知模型（2026-09 收敛）：全局操作反馈（成功/提示/**失败**）一律走右上角
+  // Toast；失败用 error intent + 7s（默认 5s 对错误信息太短）。上下文局部反馈
+  // （弹窗表单错误、浮层 footer 状态行）保留内联，不进全局 toast。
+  const notifyError = useCallback(
+    (message: string) => {
+      dispatchToast(
+        <Toast>
+          <ToastTitle>{message}</ToastTitle>
+        </Toast>,
+        { intent: "error", timeout: 7000 },
+      );
+    },
+    [dispatchToast],
+  );
   // 复制 toast 防重/去双弹状态：
   // - localCopyToastRef：handleCopy 直接弹 toast 前打的标（事件到达时据此跳过，
   //   避免同一次复制弹两条）。主窗口复制不依赖事件链路，HMR 残留的失效监听不影响反馈。
@@ -150,13 +164,11 @@ export function App() {
   } = useAppSettings();
   const {
     isImporting,
-    error,
-    setError,
     importImages,
     importFolder,
     importPaths,
     collectFromClipboard,
-  } = useLibraryImport();
+  } = useLibraryImport(notifyError);
 
   // 当前视图已加载的表情（IndexedEmoji 13 字段）。Phase 17 分页：只持有已加载页，
   // 滚动到底经 loadMore 追加；总数在 viewTotal，不在数组长度里。
@@ -280,9 +292,9 @@ export function App() {
       setAllCount(allResult.total);
       setFavoriteCount(favoritesResult.total);
     } catch (loadError) {
-      setError(`无法读取本地表情库：${getErrorMessage(loadError)}`);
+      notifyError(`无法读取本地表情库：${getErrorMessage(loadError)}`);
     }
-  }, [setError]);
+  }, [notifyError]);
 
   // 从页面加载结果合并收藏标志（只增不减；取消收藏经 toggleFavorite 的乐观
   // 更新维护，不存在其他取消收藏入口）。
@@ -355,13 +367,13 @@ export function App() {
           { intent: "success" },
         );
       } catch (e) {
-        setError(`加入分组失败：${getErrorMessage(e)}`);
+        notifyError(`加入分组失败：${getErrorMessage(e)}`);
         throw e; // 让弹窗内的 MessageBar 也展示
       } finally {
         setMoveToGroupBusy(false);
       }
     },
-    [moveToGroupState, addEmojisToGroupInline, dispatchToast, setError],
+    [moveToGroupState, addEmojisToGroupInline, dispatchToast, notifyError],
   );
 
   const handleTagPickerConfirm = useCallback(
@@ -406,13 +418,13 @@ export function App() {
           { intent: "success" },
         );
       } catch (e) {
-        setError(`更新标签失败：${getErrorMessage(e)}`);
+        notifyError(`更新标签失败：${getErrorMessage(e)}`);
         throw e;
       } finally {
         setTagPickerBusy(false);
       }
     },
-    [tagPickerState, dispatchToast, refreshSidebar, setError],
+    [tagPickerState, dispatchToast, refreshSidebar, notifyError],
   );
 
   useEffect(() => {
@@ -470,7 +482,7 @@ export function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [dispatchToast, setError, refreshLibrary, refreshSidebar]);
+  }, [dispatchToast, notifyError, refreshLibrary, refreshSidebar]);
 
   const showShortcutError = useCallback((message: string, registered = false) => {
     setShortcutRegistered(registered);
@@ -739,14 +751,14 @@ export function App() {
       if (disposed) stopListening();
       else unlisten = stopListening;
     }).catch((dragError) => {
-      setError(`无法启用文件拖拽：${getErrorMessage(dragError)}`);
+      notifyError(`无法启用文件拖拽：${getErrorMessage(dragError)}`);
     });
 
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, [handleDroppedPaths, isImporting, setError]);
+  }, [handleDroppedPaths, isImporting, notifyError]);
 
   useEffect(() => {
     function handleWindowKeyDown(event: globalThis.KeyboardEvent) {
@@ -813,7 +825,7 @@ export function App() {
         mergeFavoriteFlags(items);
       } catch (e) {
         if (!disposed && seq === viewSeqRef.current) {
-          setError(`读取视图失败：${getErrorMessage(e)}`);
+          notifyError(`读取视图失败：${getErrorMessage(e)}`);
         }
       } finally {
         if (!disposed && seq === viewSeqRef.current) setViewLoading(false);
@@ -850,11 +862,11 @@ export function App() {
       setHasMore(nextOffsetRef.current < result.total);
       mergeFavoriteFlags(result.items);
     } catch (e) {
-      setError(`加载更多失败：${getErrorMessage(e)}`);
+      notifyError(`加载更多失败：${getErrorMessage(e)}`);
     } finally {
       loadingMoreRef.current = false;
     }
-  }, [currentView, debouncedQuery, sortOption, currentEmojis, hasMore, setError, mergeFavoriteFlags]);
+  }, [currentView, debouncedQuery, sortOption, currentEmojis, hasMore, notifyError, mergeFavoriteFlags]);
 
   const openQuickSearch = useCallback(async () => {
     try {
@@ -983,9 +995,9 @@ export function App() {
         curr.map((e) => (ids.includes(e.id) ? { ...e, isFavorite: !next } : e)),
       );
       setFavoriteIds((curr) => syncFavoriteIds(curr, !next));
-      setError(`更新收藏失败：${getErrorMessage(e)}`);
+      notifyError(`更新收藏失败：${getErrorMessage(e)}`);
     }
-  }, [setError, refreshLibrary]);
+  }, [notifyError, refreshLibrary]);
 
   // 投影缓存：同一 IndexedEmoji 引用 → 同一 IndexedImage 对象。翻页追加/乐观收藏
   // 更新时未变化项保持对象身份，memo(EmojiGridItem) 只重渲染真正变化的卡片。
@@ -1138,7 +1150,7 @@ export function App() {
         { intent: "info" },
       );
     } catch (e) {
-      setError(`移入回收站失败：${getErrorMessage(e)}`);
+      notifyError(`移入回收站失败：${getErrorMessage(e)}`);
     }
   }
 
@@ -1162,7 +1174,7 @@ export function App() {
         { intent: "success" },
       );
     } catch (e) {
-      setError(`恢复失败：${getErrorMessage(e)}`);
+      notifyError(`恢复失败：${getErrorMessage(e)}`);
     }
   }
 
@@ -1202,7 +1214,7 @@ export function App() {
         { intent: "info" },
       );
     } catch (e) {
-      setError(`彻底删除失败：${getErrorMessage(e)}`);
+      notifyError(`彻底删除失败：${getErrorMessage(e)}`);
     }
   }
 
@@ -1226,7 +1238,7 @@ export function App() {
         { intent: "success" },
       );
     } catch (e) {
-      setError(`从分组移除失败：${getErrorMessage(e)}`);
+      notifyError(`从分组移除失败：${getErrorMessage(e)}`);
     }
   }
 
@@ -1272,16 +1284,16 @@ export function App() {
         { intent: "success" },
       );
     } catch (e) {
-      setError(`复制失败：${getErrorMessage(e)}`);
+      notifyError(`复制失败：${getErrorMessage(e)}`);
     }
-  }, [dispatchToast, setError]);
+  }, [dispatchToast, notifyError]);
 
   async function handleShowInExplorer(items: IndexedImage[]) {
     if (items.length !== 1) return;
     try {
       await showInExplorer(items[0].path);
     } catch (e) {
-      setError(`查看文件位置失败：${getErrorMessage(e)}`);
+      notifyError(`查看文件位置失败：${getErrorMessage(e)}`);
     }
   }
 
@@ -1290,7 +1302,8 @@ export function App() {
     // 模态弹窗打开时豁免，避免在弹窗内误触发批量操作。
     const dialogOpen =
       groupDialogOpen || moveToGroupState !== null || tagPickerState !== null || settingsOpen ||
-      iconPickerGroup !== null || previewItem !== null;
+      iconPickerGroup !== null || previewItem !== null || confirmState !== null ||
+      renameGroupState !== null;
     if (dialogOpen) return;
 
     const el = event.target instanceof HTMLElement ? event.target : null;
@@ -1373,7 +1386,7 @@ export function App() {
                   { intent: "success" },
                 );
               } catch (e) {
-                setError(`删除失败：${getErrorMessage(e)}`);
+                notifyError(`删除失败：${getErrorMessage(e)}`);
               }
             }}
             onTogglePinGroup={async (id, pinned) => {
@@ -1381,7 +1394,7 @@ export function App() {
                 await setGroupPinned(id, pinned);
                 await refreshSidebar();
               } catch (e) {
-                setError(`置顶操作失败：${getErrorMessage(e)}`);
+                notifyError(`置顶操作失败：${getErrorMessage(e)}`);
               }
             }}
             onToggleGroupsCollapsed={() => setSidebarGroupsCollapsed(!sidebarGroupsCollapsed)}
@@ -1408,9 +1421,7 @@ export function App() {
           onToggleSelectAll={handleToggleSelectAll}
           dragActive={dragActive}
           importing={isImporting}
-          error={error}
           tagsByPath={tagsByPath}
-          onClearError={() => setError("")}
           onClearSearch={() => setSearchQuery("")}
           onImportImages={() => void handleImportImages()}
           onImportFolder={() => void handleImportFolder()}

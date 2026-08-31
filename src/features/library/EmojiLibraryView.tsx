@@ -16,7 +16,6 @@ import { EmojiGrid } from "./EmojiGrid";
 import type { EmojiItemMenuMode } from "./EmojiItemMenu";
 import { EmptyLibraryState } from "./EmptyLibraryState";
 import { LibraryHeader } from "./LibraryHeader";
-import { LibraryMessage } from "./LibraryMessage";
 import type { SelectionMode } from "./useMultiSelection";
 
 interface EmojiLibraryViewProps {
@@ -43,8 +42,6 @@ interface EmojiLibraryViewProps {
   /** 正在向窗口拖文件：只在图片区上方显示放置提示，不盖 header / 状态条。 */
   dragActive: boolean;
   importing: boolean;
-  error: string;
-  onClearError: () => void;
   onClearSearch: () => void;
   onImportImages: () => void;
   onImportFolder: () => void;
@@ -191,8 +188,6 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     onToggleSelectAll,
     dragActive,
     importing,
-    error,
-    onClearError,
     onClearSearch,
     onImportImages,
     onImportFolder,
@@ -307,7 +302,6 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
             <div className={styles.progressLabel}>正在导入表情…</div>
           </>
         )}
-        {error && <LibraryMessage message={error} onDismiss={onClearError} />}
       </div>
 
       <div className={styles.contentWrap}>
