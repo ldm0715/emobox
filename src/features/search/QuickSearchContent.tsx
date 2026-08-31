@@ -10,6 +10,7 @@ import { Image20Regular, Search20Regular } from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef } from "react";
 import type { IndexedImage } from "../../types";
 import { useThumbnail } from "../library/useThumbnail";
+import { useGifPreview } from "../library/useGifPreview";
 import { useSearchKeyboard } from "./useSearchKeyboard";
 
 interface QuickSearchContentProps {
@@ -146,6 +147,8 @@ function QuickSearchItem({
 }) {
   const styles = useStyles();
   const { source } = useThumbnail(item.id, 128);
+  // 选中态 = 鼠标 hover（onMouseEnter→onPoint）+ 键盘高亮，一套状态覆盖两种输入。
+  const { gifSrc, handleGifError } = useGifPreview(item, selected);
 
   return (
     <button
@@ -162,7 +165,12 @@ function QuickSearchItem({
     >
       <span className={styles.frame}>
         {source ? (
-          <img className={styles.image} src={source} alt={item.name} />
+          <img
+            className={styles.image}
+            src={gifSrc ?? source}
+            alt={item.name}
+            onError={gifSrc ? handleGifError : undefined}
+          />
         ) : (
           <Image20Regular className={styles.placeholder} />
         )}

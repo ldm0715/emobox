@@ -15,10 +15,11 @@ import {
   Star20Filled,
   Star20Regular,
 } from "@fluentui/react-icons";
-import { type KeyboardEvent, type MouseEvent } from "react";
+import { type KeyboardEvent, type MouseEvent, useState } from "react";
 import type { IndexedImage } from "../../types";
 import type { SelectionMode } from "./useMultiSelection";
 import { useThumbnail } from "./useThumbnail";
+import { isGifExtension, useGifPreview } from "./useGifPreview";
 
 interface EmojiGridItemProps {
   item: IndexedImage;
@@ -191,6 +192,8 @@ export function EmojiGridItem({
 }: EmojiGridItemProps) {
   const styles = useStyles();
   const { source, failed } = useThumbnail(item.id, thumbnailSize);
+  const [hovered, setHovered] = useState(false);
+  const { gifSrc, handleGifError } = useGifPreview(item, hovered);
 
   function handleClick(event: MouseEvent<HTMLDivElement>) {
     event.stopPropagation();
@@ -217,10 +220,18 @@ export function EmojiGridItem({
       onDoubleClick={() => onItemSelect(item, "replace")}
       onKeyDown={handleKeyDown}
       onContextMenu={(event) => onOpenContextMenu(event, item)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <div className={styles.frame}>
         {source ? (
-          <img className={styles.image} src={source} alt={item.name} loading="lazy" />
+          <img
+            className={styles.image}
+            src={gifSrc ?? source}
+            alt={item.name}
+            loading="lazy"
+            onError={gifSrc ? handleGifError : undefined}
+          />
         ) : (
           <div className={styles.placeholder}>
             <Image20Regular />
@@ -229,7 +240,7 @@ export function EmojiGridItem({
         )}
       </div>
 
-      {item.extension === "gif" && !multiSelectMode && <Badge className={styles.gifBadge} size="small" appearance="filled">GIF</Badge>}
+      {isGifExtension(item.extension) && !multiSelectMode && <Badge className={styles.gifBadge} size="small" appearance="filled">GIF</Badge>}
 
       {multiSelectMode && (
         <span

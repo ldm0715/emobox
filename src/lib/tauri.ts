@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
   ClipboardCopyOutcome,
   FolderImportSummary,
@@ -37,6 +37,11 @@ export function importManagedPaths(
 
 export function loadThumbnail(emojiId: number, maxSize = 240): Promise<string> {
   return invoke<string>("load_thumbnail", { emojiId, maxSize });
+}
+
+/** 受管文件 → asset 协议 URL（tauri.conf.json assetProtocol scope 内可读）。 */
+export function emojiAssetUrl(path: string): string {
+  return convertFileSrc(path);
 }
 
 export function getStorageInfo(): Promise<StorageInfo> {
@@ -86,9 +91,11 @@ export type ClipboardCollectOutcome =
 
 export function collectImageFromClipboard(
   skipPerceptualDedup = false,
+  downloadWebGif = false,
 ): Promise<ClipboardCollectOutcome> {
   return invoke<ClipboardCollectOutcome>("collect_image_from_clipboard", {
     skipPerceptualDedup,
+    downloadWebGif,
   });
 }
 
