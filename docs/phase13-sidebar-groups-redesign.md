@@ -165,6 +165,7 @@ pub fn set_group_pinned(
 
 ## 六、已知边界 / 风险
 
+- **Fluent `Divider` 默认 `flex-grow: 1`（Phase 13 后实测发现的坑）**：`@fluentui/react-divider@9.7.4` 的 root 样式自带 `flex-grow: 1`。侧栏是 flex column，本设计「分组列表 `flex:1` 独占剩余空间」会因此失效——每个 `<Divider>` 都参与平分剩余高度（分隔线被撑到约 95px、细线因 `align-items:center` 居中在空壳里，分组列表只分到约 1/4 空间，只能显示三四个分组）。修法：`LibrarySidebar.tsx` 的 `divider` 样式显式 `flexGrow: 0` + `flexShrink: 0`（Griffel 中用户类在组件默认类之后合并，可覆盖）。审计结论：`TagPickerDialog` / `MoveToGroupDialog` 里的 Divider 处于内容自然高度的 flex column（对话框只有 `maxHeight`），没有可吸收的富余空间，无需处理。**今后任何 flex column 里放 Fluent `Divider` 都要先想这件事。**
 - 折叠态分组多时，滚动条占位会使图标行右侧窄 6px；`overflow-x:hidden` + 图标居中兜底，无裁剪。若日后想要真正的 overlay 滚动条，需放弃自绘 `::-webkit-scrollbar`（那时 Chromium 用系统 overlay 滚动条，不占位）。
 - 导航行 28px 属紧凑档，点击目标偏小；用户明确要求极限压缩。若觉挤可回 30px，代价是少看一两个分组。
 - 分组少时，「我的分组」区的 `flex:1` 空白是**用户接受的"拉长"效果**，不要再去掉 `flex:1`（否则回到「撑不起来」）。

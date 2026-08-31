@@ -135,6 +135,9 @@ const useStyles = makeStyles({
     width: "100%",
     marginTop: tokens.spacingVerticalS,
     marginBottom: tokens.spacingVerticalS,
+    // Fluent Divider 默认 flex-grow:1，在 flex column 中会撑高分隔线、挤占分组列表空间
+    flexGrow: 0,
+    flexShrink: 0,
   },
   groupHeader: {
     width: "100%",
