@@ -39,6 +39,11 @@ interface PersistedSettings {
   // the Rust side (SelectionSearchState) so the capture happens before the
   // overlay window even exists in the frontend.
   selectionSearch: boolean;
+  // Phase 16: download the original GIF from the web URL found on the
+  // clipboard (Chrome/Edge copies carry first-frame bitmap + URL only).
+  // Off = static first-frame import with a hint toast. localStorage is the
+  // source of truth; the value is passed per-collect-call to the Rust command.
+  downloadWebGif: boolean;
 }
 
 interface SettingsContextValue extends PersistedSettings {
@@ -50,6 +55,7 @@ interface SettingsContextValue extends PersistedSettings {
   setClipboardCollectShortcut: (shortcut: string) => void;
   setAutoPaste: (enabled: boolean) => void;
   setSelectionSearch: (enabled: boolean) => void;
+  setDownloadWebGif: (enabled: boolean) => void;
 }
 
 const STORAGE_KEY = "emobox.settings";
@@ -64,6 +70,7 @@ const defaultSettings: PersistedSettings = {
   clipboardCollectShortcut: DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
   autoPaste: true,
   selectionSearch: true,
+  downloadWebGif: false,
 };
 
 const brand: BrandVariants = {
@@ -128,6 +135,8 @@ function readSettings(): PersistedSettings {
       autoPaste: typeof parsed.autoPaste === "boolean" ? parsed.autoPaste : defaultSettings.autoPaste,
       selectionSearch:
         typeof parsed.selectionSearch === "boolean" ? parsed.selectionSearch : defaultSettings.selectionSearch,
+      downloadWebGif:
+        typeof parsed.downloadWebGif === "boolean" ? parsed.downloadWebGif : defaultSettings.downloadWebGif,
     };
   } catch {
     return defaultSettings;
@@ -197,6 +206,10 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setSelectionSearch: (selectionSearch) => setSettings((current) => ({
         ...current,
         selectionSearch,
+      })),
+      setDownloadWebGif: (downloadWebGif) => setSettings((current) => ({
+        ...current,
+        downloadWebGif,
       })),
     }),
     [resolvedTheme, settings],

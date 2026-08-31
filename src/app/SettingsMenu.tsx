@@ -200,6 +200,8 @@ export function SettingsDialog({
     setAutoPaste,
     selectionSearch,
     setSelectionSearch,
+    downloadWebGif,
+    setDownloadWebGif,
   } = useAppSettings();
   const [section, setSection] = useState<SettingsSection>("general");
 
@@ -277,6 +279,21 @@ export function SettingsDialog({
               checked={selectionSearch}
               onChange={(_, data) => setSelectionSearch(data.checked)}
               aria-label="打开浮层时用选中文字自动搜索"
+            />
+          </div>
+          <div className={styles.settingRow}>
+            <div className={styles.settingText}>
+              <div className={styles.settingLabel}>联网下载网页 GIF</div>
+              <div className={styles.settingDescription}>
+                从 Chrome/Edge 等浏览器复制的动图，剪贴板上只有静态首帧和网址。开启后会联网下载原始 GIF
+                保留动画（仅请求剪贴板上的 .gif 链接，超时 15 秒、上限 20 MB）；关闭时仅保存静态首帧并提醒。QQ/Firefox
+                复制不受影响（本地数据，无需联网）。
+              </div>
+            </div>
+            <Switch
+              checked={downloadWebGif}
+              onChange={(_, data) => setDownloadWebGif(data.checked)}
+              aria-label="联网下载网页 GIF"
             />
           </div>
         </div>

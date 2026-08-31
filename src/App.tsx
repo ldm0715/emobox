@@ -113,6 +113,7 @@ export function App() {
     setQuickSearchShortcut,
     clipboardCollectShortcut,
     setClipboardCollectShortcut,
+    downloadWebGif,
   } = useAppSettings();
   const {
     isImporting,
@@ -143,6 +144,10 @@ export function App() {
   const clearSelectionRef = useRef<() => void>(() => {});
   // 键盘快捷键的 latest-handler 容器：keydown effect deps 保持 []，避免闭包过期。
   const keyShortcutRef = useRef<(event: globalThis.KeyboardEvent) => void>(() => {});
+  // 剪贴板收藏的 latest-handler 容器：事件监听 effect 不随设置变化重注册，
+  // 但 handleCollectFromClipboard 依赖 downloadWebGif 等设置——必须经 ref 转发，
+  // 否则监听器捕获首次挂载时的旧闭包（Phase 16 实测踩过：开关改了不生效）。
+  const collectFromClipboardRef = useRef<() => void>(() => {});
   // GroupDialog 状态
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [groupDialogBusy, setGroupDialogBusy] = useState(false);
@@ -373,7 +378,7 @@ export function App() {
     });
 
     const collectListener = listen("clipboard-collect-requested", () => {
-      void handleCollectFromClipboard();
+      void collectFromClipboardRef.current();
     }).then((stopListening) => {
       if (disposed) stopListening();
       else unlisten = stopListening;
@@ -495,7 +500,8 @@ export function App() {
     await refreshSidebar();
   }, [refreshLibrary, refreshSidebar]);
 
-  const showManagedImportResult = useCallback((summary: ManagedImportSummary) => {
+  const showManagedImportResult = useCallback(
+    (summary: ManagedImportSummary, note?: string) => {
     const intent = summary.failedCount > 0
       ? summary.successCount > 0 ? "warning" : "error"
       : "success";
@@ -528,7 +534,7 @@ export function App() {
           导入完成：成功 {summary.successCount} 张
         </ToastTitle>
         <ToastBody>
-          重复跳过 {totalDuplicates} 张
+          {note ? `${note} ` : ""}重复跳过 {totalDuplicates} 张
           {summary.perceptualDuplicateCount > 0
             ? `（其中感知相似 ${summary.perceptualDuplicateCount} 张）`
             : ""}
@@ -584,7 +590,7 @@ export function App() {
   }, [importPaths, prepareAfterImport, showManagedImportResult]);
 
   const handleCollectFromClipboard = useCallback(async () => {
-    const outcome = await collectFromClipboard();
+    const outcome = await collectFromClipboard(false, downloadWebGif);
     if (!outcome) return;
     switch (outcome.kind) {
       case "empty":
@@ -598,7 +604,8 @@ export function App() {
         return;
       case "imported":
         await prepareAfterImport();
-        showManagedImportResult(outcome.summary);
+        // message 携带剪贴板来源说明（GIF 动画保留 / 网页动图提醒等），拼进导入 toast。
+        showManagedImportResult(outcome.summary, outcome.message);
         return;
       case "duplicate":
         await prepareAfterImport();
@@ -629,7 +636,12 @@ export function App() {
         );
         return;
     }
-  }, [collectFromClipboard, dispatchToast, prepareAfterImport, showManagedImportResult]);
+  }, [collectFromClipboard, dispatchToast, downloadWebGif, prepareAfterImport, showManagedImportResult]);
+
+  // 事件监听 effect（deps 不含本 handler）经 ref 拿到最新闭包。
+  collectFromClipboardRef.current = () => {
+    void handleCollectFromClipboard();
+  };
 
   useEffect(() => {
     let disposed = false;

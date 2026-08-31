@@ -89,15 +89,18 @@ export function useLibraryImport() {
     }
   }, [importPaths]);
 
-  const collectFromClipboard = useCallback(async (skipPerceptualDedup = false) => {
-    setError("");
-    try {
-      return await collectImageFromClipboard(skipPerceptualDedup);
-    } catch (invokeError) {
-      setError(toUserMessage(invokeError));
-      return null;
-    }
-  }, []);
+  const collectFromClipboard = useCallback(
+    async (skipPerceptualDedup = false, downloadWebGif = false) => {
+      setError("");
+      try {
+        return await collectImageFromClipboard(skipPerceptualDedup, downloadWebGif);
+      } catch (invokeError) {
+        setError(toUserMessage(invokeError));
+        return null;
+      }
+    },
+    [],
+  );
 
   return {
     isImporting,

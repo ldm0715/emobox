@@ -77,6 +77,7 @@ npx vitest run                                 # 前端单测
 
 ## 已知限制
 
-- GIF / APNG / 动画 WebP：缩略图与复制都只取静态首帧，不保留动画（成功复制时 Toast 会明确提示）。
+- GIF：素材库悬停/搜索浮层选中时播放原始动画；Windows 上复制会把 GIF 文件（CF_HDROP）连同首帧位图、`image/gif` 字节一起放上剪贴板——微信/QQ 等按文件粘贴的应用得到动图，其他应用得到静态首帧；剪贴板收藏在剪贴板含 GIF 原始数据时（Firefox 的 `image/gif` 字节、QQ 复制图片/资源管理器复制的文件路径）保留动画；从 Chrome/Edge 复制的网页动图可开启「联网下载网页 GIF」设置下载原始动图（默认关闭，仅保存静态首帧并提醒）。
+- APNG / 动画 WebP：缩略图与复制仍只取静态首帧。
 - Fluent UI bundle 会触发 Vite 的 500 kB chunk warning，不影响构建。
 - 完整手动验收清单见 `MANUAL_ACCEPTANCE.md`；设计决策与各阶段笔记见 `docs/`。
