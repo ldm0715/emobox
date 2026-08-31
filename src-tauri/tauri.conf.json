@@ -20,8 +20,7 @@
         "minHeight": 600,
         "center": true,
         "resizable": true,
-        "fullscreen": false,
-        "theme": "Light"
+        "fullscreen": false
       },
       {
         "label": "quick-search",
@@ -40,8 +39,7 @@
         "skipTaskbar": true,
         "visible": false,
         "focus": true,
-        "shadow": true,
-        "theme": "Light"
+        "shadow": true
       }
     ],
     "security": {

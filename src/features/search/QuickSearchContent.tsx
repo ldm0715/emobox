@@ -2,13 +2,13 @@ import {
   SearchBox,
   makeStyles,
   mergeClasses,
-  shorthands,
   tokens,
   type SearchBoxChangeEvent,
 } from "@fluentui/react-components";
 import { Image20Regular, Search20Regular } from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef } from "react";
 import type { IndexedImage } from "../../types";
+import { cardBorderResetStyle, cardSelectedRingStyle } from "../library/cardStyles";
 import { useThumbnail } from "../library/useThumbnail";
 import { useGifPreview } from "../library/useGifPreview";
 import { useSearchKeyboard } from "./useSearchKeyboard";
@@ -55,7 +55,7 @@ const useStyles = makeStyles({
     overflow: "hidden",
     color: tokens.colorNeutralForeground2,
     backgroundColor: tokens.colorNeutralBackground3,
-    ...shorthands.border(tokens.strokeWidthThin, "solid", "transparent"),
+    ...cardBorderResetStyle,
     borderRadius: tokens.borderRadiusMedium,
     cursor: "pointer",
     ":hover": {
@@ -72,8 +72,7 @@ const useStyles = makeStyles({
   selected: {
     color: tokens.colorNeutralForeground1,
     backgroundColor: tokens.colorBrandBackground2,
-    ...shorthands.borderColor(tokens.colorBrandStroke1),
-    boxShadow: `0 0 0 ${tokens.strokeWidthThin} ${tokens.colorBrandStroke1}`,
+    ...cardSelectedRingStyle,
   },
   frame: {
     aspectRatio: "1 / 1",

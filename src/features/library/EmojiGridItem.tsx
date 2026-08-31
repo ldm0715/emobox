@@ -19,6 +19,7 @@ import {
 } from "@fluentui/react-icons";
 import { memo, type KeyboardEvent, type MouseEvent, useState } from "react";
 import type { GridDensity, IndexedImage } from "../../types";
+import { cardBorderResetStyle, cardSelectedRingStyle } from "./cardStyles";
 import type { EmojiItemMenuMode } from "./EmojiItemMenu";
 import type { SelectionMode } from "./useMultiSelection";
 import { useClickIntent } from "./useClickIntent";
@@ -52,7 +53,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
-    backgroundColor: tokens.colorNeutralBackground3, ...shorthands.border(tokens.strokeWidthThin, "solid", "transparent"),
+    backgroundColor: tokens.colorNeutralBackground3, ...cardBorderResetStyle,
     borderRadius: tokens.borderRadiusLarge,
     cursor: "default",
     transitionProperty: "background-color, border-color, box-shadow",
@@ -69,10 +70,7 @@ const useStyles = makeStyles({
       outlineOffset: "2px",
     },
   },
-  selected: {
-    ...shorthands.borderColor(tokens.colorBrandStroke1),
-    boxShadow: `0 0 0 ${tokens.strokeWidthThin} ${tokens.colorBrandStroke1}`,
-  },
+  selected: cardSelectedRingStyle,
   frame: {
     position: "relative",
     aspectRatio: "1 / 1",

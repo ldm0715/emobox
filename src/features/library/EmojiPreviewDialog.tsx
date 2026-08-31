@@ -1,4 +1,5 @@
 import {
+  Badge,
   Button,
   Dialog,
   DialogActions,
@@ -113,15 +114,13 @@ const useStyles = makeStyles({
     minWidth: 0,
   },
   chip: {
+    // 覆盖 Badge 的 inline-flex 为 block，文本截断才生效（同 EmojiGridItem.tagBadge）。
+    display: "block",
+    minWidth: 0,
     maxWidth: "180px",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    color: tokens.colorNeutralForeground2,
-    backgroundColor: tokens.colorNeutralBackground3,
-    fontSize: tokens.fontSizeBase100,
-    borderRadius: tokens.borderRadiusMedium,
-    padding: `0 ${tokens.spacingHorizontalXS}`,
   },
   empty: {
     color: tokens.colorNeutralForeground4,
@@ -193,7 +192,7 @@ export function EmojiPreviewDialog({
                 {groupNames.length > 0 ? (
                   <div className={styles.chips}>
                     {groupNames.map((name) => (
-                      <span key={name} className={styles.chip} title={name}>{name}</span>
+                      <Badge key={name} size="small" appearance="outline" className={styles.chip} title={name}>{name}</Badge>
                     ))}
                   </div>
                 ) : (
@@ -205,7 +204,7 @@ export function EmojiPreviewDialog({
                 {tagNames.length > 0 ? (
                   <div className={styles.chips}>
                     {tagNames.map((name) => (
-                      <span key={name} className={styles.chip} title={name}>{name}</span>
+                      <Badge key={name} size="small" appearance="outline" className={styles.chip} title={name}>{name}</Badge>
                     ))}
                   </div>
                 ) : (

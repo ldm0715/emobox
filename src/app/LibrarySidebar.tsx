@@ -34,8 +34,10 @@ import {
 } from "@fluentui/react-icons";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { formatShortcutLabel } from "../config/shortcuts";
+import { ConfirmDialog } from "../features/library/ConfirmDialog";
 import { getGroupIcon } from "../features/library/groupIcons";
 import type { LibraryGroup, LibraryView } from "../types";
+import { navItemBaseStyle, navItemSelectedStyle } from "./navItemStyles";
 
 interface LibrarySidebarProps {
   collapsed: boolean;
@@ -52,7 +54,8 @@ interface LibrarySidebarProps {
   onOpenQuickSearch: () => void;
   onOpenSettings: () => void;
   onCreateGroup: () => void;
-  onRenameGroup: (id: number, name: string) => void;
+  /** 请求打开重命名弹窗（App 侧复用 GroupDialog 的 rename 模式）。 */
+  onRenameGroup: (group: LibraryGroup) => void;
   onDeleteGroup: (id: number) => void;
   onTogglePinGroup: (id: number, pinned: boolean) => void;
   onToggleGroupsCollapsed: () => void;
@@ -91,28 +94,12 @@ const useStyles = makeStyles({
     gap: tokens.spacingVerticalS,
   },
   navItem: {
-    position: "relative",
-    width: "100%",
+    // 共享导航行范式（见 navItemStyles.ts），这里只定义侧栏布局差异。
+    ...navItemBaseStyle,
     minHeight: "28px",
-    display: "grid",
     gridTemplateColumns: "24px minmax(0, 1fr) auto auto",
-    alignItems: "center",
     columnGap: tokens.spacingHorizontalS,
     padding: `0 ${tokens.spacingHorizontalM}`,
-    color: tokens.colorNeutralForeground2,
-    backgroundColor: "transparent",
-    border: "none",
-    borderRadius: tokens.borderRadiusMedium,
-    cursor: "pointer",
-    textAlign: "left",
-    ":hover": {
-      color: tokens.colorNeutralForeground1,
-      backgroundColor: tokens.colorSubtleBackgroundHover,
-    },
-    ":focus-visible": {
-      outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`,
-      outlineOffset: "-2px",
-    },
   },
   navItemCollapsed: {
     width: "44px",
@@ -120,24 +107,7 @@ const useStyles = makeStyles({
     justifyItems: "center",
     padding: 0,
   },
-  navItemSelected: {
-    color: tokens.colorNeutralForeground1,
-    fontWeight: tokens.fontWeightSemibold,
-    backgroundColor: tokens.colorSubtleBackgroundSelected,
-    // 选中态图标染品牌色（与左侧指示条同色系）；文字保持中性前景色。
-    "& > svg": {
-      color: tokens.colorBrandForeground1,
-    },
-    "::before": {
-      position: "absolute",
-      left: 0,
-      width: "3px",
-      height: "18px",
-      borderRadius: tokens.borderRadiusCircular,
-      backgroundColor: tokens.colorBrandStroke1,
-      content: '""',
-    },
-  },
+  navItemSelected: navItemSelectedStyle,
   label: {
     minWidth: 0,
     overflow: "hidden",
@@ -203,6 +173,8 @@ const useStyles = makeStyles({
     minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden",
+    // 侧栏专属细滚动条（其余滚动区走原生默认 + colorScheme 适配）。
+    // 尺寸字面量无对应 token；thumb 颜色走 token 随主题切换。
     "::-webkit-scrollbar": {
       width: "6px",
     },
@@ -211,7 +183,7 @@ const useStyles = makeStyles({
     },
     "::-webkit-scrollbar-thumb": {
       backgroundColor: tokens.colorNeutralStroke3,
-      borderRadius: "3px",
+      borderRadius: "3px", // 半径 = 宽度一半，固定 6px 滚动条的圆柱端
     },
   },
   groupSearch: {
@@ -310,6 +282,8 @@ export function LibrarySidebar({
   const styles = useStyles();
   const [groupSearch, setGroupSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  // 删除分组确认弹窗（替代原生 window.confirm——原生框不跟随应用主题）。
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<LibraryGroup | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const shortcutLabel = formatShortcutLabel(quickSearchShortcut);
   const shortcutHint = shortcutRegistered
@@ -431,7 +405,7 @@ export function LibrarySidebar({
                       <GroupIcon />
                       {!collapsed && (
                         <span className={styles.pinLabel}>
-                          {group.isPinned && <PinRegular fontSize={12} />}
+                          {group.isPinned && <PinRegular fontSize={tokens.fontSizeBase200} />}
                           <span className={styles.label}>{group.name}</span>
                         </span>
                       )}
@@ -467,22 +441,13 @@ export function LibrarySidebar({
                                 </MenuItem>
                                 <MenuItem
                                   icon={<Rename20Regular />}
-                                  onClick={() => {
-                                    const newName = window.prompt("重命名分组", group.name);
-                                    if (newName && newName.trim() && newName !== group.name) {
-                                      onRenameGroup(group.id, newName.trim());
-                                    }
-                                  }}
+                                  onClick={() => onRenameGroup(group)}
                                 >
                                   重命名
                                 </MenuItem>
                                 <MenuItem
                                   icon={<Delete24Regular />}
-                                  onClick={() => {
-                                    if (window.confirm(`确定删除分组「${group.name}」？\n\n关联的表情不会被删除。`)) {
-                                      onDeleteGroup(group.id);
-                                    }
-                                  }}
+                                  onClick={() => setConfirmDeleteGroup(group)}
                                 >
                                   删除
                                 </MenuItem>
@@ -580,6 +545,26 @@ export function LibrarySidebar({
           </button>
         </Tooltip>
       </div>
+
+      <ConfirmDialog
+        open={confirmDeleteGroup !== null}
+        title="删除分组"
+        message={
+          confirmDeleteGroup
+            ? `确定删除分组「${confirmDeleteGroup.name}」？\n\n关联的表情不会被删除。`
+            : ""
+        }
+        confirmText="删除"
+        destructive
+        onOpenChange={(open) => {
+          if (!open) setConfirmDeleteGroup(null);
+        }}
+        onConfirm={() => {
+          const group = confirmDeleteGroup;
+          setConfirmDeleteGroup(null);
+          if (group) onDeleteGroup(group.id);
+        }}
+      />
     </aside>
   );
 }

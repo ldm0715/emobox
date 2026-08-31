@@ -16,6 +16,7 @@ import { LibrarySidebar } from "./app/LibrarySidebar";
 import { SettingsDialog } from "./app/SettingsMenu";
 import { useAppSettings } from "./components/ThemeProvider";
 import { useLibraryImport } from "./features/import/useLibraryImport";
+import { ConfirmDialog } from "./features/library/ConfirmDialog";
 import { EmojiLibraryView } from "./features/library/EmojiLibraryView";
 import { EmojiPreviewDialog } from "./features/library/EmojiPreviewDialog";
 import { GroupDialog } from "./features/library/GroupDialog";
@@ -73,6 +74,15 @@ const viewTitles: Record<string, string> = {
   trash: "回收站",
   ungrouped: "未分组",
 };
+
+// ConfirmDialog 待确认操作（批量移入回收站 / 彻底删除等，替代原生 window.confirm——原生框不跟随应用主题）。
+interface PendingConfirm {
+  title: string;
+  message: string;
+  confirmText: string;
+  destructive?: boolean;
+  onConfirm: () => void;
+}
 
 /** 主窗口分页每页条数（Phase 17）。网格本身另有 72/批的渐进渲染（EmojiGrid）。 */
 const PAGE_SIZE = 200;
@@ -200,6 +210,11 @@ export function App() {
     initiallySelectedTagIds: number[];
   } | null>(null);
   const [tagPickerBusy, setTagPickerBusy] = useState(false);
+  // 重命名分组弹窗（复用 GroupDialog 的 rename 模式，替代原生 window.prompt）
+  const [renameGroupState, setRenameGroupState] = useState<LibraryGroup | null>(null);
+  const [renameGroupBusy, setRenameGroupBusy] = useState(false);
+  // 待确认操作（ConfirmDialog）
+  const [confirmState, setConfirmState] = useState<PendingConfirm | null>(null);
 
   const [currentView, setCurrentView] = useState<LibraryView>(defaultView);
   const [viewLoading, setViewLoading] = useState(false);
@@ -1092,7 +1107,15 @@ export function App() {
     const ids = items.map((item) => item.id);
     if (ids.length === 0) return;
     const label = ids.length === 1 ? `「${items[0].name}」` : `这 ${ids.length} 个表情`;
-    if (!window.confirm(`将${label}移入回收站？\n可以从侧栏「回收站」恢复。`)) return;
+    setConfirmState({
+      title: "移入回收站",
+      message: `将${label}移入回收站？\n可以从侧栏「回收站」恢复。`,
+      confirmText: "移入回收站",
+      onConfirm: () => void performDelete(ids),
+    });
+  }
+
+  async function performDelete(ids: number[]) {
     try {
       await softDeleteToTrash(ids);
       const idSet = new Set(ids);
@@ -1147,7 +1170,16 @@ export function App() {
     const ids = items.map((item) => item.id);
     if (ids.length === 0) return;
     const label = ids.length === 1 ? `「${items[0].name}」` : `这 ${ids.length} 个表情`;
-    if (!window.confirm(`确定要彻底删除${label}？\n此操作不可撤销。`)) return;
+    setConfirmState({
+      title: "彻底删除",
+      message: `确定要彻底删除${label}？\n此操作不可撤销。`,
+      confirmText: "彻底删除",
+      destructive: true,
+      onConfirm: () => void performPermanentlyDelete(ids),
+    });
+  }
+
+  async function performPermanentlyDelete(ids: number[]) {
     try {
       const { permanentlyDeleteEmojis } = await import("./lib/tauri");
       await permanentlyDeleteEmojis(ids);
@@ -1326,20 +1358,7 @@ export function App() {
             onOpenQuickSearch={() => void openQuickSearch()}
             onOpenSettings={() => setSettingsOpen(true)}
             onCreateGroup={() => setGroupDialogOpen(true)}
-            onRenameGroup={async (id, name) => {
-              try {
-                await renameGroup(id, name);
-                await refreshSidebar();
-                dispatchToast(
-                  <Toast>
-                    <ToastTitle>分组已重命名</ToastTitle>
-                  </Toast>,
-                  { intent: "success" },
-                );
-              } catch (e) {
-                setError(`重命名失败：${getErrorMessage(e)}`);
-              }
-            }}
+            onRenameGroup={(group) => setRenameGroupState(group)}
             onDeleteGroup={async (id) => {
               try {
                 await deleteGroup(id);
@@ -1489,6 +1508,51 @@ export function App() {
           }}
         />
       )}
+
+      {renameGroupState && (
+        <GroupDialog
+          open
+          mode="rename"
+          initialName={renameGroupState.name}
+          busy={renameGroupBusy}
+          onOpenChange={(open) => {
+            if (!open) setRenameGroupState(null);
+          }}
+          onSubmit={async (name) => {
+            setRenameGroupBusy(true);
+            try {
+              await renameGroup(renameGroupState.id, name);
+              await refreshSidebar();
+              setRenameGroupState(null);
+              dispatchToast(
+                <Toast>
+                  <ToastTitle>分组已重命名</ToastTitle>
+                </Toast>,
+                { intent: "success" },
+              );
+            } finally {
+              // 失败时错误由 GroupDialog 的 handleSubmit 捕获并内联显示。
+              setRenameGroupBusy(false);
+            }
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmState !== null}
+        title={confirmState?.title ?? ""}
+        message={confirmState?.message ?? ""}
+        confirmText={confirmState?.confirmText}
+        destructive={confirmState?.destructive}
+        onOpenChange={(open) => {
+          if (!open) setConfirmState(null);
+        }}
+        onConfirm={() => {
+          const pending = confirmState;
+          setConfirmState(null);
+          pending?.onConfirm();
+        }}
+      />
 
       {moveToGroupState && (
         <MoveToGroupDialog

@@ -15,70 +15,24 @@ import {
   Spinner,
   makeStyles,
   tokens,
+  type GriffelStyle,
 } from "@fluentui/react-components";
 import { Add20Regular, Checkmark20Filled } from "@fluentui/react-icons";
 import { useEffect, useMemo, useState } from "react";
 import { getErrorMessage } from "../../lib/tauri";
+import { pickerDialogStyles, type PickerDialogStyles } from "./pickerDialogStyles";
 
-const useStyles = makeStyles({
-  surface: {
-    width: "min(480px, calc(100vw - 48px))",
-    maxHeight: "min(640px, calc(100vh - 48px))",
-  },
-  content: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalM,
-  },
-  subtitle: {
-    color: tokens.colorNeutralForeground2,
-    fontSize: tokens.fontSizeBase300,
-  },
-  listScroll: {
-    maxHeight: "260px",
-    minHeight: "60px",
-    overflowY: "auto",
-    borderRadius: tokens.borderRadiusMedium,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    padding: tokens.spacingVerticalXS,
-  },
-  listEmpty: {
-    padding: tokens.spacingVerticalL,
-    textAlign: "center",
-    color: tokens.colorNeutralForeground3,
-  },
-  row: {
-    display: "grid",
-    gridTemplateColumns: "1fr auto",
-    alignItems: "center",
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
-    borderRadius: tokens.borderRadiusSmall,
-    ":hover": {
-      backgroundColor: tokens.colorNeutralBackground1Hover,
-    },
-  },
-  count: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase200,
-  },
-  selectAllRow: {
-    display: "flex",
-    justifyContent: "flex-end",
-    marginBottom: tokens.spacingVerticalXS,
-  },
-  inlineCreate: {
-    display: "grid",
-    gridTemplateColumns: "1fr auto",
-    alignItems: "end",
-    columnGap: tokens.spacingHorizontalS,
-  },
+// 共享样式见 pickerDialogStyles.ts；此处只留 MoveToGroupDialog 独有的 actions 布局。
+const pickerStyles: PickerDialogStyles & { actions: GriffelStyle } = {
+  ...pickerDialogStyles,
   actions: {
     display: "flex",
     justifyContent: "flex-end",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
   },
-});
+};
+const useStyles = makeStyles(pickerStyles);
 
 interface GroupOption {
   id: number;

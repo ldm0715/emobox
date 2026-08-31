@@ -32,6 +32,7 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useAppSettings, type ThemePreference } from "../components/ThemeProvider";
 import { ShortcutEditor } from "../features/search/ShortcutEditor";
 import type { DefaultLibraryView, StorageInfo } from "../types";
+import { navItemBaseStyle, navItemSelectedStyle } from "./navItemStyles";
 
 type SettingsSection = "general" | "shortcuts" | "storage" | "about";
 
@@ -107,48 +108,15 @@ const useStyles = makeStyles({
     borderRight: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },
   navItem: {
-    position: "relative",
-    width: "100%",
+    // 共享导航行范式（见 navItemStyles.ts），这里只定义设置左导航布局差异。
+    ...navItemBaseStyle,
     minHeight: "32px",
-    display: "grid",
     gridTemplateColumns: "24px minmax(0, 1fr)",
-    alignItems: "center",
     columnGap: tokens.spacingHorizontalM,
     padding: `0 ${tokens.spacingHorizontalM}`,
-    color: tokens.colorNeutralForeground2,
-    backgroundColor: "transparent",
-    border: "none",
-    borderRadius: tokens.borderRadiusMedium,
-    cursor: "pointer",
-    textAlign: "left",
     fontSize: tokens.fontSizeBase300,
-    ":hover": {
-      color: tokens.colorNeutralForeground1,
-      backgroundColor: tokens.colorSubtleBackgroundHover,
-    },
-    ":focus-visible": {
-      outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`,
-      outlineOffset: "-2px",
-    },
   },
-  // 选中态与主窗口侧栏 navItemSelected 同范式：浅品牌背景 + 3px 品牌指示条 + 图标染品牌色。
-  navItemSelected: {
-    color: tokens.colorNeutralForeground1,
-    fontWeight: tokens.fontWeightSemibold,
-    backgroundColor: tokens.colorSubtleBackgroundSelected,
-    "& > svg": {
-      color: tokens.colorBrandForeground1,
-    },
-    "::before": {
-      position: "absolute",
-      left: 0,
-      width: "3px",
-      height: "18px",
-      borderRadius: tokens.borderRadiusCircular,
-      backgroundColor: tokens.colorBrandStroke1,
-      content: '""',
-    },
-  },
+  navItemSelected: navItemSelectedStyle,
   panel: {
     minWidth: 0,
     minHeight: 0,

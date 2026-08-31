@@ -40,7 +40,7 @@ const useStyles = makeStyles({
     minHeight: "80px",
     overflowY: "auto",
     borderRadius: tokens.borderRadiusMedium,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     padding: tokens.spacingVerticalS,
     display: "flex",
     flexDirection: "column",
@@ -70,7 +70,7 @@ const useStyles = makeStyles({
   },
   iconButtonSelected: {
     color: tokens.colorBrandForeground1,
-    border: `1px solid ${tokens.colorBrandStroke1}`,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorBrandStroke1}`,
   },
   actions: {
     display: "flex",

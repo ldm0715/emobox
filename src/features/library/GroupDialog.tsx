@@ -68,7 +68,7 @@ const useStyles = makeStyles({
   iconOptionSelected: {
     color: tokens.colorBrandForeground1,
     backgroundColor: tokens.colorSubtleBackgroundSelected,
-    border: `1px solid ${tokens.colorBrandStroke1}`,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorBrandStroke1}`,
   },
 });
 

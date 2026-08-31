@@ -1,4 +1,5 @@
 :root {
+  /* 与 ThemeProvider.tsx 的 fontFamilyBase 保持同步（CSS 拿不到 theme token）。 */
   font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -33,7 +34,8 @@ img {
   -webkit-user-drag: none;
 }
 
+/* 文本选中色与品牌蓝一致（对应 ThemeProvider.tsx BrandVariants[80] = #0f6cbd，即亮色 colorBrandBackground）。 */
 ::selection {
   color: white;
-  background: #7450b8;
+  background: #0f6cbd;
 }
