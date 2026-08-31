@@ -4,7 +4,7 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { Search20Regular, Star24Regular, History24Regular } from "@fluentui/react-icons";
+import { ArrowDownload20Regular, Search20Regular, Star24Regular, History24Regular } from "@fluentui/react-icons";
 import { useMemo } from "react";
 import type {
   GridDensity,
@@ -40,6 +40,8 @@ interface EmojiLibraryViewProps {
   /** 已加载项是否已全部选中（全选按钮的切换态）。 */
   allSelected: boolean;
   onToggleSelectAll: () => void;
+  /** 正在向窗口拖文件：只在图片区上方显示放置提示，不盖 header / 状态条。 */
+  dragActive: boolean;
   importing: boolean;
   error: string;
   onClearError: () => void;
@@ -86,11 +88,37 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     fontSize: tokens.fontSizeBase200,
   },
+  contentWrap: {
+    position: "relative",
+    minWidth: 0,
+    minHeight: 0,
+    display: "grid",
+    gridTemplateRows: "minmax(0, 1fr)",
+  },
   content: {
     minWidth: 0,
     minHeight: 0,
     overflowY: "auto",
     padding: tokens.spacingHorizontalXL,
+  },
+  // 拖入放置提示：只铺在图片区（content）上方，不盖 header / 状态条。
+  // Fluent 做法：品牌浅底 + 1px 实线品牌描边 + 大圆角，不用粗虚线框。
+  dropOverlay: {
+    position: "absolute",
+    // 右边比其余三边多收 20px（避开滚动条区域）。
+    inset: "16px 36px 16px 16px",
+    zIndex: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    columnGap: tokens.spacingHorizontalS,
+    color: tokens.colorBrandForeground1,
+    backgroundColor: tokens.colorBrandBackground2,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorBrandStroke1}`,
+    borderRadius: tokens.borderRadiusXLarge,
+    fontSize: tokens.fontSizeBase500,
+    fontWeight: tokens.fontWeightSemibold,
+    pointerEvents: "none",
   },
   centered: {
     minHeight: "320px",
@@ -161,6 +189,7 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     multiSelectMode,
     allSelected,
     onToggleSelectAll,
+    dragActive,
     importing,
     error,
     onClearError,
@@ -281,8 +310,9 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
         {error && <LibraryMessage message={error} onDismiss={onClearError} />}
       </div>
 
-      <div className={styles.content}>
-        {items.length > 0 ? (
+      <div className={styles.contentWrap}>
+        <div className={styles.content}>
+          {items.length > 0 ? (
           <EmojiGrid
             items={items}
             density={density}
@@ -358,6 +388,14 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
                 清除选择
               </Button>
             </div>
+          </div>
+        )}
+        </div>
+
+        {dragActive && (
+          <div className={styles.dropOverlay}>
+            <ArrowDownload20Regular />
+            <span>释放以保存到 EmoBox 素材库</span>
           </div>
         )}
       </div>

@@ -268,15 +268,6 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
   },
-  settingsButton: {
-    width: "100%",
-    justifyContent: "flex-start",
-  },
-  settingsCollapsed: {
-    width: "44px",
-    minWidth: "44px",
-    justifyContent: "center",
-  },
   groupMoreButton: {
     opacity: 0,
     transitionProperty: "opacity",
@@ -578,15 +569,15 @@ export function LibrarySidebar({
         <Divider className={styles.divider} />
 
         <Tooltip content="设置" relationship="label">
-          <Button
-            className={mergeClasses(styles.settingsButton, collapsed && styles.settingsCollapsed)}
-            appearance="subtle"
+          <button
+            type="button"
+            className={mergeClasses(styles.hintButton, collapsed && styles.hintCollapsed)}
             aria-label="设置"
-            icon={<Settings24Regular />}
             onClick={onOpenSettings}
           >
-            {!collapsed && "设置"}
-          </Button>
+            <Settings24Regular />
+            {!collapsed && <span className={styles.shortcut}>设置</span>}
+          </button>
         </Tooltip>
       </div>
     </aside>

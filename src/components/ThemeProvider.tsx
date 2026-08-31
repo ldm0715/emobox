@@ -182,6 +182,12 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     });
   }, [settings]);
 
+  // 原生滚动条（WebView2）跟随主题：FluentProvider 只切换组件 CSS 变量，
+  // 不设置 color-scheme —— 不加这段，滚动条永远按浅色渲染（含深色主题）。
+  useEffect(() => {
+    document.documentElement.style.colorScheme = resolvedTheme;
+  }, [resolvedTheme]);
+
   // Phase 15：把「选中文字自动搜索」推送到 Rust（内存镜像，幂等；两个窗口
   // 都会执行，后到者覆盖为相同值）。失败仅 log —— Rust 侧默认与这里一致。
   useEffect(() => {

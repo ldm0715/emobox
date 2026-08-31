@@ -6,7 +6,7 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { Keyboard20Regular, Save20Regular } from "@fluentui/react-icons";
+import { CheckmarkCircle20Regular, Keyboard20Regular, Save20Regular } from "@fluentui/react-icons";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import {
   WINDOWS_SYSTEM_MENU_SHORTCUT,
@@ -41,7 +41,18 @@ const useStyles = makeStyles({
   help: {
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase300,
-    lineHeight: tokens.lineHeightBase300,
+    lineHeight: tokens.lineHeightBase400,
+  },
+  // 成功态不占大块：带成功图标的紧凑状态行（错误/警告仍用 MessageBar）。
+  statusLine: {
+    display: "flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalXS,
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase300,
+    "& svg": {
+      color: tokens.colorPaletteGreenForeground1,
+    },
   },
 });
 
@@ -148,9 +159,10 @@ export function ShortcutEditor({
           <MessageBarBody>{displayedError}</MessageBarBody>
         </MessageBar>
       ) : registered ? (
-        <MessageBar intent="success">
-          <MessageBarBody>已注册：{formatShortcutLabel(shortcut)}</MessageBarBody>
-        </MessageBar>
+        <div className={styles.statusLine}>
+          <CheckmarkCircle20Regular />
+          <span>已注册：{formatShortcutLabel(shortcut)}</span>
+        </div>
       ) : (
         <MessageBar intent="warning">
           <MessageBarBody>全局快捷键尚未注册。</MessageBarBody>

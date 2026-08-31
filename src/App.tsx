@@ -4,8 +4,6 @@ import {
   ToastBody,
   ToastTitle,
   Toaster,
-  makeStyles,
-  tokens,
   useId,
   useToastController,
 } from "@fluentui/react-components";
@@ -76,27 +74,8 @@ const viewTitles: Record<string, string> = {
   ungrouped: "未分组",
 };
 
-const useStyles = makeStyles({
-  dropOverlay: {
-    position: "fixed",
-    inset: "16px",
-    zIndex: 10000,
-    display: "grid",
-    placeItems: "center",
-    color: tokens.colorBrandForeground1,
-    backgroundColor: tokens.colorNeutralBackground1Hover,
-    border: `2px dashed ${tokens.colorBrandStroke1}`,
-    borderRadius: tokens.borderRadiusXLarge,
-    boxShadow: tokens.shadow64,
-    fontSize: tokens.fontSizeBase500,
-    fontWeight: tokens.fontWeightSemibold,
-    pointerEvents: "none",
-  },
-});
-
 /** 主窗口分页每页条数（Phase 17）。网格本身另有 72/批的渐进渲染（EmojiGrid）。 */
 const PAGE_SIZE = 200;
-
 /**
  * 按视图构造第 offset 页的请求（Phase 17）。recent 视图数据源在客户端（不请求）。
  * trash 走 listDeletedEmojis（kind: "deleted"），其余走 searchEmojis —— 排序
@@ -139,7 +118,6 @@ async function fetchViewPage(
 }
 
 export function App() {
-  const styles = useStyles();
   const toasterId = useId("emobox-toaster");
   const { dispatchToast } = useToastController(toasterId);
   // 复制 toast 防重/去双弹状态：
@@ -1409,6 +1387,7 @@ export function App() {
           multiSelectMode={multiSelectMode}
           allSelected={allSelected}
           onToggleSelectAll={handleToggleSelectAll}
+          dragActive={dragActive}
           importing={isImporting}
           error={error}
           tagsByPath={tagsByPath}
@@ -1463,8 +1442,6 @@ export function App() {
         clipboardCollectError={clipboardCollectError}
         onUpdateClipboardCollectShortcut={changeClipboardCollectShortcut}
       />
-
-      {dragActive && <div className={styles.dropOverlay}>释放以保存到 EmoBox 素材库</div>}
       <Toaster toasterId={toasterId} position="top-end" />
 
       {groupDialogOpen && (
