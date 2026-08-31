@@ -16,20 +16,18 @@
 
 use std::time::Duration;
 
-use windows::core::{Interface, BOOL};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
-use windows::Win32::System::Variant::VT_I4;
-use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation, TreeScope_Subtree, UIA_ControlTypePropertyId, UIA_EditControlTypeId,
-    CUIAutomation,
+    CUIAutomation, IUIAutomation, IUIAutomationElementArray, TreeScope_Subtree,
+    UIA_EditControlTypeId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, GetClassNameW, GetWindowRect, IsWindow,
 };
+use windows::core::BOOL;
 
 use super::input_simulation;
 
@@ -106,24 +104,6 @@ fn uia_click_edit_center_inner(hwnd: HWND) -> FocusRestoreResult {
             }
         };
 
-    // Condition: ControlType == Edit (50004). Union fields must be written
-    // inside an `unsafe` block in edition 2024.
-    let mut variant = VARIANT::default();
-    unsafe {
-        (*variant.Anonymous.Anonymous).vt = VT_I4;
-        (*variant.Anonymous.Anonymous).Anonymous.lVal = UIA_EditControlTypeId.0;
-    }
-
-    let condition = match unsafe {
-        automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &variant)
-    } {
-        Ok(condition) => condition,
-        Err(err) => {
-            log::debug!("[auto-paste] CreatePropertyCondition failed: {err}");
-            return FocusRestoreResult::Error;
-        }
-    };
-
     let root = match unsafe { automation.ElementFromHandle(hwnd) } {
         Ok(root) => root,
         Err(err) => {
@@ -132,13 +112,57 @@ fn uia_click_edit_center_inner(hwnd: HWND) -> FocusRestoreResult {
         }
     };
 
-    let edit = match unsafe { root.FindFirst(TreeScope_Subtree, &condition) } {
-        Ok(edit) if !edit.as_raw().is_null() => edit,
-        Ok(_) => return FocusRestoreResult::NotFound,
+    // 不用 CreatePropertyCondition（需要构造 VARIANT union，edition 2024 下
+    // 撞 E0133）：CreateTrueCondition 匹配全部元素，再逐个比对 ControlType。
+    let condition = match unsafe { automation.CreateTrueCondition() } {
+        Ok(condition) => condition,
         Err(err) => {
-            log::debug!("[auto-paste] FindFirst Edit failed: {err}");
+            log::debug!("[auto-paste] CreateTrueCondition failed: {err}");
             return FocusRestoreResult::Error;
         }
+    };
+
+    let elements: IUIAutomationElementArray =
+        match unsafe { root.FindAll(TreeScope_Subtree, &condition) } {
+            Ok(elements) => elements,
+            Err(err) => {
+                log::debug!("[auto-paste] FindAll failed: {err}");
+                return FocusRestoreResult::Error;
+            }
+        };
+
+    let length = match unsafe { elements.Length() } {
+        Ok(length) => length,
+        Err(err) => {
+            log::debug!("[auto-paste] element array Length failed: {err}");
+            return FocusRestoreResult::Error;
+        }
+    };
+
+    let mut edit = None;
+    for index in 0..length {
+        let element = match unsafe { elements.GetElement(index) } {
+            Ok(element) => element,
+            Err(err) => {
+                log::debug!("[auto-paste] GetElement({index}) failed: {err}");
+                continue;
+            }
+        };
+        match unsafe { element.CurrentControlType() } {
+            Ok(control_type) if control_type == UIA_EditControlTypeId => {
+                edit = Some(element);
+                break;
+            }
+            Ok(_) => continue,
+            Err(err) => {
+                log::debug!("[auto-paste] CurrentControlType failed: {err}");
+                continue;
+            }
+        }
+    }
+
+    let Some(edit) = edit else {
+        return FocusRestoreResult::NotFound;
     };
 
     let rect = match unsafe { edit.CurrentBoundingRectangle() } {

@@ -18,6 +18,7 @@ import {
   DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
   DEFAULT_QUICK_SEARCH_SHORTCUT,
 } from "../config/shortcuts";
+import { setSelectionSearchEnabled } from "../lib/tauri";
 import type { DefaultLibraryView } from "../types";
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -33,6 +34,11 @@ interface PersistedSettings {
   // Windows is the target platform — the Rust command always returns
   // `disabled` on other platforms, so the toggle is a no-op there.
   autoPaste: boolean;
+  // Phase 15: use the text selected in the foreground app as the overlay's
+  // seed query. localStorage is the source of truth; the value is pushed to
+  // the Rust side (SelectionSearchState) so the capture happens before the
+  // overlay window even exists in the frontend.
+  selectionSearch: boolean;
 }
 
 interface SettingsContextValue extends PersistedSettings {
@@ -43,6 +49,7 @@ interface SettingsContextValue extends PersistedSettings {
   setQuickSearchShortcut: (shortcut: string) => void;
   setClipboardCollectShortcut: (shortcut: string) => void;
   setAutoPaste: (enabled: boolean) => void;
+  setSelectionSearch: (enabled: boolean) => void;
 }
 
 const STORAGE_KEY = "emobox.settings";
@@ -56,6 +63,7 @@ const defaultSettings: PersistedSettings = {
   quickSearchShortcut: DEFAULT_QUICK_SEARCH_SHORTCUT,
   clipboardCollectShortcut: DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
   autoPaste: true,
+  selectionSearch: true,
 };
 
 const brand: BrandVariants = {
@@ -118,6 +126,8 @@ function readSettings(): PersistedSettings {
         ? parsed.clipboardCollectShortcut
         : defaultSettings.clipboardCollectShortcut,
       autoPaste: typeof parsed.autoPaste === "boolean" ? parsed.autoPaste : defaultSettings.autoPaste,
+      selectionSearch:
+        typeof parsed.selectionSearch === "boolean" ? parsed.selectionSearch : defaultSettings.selectionSearch,
     };
   } catch {
     return defaultSettings;
@@ -157,6 +167,14 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     });
   }, [settings]);
 
+  // Phase 15：把「选中文字自动搜索」推送到 Rust（内存镜像，幂等；两个窗口
+  // 都会执行，后到者覆盖为相同值）。失败仅 log —— Rust 侧默认与这里一致。
+  useEffect(() => {
+    setSelectionSearchEnabled(settings.selectionSearch).catch((error) => {
+      console.error("推送选中文字搜索开关失败", error);
+    });
+  }, [settings.selectionSearch]);
+
   const value = useMemo<SettingsContextValue>(
     () => ({
       ...settings,
@@ -175,6 +193,10 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setAutoPaste: (autoPaste) => setSettings((current) => ({
         ...current,
         autoPaste,
+      })),
+      setSelectionSearch: (selectionSearch) => setSettings((current) => ({
+        ...current,
+        selectionSearch,
       })),
     }),
     [resolvedTheme, settings],

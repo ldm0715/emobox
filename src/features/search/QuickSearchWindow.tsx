@@ -17,7 +17,7 @@ import {
   hideQuickSearch,
   pasteToTargetWindow,
 } from "../../lib/tauri";
-import type { IndexedImage, PasteResult } from "../../types";
+import type { IndexedImage, PasteResult, QuickSearchOpenedPayload } from "../../types";
 import { QuickSearchPanel } from "./QuickSearchPanel";
 import { useQuickSearchQuery } from "./useQuickSearchQuery";
 
@@ -41,20 +41,29 @@ export function QuickSearchWindow() {
     reloadToken,
   );
 
-  const activate = useCallback(() => {
-    if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current);
-    closeTimer.current = undefined;
-    resetQuery();
-    setCopyError("");
-    setCopyingPath(undefined);
-    setActivationId((current) => current + 1);
+  // seed：打开浮层时前台窗口选中的文字（Phase 15）。非空则作为初始搜索词，
+  // 空/未读到则清空 query —— requestSeq 守卫保证旧请求不会污染新会话。
+  const activate = useCallback(
+    (seed?: string) => {
+      if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current);
+      closeTimer.current = undefined;
+      if (seed !== undefined && seed.length > 0) {
+        setQuery(seed);
+      } else {
+        resetQuery();
+      }
+      setCopyError("");
+      setCopyingPath(undefined);
+      setActivationId((current) => current + 1);
 
-    getQuickSearchShortcutStatus()
-      .then((status) => {
-        if (status?.shortcut) setShortcut(status.shortcut);
-      })
-      .catch(() => {});
-  }, [resetQuery]);
+      getQuickSearchShortcutStatus()
+        .then((status) => {
+          if (status?.shortcut) setShortcut(status.shortcut);
+        })
+        .catch(() => {});
+    },
+    [resetQuery, setQuery],
+  );
 
   const close = useCallback(() => {
     if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current);
@@ -168,8 +177,8 @@ export function QuickSearchWindow() {
     let disposed = false;
     let unlisteners: UnlistenFn[] = [];
 
-    listen(QUICK_SEARCH_OPENED_EVENT, () => {
-      void activate();
+    listen<QuickSearchOpenedPayload>(QUICK_SEARCH_OPENED_EVENT, (event) => {
+      void activate(event.payload?.selectedText ?? undefined);
     }).then((stopListening) => {
       if (disposed) stopListening();
       else unlisteners.push(stopListening);

@@ -29,10 +29,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         4,
         include_str!("../../migrations/0004_remove_external_directory_add_perceptual_hash.sql"),
     ),
-    (
-        5,
-        include_str!("../../migrations/0005_add_updated_at.sql"),
-    ),
+    (5, include_str!("../../migrations/0005_add_updated_at.sql")),
     (
         6,
         include_str!("../../migrations/0006_add_group_pinned.sql"),

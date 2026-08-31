@@ -1,11 +1,21 @@
-use tauri::{AppHandle, Emitter, Manager};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
-use crate::target_window::{self, TargetWindowState};
+use crate::selection_capture;
+use crate::target_window;
 
 pub const WINDOW_LABEL: &str = "quick-search";
 const OPENED_EVENT: &str = "quick-search-opened";
 /// 库数据变更（导入 / 删除 / 收藏 / 分组 / 标签等）后发给浮层，让它重载当前搜索。
 pub const LIBRARY_CHANGED_EVENT: &str = "library-changed";
+
+/// `quick-search-opened` 事件载荷。`selected_text` 是打开浮层时前台窗口
+/// 选中的文字（Phase 15 选中文字搜索），读不到为 `None`。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickSearchOpenedPayload {
+    pub selected_text: Option<String>,
+}
 
 /// 通知快捷搜索浮层"库数据变了"。失败仅 log（沿用 `image-copied` 模式）。
 /// 不需要在 lib.rs 注册：Tauri 事件是自由形式；quick-search 窗口 `visible:false`
@@ -16,7 +26,9 @@ pub fn notify_library_changed(app: &AppHandle) {
     }
 }
 
-pub fn show_quick_search(app: &AppHandle) -> Result<(), String> {
+/// 显示浮层的唯一路径（托盘 / 主窗口 / 全局快捷键共用）。泛型 Runtime 以便
+/// 快捷键注册表（`ShortcutRegistry<R>`）也能调用。
+pub fn show_quick_search<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let window = app
         .get_webview_window(WINDOW_LABEL)
         .ok_or_else(|| "找不到快捷搜索窗口，请重启应用。".to_string())?;
@@ -27,6 +39,9 @@ pub fn show_quick_search(app: &AppHandle) -> Result<(), String> {
     // 避免上一次会话的 HWND 被跨会话复用。
     target_window::capture_from_foreground(app);
 
+    // 选中文字也必须在浮层抢焦点前读取（UIA 读的是"焦点控件"）。
+    let selected_text = selection_capture::capture_selected_text(app);
+
     window
         .center()
         .map_err(|error| format!("无法将快捷搜索窗口居中：{error}"))?;
@@ -36,21 +51,26 @@ pub fn show_quick_search(app: &AppHandle) -> Result<(), String> {
     window
         .set_focus()
         .map_err(|error| format!("无法聚焦快捷搜索窗口：{error}"))?;
-    app.emit_to(WINDOW_LABEL, OPENED_EVENT, ())
-        .map_err(|error| format!("无法激活快捷搜索输入框：{error}"))?;
+    app.emit_to(
+        WINDOW_LABEL,
+        OPENED_EVENT,
+        QuickSearchOpenedPayload { selected_text },
+    )
+    .map_err(|error| format!("无法激活快捷搜索输入框：{error}"))?;
 
     Ok(())
 }
 
-pub fn hide_quick_search(app: &AppHandle) -> Result<(), String> {
+pub fn hide_quick_search<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let window = app
         .get_webview_window(WINDOW_LABEL)
         .ok_or_else(|| "找不到快捷搜索窗口，请重启应用。".to_string())?;
-    // 浮层关闭即会话结束 —— 任何残留的目标 HWND 必须清空，
-    // 否则下次打开时会错误复用上一次的窗口。
-    if let Some(state) = app.try_state::<TargetWindowState>() {
-        state.clear();
-    }
+    // 注意：这里**不**清空 TargetWindowState。前端自动粘贴链是
+    // 「先 hideQuickSearch 再 pasteToTargetWindow」——浮层必须先隐藏
+    // （alwaysOnTop 会阻塞 SetForegroundWindow），粘贴目标必须在隐藏后
+    // 仍然可用。跨会话复用由 capture_from_foreground 的"打开即先 clear"
+    // 防住，另有 60 秒 TTL 与粘贴失败 clear 兜底（Phase 15 修复：原先
+    // 在这里 clear 会让每次自动粘贴都 noTarget 降级）。
     window
         .hide()
         .map_err(|error| format!("无法隐藏快捷搜索窗口：{error}"))

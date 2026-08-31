@@ -24,17 +24,14 @@ pub fn load_thumbnail_data_url(
     {
         let bytes = fs::read(thumbnail)
             .map_err(|error| format!("无法读取缩略图 {}：{error}", thumbnail.display()))?;
-        return Ok(format!(
-            "data:image/png;base64,{}",
-            STANDARD.encode(bytes)
-        ));
+        return Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)));
     }
 
     if !original_path.is_file() {
         return Err(format!("图片文件不存在：{}", original_path.display()));
     }
-    let image =
-        image::open(original_path).map_err(|error| format!("无法解码图片 {}：{error}", original_path.display()))?;
+    let image = image::open(original_path)
+        .map_err(|error| format!("无法解码图片 {}：{error}", original_path.display()))?;
     let thumbnail = image.thumbnail(max_size, max_size);
     let mut output = Cursor::new(Vec::new());
 

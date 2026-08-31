@@ -4,17 +4,19 @@
 //   show_quick_search   -> capture_from_foreground clears, then writes
 //   copySelectedImage   -> paste_to_target_window peeks (does NOT consume on success)
 //   paste fails         -> state cleared by the command
-//   hide_quick_search   -> state cleared
+//   hide_quick_search   -> record KEPT (auto-paste runs hide-then-paste;
+//                          Phase 15 fixed the old hide-clear that made every
+//                          paste degrade to `noTarget`)
 //   TTL exceeded        -> peek/take return None
 //
-// The record is never persisted. We deliberately do NOT keep the target
-// across floating-window sessions to avoid cross-session mis-paste.
+// Cross-session reuse is impossible: every open clears before writing. The
+// record is never persisted.
 
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 /// How long a captured target remains valid. After this TTL the entry is
 /// treated as expired and `peek`/`take` return `None`.
@@ -113,7 +115,10 @@ pub fn now_ms() -> i64 {
 /// - **On any capture failure** (no foreground, API error, filtered out)
 ///   leave the state empty. The paste command will then return
 ///   `noTarget` and the user is shown a downgrade toast.
-pub fn capture_from_foreground(app: &AppHandle) {
+///
+/// 泛型 Runtime：快捷键注册表（`ShortcutRegistry<R>`）经
+/// `quick_search::show_quick_search` 间接调用，与托盘/主窗口路径共用。
+pub fn capture_from_foreground<R: Runtime>(app: &AppHandle<R>) {
     let state = match app.try_state::<TargetWindowState>() {
         Some(s) => s,
         None => return,
@@ -124,7 +129,7 @@ pub fn capture_from_foreground(app: &AppHandle) {
     state.clear();
 
     #[cfg(windows)]
-    let captured = capture_inner(app, &state);
+    let captured = capture_inner(app);
     #[cfg(not(windows))]
     let captured: Option<TargetWindowInfo> = None;
 
@@ -132,7 +137,7 @@ pub fn capture_from_foreground(app: &AppHandle) {
 }
 
 #[cfg(windows)]
-fn capture_inner(app: &AppHandle, _state: &TargetWindowState) -> Option<TargetWindowInfo> {
+fn capture_inner<R: Runtime>(app: &AppHandle<R>) -> Option<TargetWindowInfo> {
     let exclude = collect_emobox_hwnds(app);
     let result = unsafe { crate::platform::windows::foreground_window::capture(&exclude) };
     match result {
@@ -180,7 +185,7 @@ fn is_system_process(name_lower: &str) -> bool {
     )
 }
 
-fn collect_emobox_hwnds(app: &AppHandle) -> Vec<isize> {
+fn collect_emobox_hwnds<R: Runtime>(app: &AppHandle<R>) -> Vec<isize> {
     let mut out = Vec::new();
     for (_, window) in app.webview_windows() {
         if let Ok(hwnd) = window.hwnd() {

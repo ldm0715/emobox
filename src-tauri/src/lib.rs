@@ -8,6 +8,7 @@ mod quick_search;
 mod recent;
 mod repositories;
 mod scanner;
+mod selection_capture;
 mod services;
 mod shortcut_registry;
 mod target_window;
@@ -39,6 +40,7 @@ pub fn run() {
                 recent::RecentImagesState::load(app.handle()).map_err(std::io::Error::other)?;
             app.manage(recent_state);
             app.manage(target_window::TargetWindowState::new());
+            app.manage(selection_capture::SelectionSearchState::new());
             tray::setup(app)?;
 
             // 启动一次性回填存量无标签表情的"文件名"标签（纯 DB，幂等，失败不阻塞）。
@@ -98,6 +100,7 @@ pub fn run() {
             commands::get_clipboard_collect_shortcut_status,
             commands::show_quick_search,
             commands::hide_quick_search,
+            commands::set_selection_search_enabled,
             commands::collect_image_from_clipboard,
             commands::list_groups,
             commands::create_group,

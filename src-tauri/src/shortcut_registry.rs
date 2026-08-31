@@ -18,7 +18,7 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -254,13 +254,12 @@ impl ShortcutRegistry {
 fn run_owner_action<R: Runtime>(owner: &ShortcutOwner, app: &AppHandle<R>) -> Result<(), String> {
     match owner {
         ShortcutOwner::QuickSearch => {
-            // 与 quick_search::show_quick_search 等价但用泛型 Runtime。
+            // 统一走 quick_search::show_quick_search（Phase 15 前这里内联复制
+            // 了 show 逻辑且从不捕获粘贴目标 —— 快捷键路径的自动粘贴必然
+            // noTarget 降级的既有 bug 由此修复）。
             // 失败不中断快捷键响应。
-            if let Some(window) = app.get_webview_window(crate::quick_search::WINDOW_LABEL) {
-                let _ = window.center();
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = app.emit_to(crate::quick_search::WINDOW_LABEL, "quick-search-opened", ());
+            if let Err(error) = crate::quick_search::show_quick_search(app) {
+                log::warn!("打开快捷搜索浮层失败：{error}");
             }
             Ok(())
         }

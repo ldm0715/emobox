@@ -100,7 +100,8 @@ impl AssetService {
                 let scaled = stored.thumbnail(MAX_IMPORT_DIMENSION, MAX_IMPORT_DIMENSION);
                 let (scaled_width, scaled_height) = scaled.dimensions();
                 // 覆盖临时文件为重编码后的受管副本字节；SHA 对存储字节算。
-                sha256 = Self::encode_scaled_image(&scaled, temporary_file.path(), &file_extension)?;
+                sha256 =
+                    Self::encode_scaled_image(&scaled, temporary_file.path(), &file_extension)?;
                 file_size = fs::metadata(temporary_file.path())
                     .map_err(|error| {
                         format!(
@@ -160,11 +161,8 @@ impl AssetService {
         let file = File::create(path)
             .map_err(|error| format!("无法创建临时素材 {}：{error}", path.display()))?;
         let mut writer = BufWriter::new(file);
-        let encoder = PngEncoder::new_with_quality(
-            &mut writer,
-            CompressionType::Fast,
-            FilterType::Adaptive,
-        );
+        let encoder =
+            PngEncoder::new_with_quality(&mut writer, CompressionType::Fast, FilterType::Adaptive);
         encoder
             .write_image(&bytes, width, height, ExtendedColorType::Rgba8)
             .map_err(|error| format!("无法编码 PNG {}：{error}", path.display()))?;
@@ -334,10 +332,7 @@ fn detect_png_apng(path: &Path) -> Option<bool> {
         if chunk_type == b"acTL" {
             return Some(true);
         }
-        let next = offset
-            .checked_add(8)?
-            .checked_add(length)?
-            .checked_add(4)?;
+        let next = offset.checked_add(8)?.checked_add(length)?.checked_add(4)?;
         if next > bytes.len() {
             return None;
         }
@@ -407,7 +402,11 @@ impl StagedAsset {
         let mut temporary_thumbnail = TemporaryFile::new(temporary_thumbnail_path);
 
         // 直接用已解码图生成缩略图，避免二次全量解码。
-        thumbnail::write_thumbnail_png(&self.decoded, temporary_thumbnail.path(), THUMBNAIL_MAX_SIZE)?;
+        thumbnail::write_thumbnail_png(
+            &self.decoded,
+            temporary_thumbnail.path(),
+            THUMBNAIL_MAX_SIZE,
+        )?;
 
         let created_managed_file =
             commit_asset_file(&mut self.temporary_file, &managed_path, &self.sha256)?;
@@ -794,7 +793,11 @@ mod tests {
         let original_bytes = fs::read(&source).expect("read gif");
 
         let staged = staged_for(&source, &root);
-        assert_eq!(staged.sha256, sha256_hex(&original_bytes), "GIF 必须保留原字节");
+        assert_eq!(
+            staged.sha256,
+            sha256_hex(&original_bytes),
+            "GIF 必须保留原字节"
+        );
         assert!(staged.perceptual_hash.is_some());
         let _ = fs::remove_dir_all(&root);
     }
@@ -807,7 +810,8 @@ mod tests {
         let img = pattern(32, 32);
         let mut bytes = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut bytes);
-        img.write_to(&mut cursor, image::ImageFormat::Png).expect("encode");
+        img.write_to(&mut cursor, image::ImageFormat::Png)
+            .expect("encode");
         // 截掉后半。
         bytes.truncate(20);
         fs::write(&path, &bytes).expect("write truncated");
@@ -839,8 +843,11 @@ mod tests {
         // 显式编码为 PNG 字节写入 .webp 扩展名的文件 —— 内容与扩展名不一致。
         // 不能用 `img.save(&path)`：image 会按扩展名编码成合法 WebP，测不到不匹配。
         let mut png_bytes = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
-            .expect("encode png bytes");
+        img.write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encode png bytes");
         fs::write(&path, &png_bytes).expect("write png bytes as webp name");
         assert_eq!(animation_status(&path, "webp"), AnimationStatus::Unknown);
         let _ = fs::remove_dir_all(&root);

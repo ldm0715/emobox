@@ -190,7 +190,17 @@ export function SettingsDialog({
   onUpdateClipboardCollectShortcut,
 }: SettingsDialogProps) {
   const styles = useStyles();
-  const { theme, setTheme, defaultView, setDefaultView, quickSearchShortcut, autoPaste, setAutoPaste } = useAppSettings();
+  const {
+    theme,
+    setTheme,
+    defaultView,
+    setDefaultView,
+    quickSearchShortcut,
+    autoPaste,
+    setAutoPaste,
+    selectionSearch,
+    setSelectionSearch,
+  } = useAppSettings();
   const [section, setSection] = useState<SettingsSection>("general");
 
   function renderGeneral() {
@@ -254,6 +264,19 @@ export function SettingsDialog({
               checked={autoPaste}
               onChange={(_, data) => setAutoPaste(data.checked)}
               aria-label="选择表情后自动粘贴到打开浮层前的窗口"
+            />
+          </div>
+          <div className={styles.settingRow}>
+            <div className={styles.settingText}>
+              <div className={styles.settingLabel}>打开浮层时用选中文字自动搜索</div>
+              <div className={styles.settingDescription}>
+                选中文字会被剪切（作为搜索词，粘贴表情时正好替换原文字；放弃选择可手动 Ctrl+V 找回）。仅用作搜索、不会保存；读取不到时浮层正常打开。兼容性不佳的应用会以模拟 Ctrl+X 方式读取。
+              </div>
+            </div>
+            <Switch
+              checked={selectionSearch}
+              onChange={(_, data) => setSelectionSearch(data.checked)}
+              aria-label="打开浮层时用选中文字自动搜索"
             />
           </div>
         </div>

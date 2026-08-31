@@ -92,6 +92,11 @@ export interface ImageCopiedEvent {
   recent: RecentImageRecord;
 }
 
+/** `quick-search-opened` 事件载荷（Phase 15）。读不到选中文字时 `selectedText` 为 null。 */
+export interface QuickSearchOpenedPayload {
+  selectedText: string | null;
+}
+
 export interface ImportFailure {
   path: string;
   message: string;

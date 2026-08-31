@@ -4,6 +4,7 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
+use crate::scanner::IndexedEmoji;
 use crate::{
     clipboard, clipboard_collect, database, quick_search,
     repositories::{
@@ -18,7 +19,6 @@ use crate::{
     },
     target_window, thumbnail,
 };
-use crate::{scanner::IndexedEmoji};
 
 const IMAGE_COPIED_EVENT: &str = "image-copied";
 
@@ -339,6 +339,17 @@ pub fn hide_quick_search(app: AppHandle) -> Result<(), String> {
     quick_search::hide_quick_search(&app)
 }
 
+/// Phase 15：前端把「选中文字自动搜索」开关推送到 Rust（localStorage 是
+/// 事实源，Rust 侧只做内存镜像）。启动竞态：前端尚未推送时按默认 true。
+#[tauri::command]
+pub fn set_selection_search_enabled(
+    state: State<'_, crate::selection_capture::SelectionSearchState>,
+    enabled: bool,
+) -> Result<(), String> {
+    state.set_enabled(enabled);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn collect_image_from_clipboard(
     app: AppHandle,
@@ -566,9 +577,10 @@ pub async fn soft_delete_to_trash(
     ids: Vec<i64>,
 ) -> Result<TrashResult, String> {
     let state = database_state.inner().clone();
-    let result = tauri::async_runtime::spawn_blocking(move || TrashService::soft_delete(&state, &ids))
-        .await
-        .map_err(|error| format!("软删任务意外中止：{error}"))?;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || TrashService::soft_delete(&state, &ids))
+            .await
+            .map_err(|error| format!("软删任务意外中止：{error}"))?;
     quick_search::notify_library_changed(&app);
     result
 }
@@ -594,10 +606,11 @@ pub async fn permanently_delete_emojis(
     ids: Vec<i64>,
 ) -> Result<TrashResult, String> {
     let state = database_state.inner().clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || TrashService::permanently_delete(&state, &ids))
-            .await
-            .map_err(|error| format!("永久删除任务意外中止：{error}"))?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        TrashService::permanently_delete(&state, &ids)
+    })
+    .await
+    .map_err(|error| format!("永久删除任务意外中止：{error}"))?;
     quick_search::notify_library_changed(&app);
     result
 }

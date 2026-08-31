@@ -354,23 +354,33 @@ mod tests {
 
         // 默认都不置顶，按 id 升序。
         let list = GroupRepository::list_groups(&connection).expect("list");
-        assert_eq!(list.iter().map(|row| row.id).collect::<Vec<_>>(), vec![a.id, b.id]);
+        assert_eq!(
+            list.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![a.id, b.id]
+        );
         assert!(list.iter().all(|row| !row.is_pinned));
 
         // 置顶 B → B 排到最前。
         GroupRepository::set_group_pinned(&connection, b.id, true).expect("pin B");
         let list = GroupRepository::list_groups(&connection).expect("list after pin");
-        assert_eq!(list.iter().map(|row| row.id).collect::<Vec<_>>(), vec![b.id, a.id]);
+        assert_eq!(
+            list.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![b.id, a.id]
+        );
         assert!(list[0].is_pinned, "置顶的 B 应标记 is_pinned");
         assert!(!list[1].is_pinned);
 
         // 取消置顶 → 恢复 id 升序。
         GroupRepository::set_group_pinned(&connection, b.id, false).expect("unpin B");
         let list = GroupRepository::list_groups(&connection).expect("list after unpin");
-        assert_eq!(list.iter().map(|row| row.id).collect::<Vec<_>>(), vec![a.id, b.id]);
+        assert_eq!(
+            list.iter().map(|row| row.id).collect::<Vec<_>>(),
+            vec![a.id, b.id]
+        );
 
         // 不存在的 id → 报错。
-        let err = GroupRepository::set_group_pinned(&connection, 9999, true).expect_err("missing id");
+        let err =
+            GroupRepository::set_group_pinned(&connection, 9999, true).expect_err("missing id");
         assert!(err.contains("找不到"));
     }
 }

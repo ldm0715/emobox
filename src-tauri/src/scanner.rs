@@ -1,6 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -121,8 +119,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("emobox-scan-{label}-{}-{unique}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "emobox-scan-{label}-{}-{unique}",
+            std::process::id()
+        ));
         fs::create_dir_all(&root).expect("create test root");
         root
     }
@@ -182,7 +182,8 @@ mod tests {
 
     #[test]
     fn collect_image_files_rejects_missing_root() {
-        let err = collect_image_files(Path::new("Z:/definitely-missing-emoBox-dir")).expect_err("error");
+        let err =
+            collect_image_files(Path::new("Z:/definitely-missing-emoBox-dir")).expect_err("error");
         assert!(err.contains("目录不存在"));
     }
 }

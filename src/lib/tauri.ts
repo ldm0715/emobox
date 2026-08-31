@@ -63,6 +63,13 @@ export function hideQuickSearch(): Promise<void> {
   return invoke<void>("hide_quick_search");
 }
 
+// ---------- Phase 15: 选中文字自动搜索 ----------
+
+/** 把「选中文字自动搜索」开关推送到 Rust（localStorage 是事实源，Rust 只做内存镜像）。 */
+export function setSelectionSearchEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>("set_selection_search_enabled", { enabled });
+}
+
 // ---------- 剪贴板收藏 ----------
 
 export type ClipboardCollectOutcome =

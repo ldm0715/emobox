@@ -8,7 +8,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindow,
 };
 
 /// Maximum time we are willing to wait for the target window to actually

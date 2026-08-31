@@ -85,9 +85,7 @@ mod tests {
         let mut state = seed.wrapping_mul(2654435761).wrapping_add(1);
         let mut img = RgbaImage::new(width, height);
         for (_, _, pixel) in img.enumerate_pixels_mut() {
-            state = state
-                .wrapping_mul(1103515245)
-                .wrapping_add(12345);
+            state = state.wrapping_mul(1103515245).wrapping_add(12345);
             let v = (state >> 16) as u8;
             *pixel = Rgba([v, v ^ 0x55, v ^ 0xaa, 255]);
         }
