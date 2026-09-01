@@ -16,6 +16,7 @@ import {
   type SearchBoxChangeEvent,
 } from "@fluentui/react-components";
 import { Folder20Regular } from "@fluentui/react-icons";
+import { FadeSnappy } from "@fluentui/react-motion-components-preview";
 import { useEffect, useState } from "react";
 import { getErrorMessage } from "../../lib/tauri";
 import { searchGroupIcons } from "./groupIcons";
@@ -99,13 +100,18 @@ export function GroupIconPickerDialog({
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  // 常挂载弹窗：open 时把 payload props 快照进本地 state。关闭瞬间 App 会把
+  // iconPickerGroup 置 null（props 闪回退值），快照保证 ~300ms 退场动画期间
+  // 标题与选中高亮不闪空。
+  const [shown, setShown] = useState({ groupName, currentIcon });
 
   useEffect(() => {
     if (open) {
+      setShown({ groupName, currentIcon });
       setQuery("");
       setError("");
     }
-  }, [open]);
+  }, [open, groupName, currentIcon]);
 
   const categories = searchGroupIcons(query);
 
@@ -137,7 +143,7 @@ export function GroupIconPickerDialog({
             更改分组图标
           </DialogTitle>
           <DialogContent className={styles.content}>
-            <Body1 className={styles.subtitle}>为「{groupName}」选择侧栏图标</Body1>
+            <Body1 className={styles.subtitle}>为「{shown.groupName}」选择侧栏图标</Body1>
 
             <SearchBox
               size="small"
@@ -158,7 +164,7 @@ export function GroupIconPickerDialog({
                     <div className={styles.grid}>
                       {category.icons.map((icon) => {
                         const IconComponent = icon.component;
-                        const selected = currentIcon === icon.name;
+                        const selected = shown.currentIcon === icon.name;
                         return (
                           <Button
                             key={icon.name}
@@ -182,16 +188,18 @@ export function GroupIconPickerDialog({
             </div>
 
             {error && (
-              <MessageBar intent="error">
-                <MessageBarBody>{error}</MessageBarBody>
-              </MessageBar>
+              <FadeSnappy visible appear>
+                <MessageBar intent="error">
+                  <MessageBarBody>{error}</MessageBarBody>
+                </MessageBar>
+              </FadeSnappy>
             )}
 
             <div className={styles.actions}>
               <Button
                 appearance="subtle"
                 icon={<Folder20Regular />}
-                disabled={pending || currentIcon === null}
+                disabled={pending || shown.currentIcon === null}
                 onClick={() => void select(null)}
               >
                 恢复默认

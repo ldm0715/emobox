@@ -27,7 +27,9 @@ const useStyles = makeStyles({
     width: "100%",
     height: "100%",
     padding: tokens.spacingHorizontalS,
-    backgroundColor: tokens.colorNeutralBackground3,
+    // 外衬用 BG2（窗口底层级）：BG3 语义是"最亮卡片层"，做外衬会比 surface(BG1) 还亮。
+    // 浮层阶梯 = 外衬 BG2 → surface BG1 → 结果卡 BG3。
+    backgroundColor: tokens.colorNeutralBackground2,
   },
   surface: {
     width: "100%",

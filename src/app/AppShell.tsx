@@ -23,8 +23,14 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "232px minmax(0, 1fr)",
     overflow: "hidden",
+    // 侧栏折叠宽度动画（唯一允许的 layout 过渡；单元素 reflow 可承受）。
+    // 曲线/时长与 AppToolbar 首列保持同步，避免折叠时两处错拍。
     transitionProperty: "grid-template-columns",
     transitionDuration: tokens.durationNormal,
+    transitionTimingFunction: tokens.curveEasyEase,
+    "@media (prefers-reduced-motion: reduce)": {
+      transitionProperty: "none",
+    },
   },
   bodyCollapsed: {
     gridTemplateColumns: "56px minmax(0, 1fr)",

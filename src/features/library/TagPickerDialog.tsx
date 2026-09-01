@@ -18,6 +18,7 @@ import {
   type GriffelStyle,
 } from "@fluentui/react-components";
 import { Add20Regular } from "@fluentui/react-icons";
+import { FadeSnappy } from "@fluentui/react-motion-components-preview";
 import { useEffect, useMemo, useState } from "react";
 import { getErrorMessage } from "../../lib/tauri";
 import { pickerDialogStyles, type PickerDialogStyles } from "./pickerDialogStyles";
@@ -81,14 +82,17 @@ export function TagPickerDialog({
   const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  // 常挂载弹窗：open 时快照 payload（关闭瞬间 App 置 null，退场动画期间计数不闪 0）。
+  const [shownCount, setShownCount] = useState(emojiCount);
 
   useEffect(() => {
     if (open) {
+      setShownCount(emojiCount);
       setSelected(new Set(initiallySelectedTagIds));
       setNewName("");
       setError("");
     }
-  }, [open, initiallySelectedTagIds]);
+  }, [open, emojiCount, initiallySelectedTagIds]);
 
   const trimmedNew = newName.trim();
   const canSubmit = !busy && !pending;
@@ -151,8 +155,8 @@ export function TagPickerDialog({
           </DialogTitle>
           <DialogContent className={styles.content}>
             <Body1 className={styles.subtitle}>
-              {emojiCount > 1
-                ? `为 ${emojiCount} 个表情选择标签`
+              {shownCount > 1
+                ? `为 ${shownCount} 个表情选择标签`
                 : "为 1 个表情选择标签"}
             </Body1>
 
@@ -228,9 +232,11 @@ export function TagPickerDialog({
             </div>
 
             {error && (
-              <MessageBar intent="error">
-                <MessageBarBody>{error}</MessageBarBody>
-              </MessageBar>
+              <FadeSnappy visible appear>
+                <MessageBar intent="error">
+                  <MessageBarBody>{error}</MessageBarBody>
+                </MessageBar>
+              </FadeSnappy>
             )}
 
             <div className={styles.actions}>

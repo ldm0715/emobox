@@ -34,8 +34,9 @@ img {
   -webkit-user-drag: none;
 }
 
-/* 文本选中色与品牌蓝一致（对应 ThemeProvider.tsx BrandVariants[80] = #0f6cbd，即亮色 colorBrandBackground）。 */
+/* 文本选中色跟随主题：FluentProvider 把整套 theme 挂为根元素上的 CSS 变量，
+   ::selection 从祖先解析（dark 渲染为 brand70/白，light 为 brand80/白）。 */
 ::selection {
-  color: white;
-  background: #0f6cbd;
+  color: var(--colorNeutralForegroundOnBrand);
+  background: var(--colorBrandBackground);
 }

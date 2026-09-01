@@ -1475,12 +1475,12 @@ export function App() {
       />
       <Toaster toasterId={toasterId} position="top-end" />
 
-      {groupDialogOpen && (
-        <GroupDialogLite
-          open={groupDialogOpen}
-          busy={groupDialogBusy}
-          onOpenChange={setGroupDialogOpen}
-          onSubmit={async (name, icon) => {
+      {/* 常挂载 + open 控制（勿改回 {state && …} 条件挂载——会瞬间卸载、截断 Dialog 内置退场动画）。 */}
+      <GroupDialogLite
+        open={groupDialogOpen}
+        busy={groupDialogBusy}
+        onOpenChange={setGroupDialogOpen}
+        onSubmit={async (name, icon) => {
             setGroupDialogBusy(true);
             try {
               const group = await createGroup(name);
@@ -1497,41 +1497,39 @@ export function App() {
               setGroupDialogBusy(false);
             }
           }}
-        />
-      )}
+      />
 
-      {iconPickerGroup && (
-        <GroupIconPickerDialog
-          open
-          groupName={iconPickerGroup.name}
-          currentIcon={iconPickerGroup.icon}
-          onOpenChange={(open) => {
-            if (!open) setIconPickerGroup(null);
-          }}
-          onSelect={async (icon) => {
-            await setGroupIcon(iconPickerGroup.id, icon);
-            await refreshSidebar();
-            dispatchToast(
-              <Toast>
-                <ToastTitle>{icon === null ? "已恢复默认图标" : "分组图标已更新"}</ToastTitle>
-              </Toast>,
-              { intent: "success" },
-            );
-          }}
-        />
-      )}
+      <GroupIconPickerDialog
+        open={iconPickerGroup !== null}
+        groupName={iconPickerGroup?.name ?? ""}
+        currentIcon={iconPickerGroup?.icon ?? null}
+        onOpenChange={(open) => {
+          if (!open) setIconPickerGroup(null);
+        }}
+        onSelect={async (icon) => {
+          if (!iconPickerGroup) return;
+          await setGroupIcon(iconPickerGroup.id, icon);
+          await refreshSidebar();
+          dispatchToast(
+            <Toast>
+              <ToastTitle>{icon === null ? "已恢复默认图标" : "分组图标已更新"}</ToastTitle>
+            </Toast>,
+            { intent: "success" },
+          );
+        }}
+      />
 
-      {renameGroupState && (
-        <GroupDialog
-          open
-          mode="rename"
-          initialName={renameGroupState.name}
-          busy={renameGroupBusy}
-          onOpenChange={(open) => {
-            if (!open) setRenameGroupState(null);
-          }}
-          onSubmit={async (name) => {
-            setRenameGroupBusy(true);
+      <GroupDialog
+        open={renameGroupState !== null}
+        mode="rename"
+        initialName={renameGroupState?.name ?? ""}
+        busy={renameGroupBusy}
+        onOpenChange={(open) => {
+          if (!open) setRenameGroupState(null);
+        }}
+        onSubmit={async (name) => {
+          if (!renameGroupState) return;
+          setRenameGroupBusy(true);
             try {
               await renameGroup(renameGroupState.id, name);
               await refreshSidebar();
@@ -1547,8 +1545,7 @@ export function App() {
               setRenameGroupBusy(false);
             }
           }}
-        />
-      )}
+      />
 
       <ConfirmDialog
         open={confirmState !== null}
@@ -1566,32 +1563,28 @@ export function App() {
         }}
       />
 
-      {moveToGroupState && (
-        <MoveToGroupDialog
-          open
-          emojiCount={moveToGroupState.emojiIds.length}
-          existingGroups={groups}
-          busy={moveToGroupBusy}
-          onOpenChange={(open) => {
-            if (!open) setMoveToGroupState(null);
-          }}
-          onConfirm={handleMoveToGroupConfirm}
-        />
-      )}
+      <MoveToGroupDialog
+        open={moveToGroupState !== null}
+        emojiCount={moveToGroupState?.emojiIds.length ?? 0}
+        existingGroups={groups}
+        busy={moveToGroupBusy}
+        onOpenChange={(open) => {
+          if (!open) setMoveToGroupState(null);
+        }}
+        onConfirm={handleMoveToGroupConfirm}
+      />
 
-      {tagPickerState && (
-        <TagPickerDialog
-          open
-          emojiCount={tagPickerState.emojiIds.length}
-          existingTags={tags}
-          initiallySelectedTagIds={tagPickerState.initiallySelectedTagIds}
-          busy={tagPickerBusy}
-          onOpenChange={(open) => {
-            if (!open) setTagPickerState(null);
-          }}
-          onConfirm={handleTagPickerConfirm}
-        />
-      )}
+      <TagPickerDialog
+        open={tagPickerState !== null}
+        emojiCount={tagPickerState?.emojiIds.length ?? 0}
+        existingTags={tags}
+        initiallySelectedTagIds={tagPickerState?.initiallySelectedTagIds ?? []}
+        busy={tagPickerBusy}
+        onOpenChange={(open) => {
+          if (!open) setTagPickerState(null);
+        }}
+        onConfirm={handleTagPickerConfirm}
+      />
     </>
   );
 }

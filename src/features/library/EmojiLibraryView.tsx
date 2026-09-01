@@ -2,8 +2,10 @@ import {
   Button,
   ProgressBar,
   makeStyles,
+  motionTokens,
   tokens,
 } from "@fluentui/react-components";
+import { Fade, FadeSnappy, Slide } from "@fluentui/react-motion-components-preview";
 import { ArrowDownload20Regular, Search20Regular, Star24Regular, History24Regular } from "@fluentui/react-icons";
 import { useMemo } from "react";
 import type {
@@ -306,36 +308,46 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
 
       <div className={styles.contentWrap}>
         <div className={styles.content}>
-          {items.length > 0 ? (
-          <EmojiGrid
-            items={items}
-            density={density}
-            selectedIds={selectedIds}
-            favoriteIds={favoriteIds}
-            multiSelectMode={multiSelectMode}
-            menuMode={menuMode}
-            tagsByPath={tagsByPath}
-            hasMore={hasMore}
-            onLoadMore={onLoadMore}
-            resetKey={resetKey}
-            onItemSelect={onItemSelect}
-            onClearSelection={onClearSelection}
-            onToggleFavorite={onToggleFavorite}
-            onCopy={onCopy}
-            onOpenPreview={onOpenPreview}
-            onTagClick={onTagClick}
-            onMoveToGroup={onMoveToGroup}
-            onRemoveFromGroup={onRemoveFromGroup}
-            onAddTags={onAddTags}
-            onShowInExplorer={onShowInExplorer}
-            onDelete={onDelete}
-            onRestore={onRestore}
-            onPermanentlyDelete={onPermanentlyDelete}
-          />
-        ) : renderEmptyContent()}
+          {/* 视图/搜索/排序切换的入场淡入：只做在容器层（key 重挂载触发），绝不做
+              per-item——EmojiGridItem 是 memo 数百实例，逐项动画会击穿性能红线。
+              内层垫普通 div：presence 组件克隆唯一 child 并直接施加动效，child 必须
+              是 DOM 元素（EmojiGrid 返回 Fragment 不能直接当 child）。 */}
+          <FadeSnappy key={resetKey} visible appear>
+            <div>
+              {items.length > 0 ? (
+              <EmojiGrid
+                items={items}
+                density={density}
+                selectedIds={selectedIds}
+                favoriteIds={favoriteIds}
+                multiSelectMode={multiSelectMode}
+                menuMode={menuMode}
+                tagsByPath={tagsByPath}
+                hasMore={hasMore}
+                onLoadMore={onLoadMore}
+                resetKey={resetKey}
+                onItemSelect={onItemSelect}
+                onClearSelection={onClearSelection}
+                onToggleFavorite={onToggleFavorite}
+                onCopy={onCopy}
+                onOpenPreview={onOpenPreview}
+                onTagClick={onTagClick}
+                onMoveToGroup={onMoveToGroup}
+                onRemoveFromGroup={onRemoveFromGroup}
+                onAddTags={onAddTags}
+                onShowInExplorer={onShowInExplorer}
+                onDelete={onDelete}
+                onRestore={onRestore}
+                onPermanentlyDelete={onPermanentlyDelete}
+              />
+            ) : renderEmptyContent()}
+            </div>
+          </FadeSnappy>
 
-        {showBar && (
-          <div className={styles.selectionBar}>
+          {/* 批量条：底边浮出（12px 上滑 + 淡入，Fluent 命令栏范式）。unmountOnExit
+              必须有——presence 默认退场后 child 仍挂载，透明的 sticky 条会占位并挡点击。 */}
+          <Slide visible={showBar} outY="12px" unmountOnExit>
+            <div className={styles.selectionBar}>
             <span className={styles.selectionBarCount}>已选 {selectedIds.size} 项</span>
             <div className={styles.selectionBarActions}>
               {menuMode !== "trash" && (
@@ -383,15 +395,16 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
               </Button>
             </div>
           </div>
-        )}
+          </Slide>
         </div>
 
-        {dragActive && (
+        {/* 拖放提示：大面积反馈层只做淡入（150ms，即时性优先）；unmountOnExit 同上。 */}
+        <Fade visible={dragActive} duration={motionTokens.durationFast} unmountOnExit>
           <div className={styles.dropOverlay}>
             <ArrowDownload20Regular />
             <span>释放以保存到 EmoBox 素材库</span>
           </div>
-        )}
+        </Fade>
       </div>
     </section>
   );

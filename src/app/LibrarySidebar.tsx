@@ -11,9 +11,11 @@ import {
   Tooltip,
   makeStyles,
   mergeClasses,
+  motionTokens,
   tokens,
   type SearchBoxChangeEvent,
 } from "@fluentui/react-components";
+import { Collapse } from "@fluentui/react-motion-components-preview";
 import {
   Add20Regular,
   ChevronDown20Regular,
@@ -79,7 +81,10 @@ const useStyles = makeStyles({
     justifyContent: "flex-start",
     overflow: "hidden",
     padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalS}`,
-    backgroundColor: tokens.colorNeutralBackground2,
+    // 侧栏与顶部栏/内容区同一层级（BG1），靠右侧 hairline 分隔——这是 Fluent
+    // 深色模式的标准范式（同层级 surface + 低对比描边），避免侧栏成为全窗口
+    // 唯一的暗色块（此前用最暗层 BG2，暗色下看着发黑、与内容割裂）。
+    backgroundColor: tokens.colorNeutralBackground1,
     borderRight: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },
   rootCollapsed: {
@@ -372,7 +377,11 @@ export function LibrarySidebar({
         </div>
       )}
 
-      {searchOpen && !collapsed && !groupsCollapsed && groups.length > 0 && (
+      <Collapse
+        visible={searchOpen && !collapsed && !groupsCollapsed && groups.length > 0}
+        duration={motionTokens.durationFast}
+        unmountOnExit
+      >
         <div className={styles.groupSearch}>
           <SearchBox
             ref={searchInputRef}
@@ -383,13 +392,21 @@ export function LibrarySidebar({
             onChange={(_: SearchBoxChangeEvent, data: { value: string }) => setGroupSearch(data.value)}
           />
         </div>
-      )}
+      </Collapse>
 
       {/* groupList 容器始终挂载：它是侧栏唯一 flex:1 弹性滚动区（Phase 13），
-          折叠时只清空内容，否则底部固定项会因失去弹性区而重排。 */}
+          折叠时只清空内容，否则底部固定项会因失去弹性区而重排。
+          内容包 Collapse 做高度手风琴（侧栏折叠态恒可见 icon 行）；unmountOnExit
+          保证收起后内容卸载（presence 默认退场后仍挂载）。 */}
       <div className={mergeClasses(styles.navigation, styles.groupList)}>
-        {collapsed || !groupsCollapsed ? (
-          groups.length > 0 ? (
+        <Collapse
+          visible={collapsed || !groupsCollapsed}
+          duration={motionTokens.durationGentle}
+          exitDuration={motionTokens.durationNormal}
+          unmountOnExit
+        >
+          <div className={styles.navigation}>
+        {groups.length > 0 ? (
             filteredGroups.length > 0 ? (
               filteredGroups.map((group) => {
                 const selected = currentView === `group:${group.id}`;
@@ -476,8 +493,9 @@ export function LibrarySidebar({
               <Folder24Regular />
               <span>还没有分组</span>
             </div>
-          ) : null
-        ) : null}
+          ) : null}
+          </div>
+        </Collapse>
       </div>
 
       <Divider className={styles.divider} />

@@ -12,6 +12,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { Folder24Regular } from "@fluentui/react-icons";
+import { FadeSnappy } from "@fluentui/react-motion-components-preview";
 import { useEffect, useState } from "react";
 import { getErrorMessage } from "../../lib/tauri";
 import { POPULAR_GROUP_ICONS, findGroupIconEntry } from "./groupIcons";
@@ -179,7 +180,11 @@ export function GroupDialog({
                 </div>
               </div>
             )}
-            {error && <span className={styles.error}>{error}</span>}
+            {error && (
+              <FadeSnappy visible appear>
+                <span className={styles.error}>{error}</span>
+              </FadeSnappy>
+            )}
             <div className={styles.actions}>
               <DialogTrigger disableButtonEnhancement>
                 <Button appearance="subtle" disabled={busy}>取消</Button>

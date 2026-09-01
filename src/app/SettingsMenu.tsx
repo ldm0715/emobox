@@ -85,6 +85,9 @@ const useStyles = makeStyles({
     height: "min(680px, calc(100vh - 48px))",
     maxHeight: "680px",
     overflow: "hidden",
+    // 整个弹窗统一单一背景色（BG2，与 content 同场）：DialogSurface 默认是 BG1，
+    // 会让标题条与内容灰场形成两块背景色；统一后标题/导航/面板同场，卡片（BG1）浮出。
+    backgroundColor: tokens.colorNeutralBackground2,
   },
   body: {
     height: "100%",

@@ -7,6 +7,7 @@ import {
   tokens,
   shorthands,
 } from "@fluentui/react-components";
+import { ScaleSnappy } from "@fluentui/react-motion-components-preview";
 import {
   CheckboxChecked20Regular,
   CheckboxUnchecked20Regular,
@@ -139,9 +140,10 @@ const useStyles = makeStyles({
     alignItems: "center",
     columnGap: tokens.spacingHorizontalXS,
     minWidth: 0,
-    padding: `0 ${tokens.spacingHorizontalXS} ${tokens.spacingVerticalXS}`,
+    // 文件名是卡片主信息：升一档对比（Foreground3 在暗色下发灰难读）。
+    padding: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalXXS}`,
     fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
+    color: tokens.colorNeutralForeground2,
   },
   captionText: {
     flex: 1,
@@ -171,7 +173,7 @@ const useStyles = makeStyles({
     alignItems: "center",
     columnGap: tokens.spacingHorizontalXS,
     minWidth: 0,
-    padding: `0 ${tokens.spacingHorizontalXS} ${tokens.spacingVerticalXS}`,
+    padding: `0 ${tokens.spacingHorizontalS} ${tokens.spacingVerticalXS}`,
   },
   tagBadge: {
     // 覆盖 Badge 的 inline-flex 为 block，文本截断才生效。
@@ -182,11 +184,13 @@ const useStyles = makeStyles({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     cursor: "pointer",
+    ":hover": {
+      color: tokens.colorBrandForeground1,
+    },
   },
   tagOverflow: {
     cursor: "default",
     flexShrink: 0,
-    color: tokens.colorNeutralForeground3,
   },
 });
 
@@ -269,13 +273,16 @@ export function EmojiGridItemBase({
         {/* 图片区只放固定状态角标与操作按钮（GIF 徽标 / 多选框 / 悬停按钮组）。 */}
         {isGifExtension(item.extension) && !multiSelectMode && <Badge className={styles.gifBadge} size="small" appearance="filled">GIF</Badge>}
 
-        {multiSelectMode && (
+        {/* 多选 checkbox：模式开启的瞬间播放入场（scale+fade）。滚动追加的卡片
+            mount 时模式已开、appear 默认 false → 不播动画（红线：追加批次不动画）。
+            勿改回 {multiSelectMode && …} 条件挂载——visible 翻转会失去挂点、动画不播。 */}
+        <ScaleSnappy visible={multiSelectMode} unmountOnExit>
           <span
             className={mergeClasses(styles.selectCheckbox, selected && styles.selectCheckboxChecked)}
           >
             {selected ? <CheckboxChecked20Regular /> : <CheckboxUnchecked20Regular />}
           </span>
-        )}
+        </ScaleSnappy>
 
         <div
           className={`${styles.actions} emoji-actions`}
@@ -342,7 +349,7 @@ export function EmojiGridItemBase({
               key={tag}
               className={styles.tagBadge}
               size="small"
-              appearance="outline"
+              appearance="tint"
               title={tag}
               onClick={(event) => {
                 event.stopPropagation();
@@ -357,7 +364,7 @@ export function EmojiGridItemBase({
             <Badge
               className={mergeClasses(styles.tagBadge, styles.tagOverflow)}
               size="small"
-              appearance="outline"
+              appearance="tint"
               title={tags.slice(2).join("、")}
             >
               +{tags.length - 2}

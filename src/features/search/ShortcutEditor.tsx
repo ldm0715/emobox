@@ -6,6 +6,7 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
+import { FadeSnappy } from "@fluentui/react-motion-components-preview";
 import { CheckmarkCircle20Regular, Keyboard20Regular, Save20Regular } from "@fluentui/react-icons";
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import {
@@ -147,26 +148,34 @@ export function ShortcutEditor({
       <div className={styles.help}>{helpText}</div>
 
       {conflictsWithWindowsMenu && (
-        <MessageBar intent="warning">
-          <MessageBarBody>
-            Alt + Space 是 Windows 系统窗口菜单快捷键，可能无法注册；建议使用 Ctrl + Alt + Space。
-          </MessageBarBody>
-        </MessageBar>
+        <FadeSnappy visible appear>
+          <MessageBar intent="warning">
+            <MessageBarBody>
+              Alt + Space 是 Windows 系统窗口菜单快捷键，可能无法注册；建议使用 Ctrl + Alt + Space。
+            </MessageBarBody>
+          </MessageBar>
+        </FadeSnappy>
       )}
 
       {displayedError ? (
-        <MessageBar intent="error">
-          <MessageBarBody>{displayedError}</MessageBarBody>
-        </MessageBar>
+        <FadeSnappy visible appear>
+          <MessageBar intent="error">
+            <MessageBarBody>{displayedError}</MessageBarBody>
+          </MessageBar>
+        </FadeSnappy>
       ) : registered ? (
-        <div className={styles.statusLine}>
-          <CheckmarkCircle20Regular />
-          <span>已注册：{formatShortcutLabel(shortcut)}</span>
-        </div>
+        <FadeSnappy visible appear>
+          <div className={styles.statusLine}>
+            <CheckmarkCircle20Regular />
+            <span>已注册：{formatShortcutLabel(shortcut)}</span>
+          </div>
+        </FadeSnappy>
       ) : (
-        <MessageBar intent="warning">
-          <MessageBarBody>全局快捷键尚未注册。</MessageBarBody>
-        </MessageBar>
+        <FadeSnappy visible appear>
+          <MessageBar intent="warning">
+            <MessageBarBody>全局快捷键尚未注册。</MessageBarBody>
+          </MessageBar>
+        </FadeSnappy>
       )}
     </div>
   );

@@ -20,7 +20,7 @@ import {
   Star20Regular,
   Tag20Regular,
 } from "@fluentui/react-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { emojiAssetUrl } from "../../lib/tauri";
 import type { IndexedImage } from "../../types";
 
@@ -150,13 +150,23 @@ export function EmojiPreviewDialog({
 }: EmojiPreviewDialogProps) {
   const styles = useStyles();
   const [failed, setFailed] = useState(false);
+  // 常挂载弹窗：关闭瞬间 App 会把 previewItem 置 null（props 闪回退值）。
+  // lastItem ref + meta 快照保证 ~300ms 退场动画期间图片、分组/标签 chips、
+  // 收藏星标不闪空；shown 只在「从未打开过」时为 null。
+  const lastItemRef = useRef<IndexedImage | null>(null);
+  if (item) lastItemRef.current = item;
+  const shown = item ?? lastItemRef.current;
+  const [shownMeta, setShownMeta] = useState({ groupNames, tagNames, favorite });
 
-  // 换项/重开时重置失败标记（与 useGifPreview 同思路）。
   useEffect(() => {
-    if (open) setFailed(false);
-  }, [open, item?.path]);
+    if (open) {
+      // 换项/重开时重置失败标记（与 useGifPreview 同思路）。
+      setFailed(false);
+      setShownMeta({ groupNames, tagNames, favorite });
+    }
+  }, [open, item?.path, groupNames, tagNames, favorite]);
 
-  if (!item) return null;
+  if (!shown) return null;
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => onOpenChange(data.open)} modalType="modal">
@@ -169,8 +179,8 @@ export function EmojiPreviewDialog({
               // asset URL 对 GIF 即动图，img 直接播放。
               <img
                 className={styles.image}
-                src={emojiAssetUrl(item.path)}
-                alt={item.name}
+                src={emojiAssetUrl(shown.path)}
+                alt={shown.name}
                 onError={() => setFailed(true)}
               />
             )}
@@ -178,23 +188,23 @@ export function EmojiPreviewDialog({
 
           <div className={styles.info}>
             <DialogTitle className={styles.title}>
-              <span className={styles.titleText} title={item.name}>{item.name}</span>
+              <span className={styles.titleText} title={shown.name}>{shown.name}</span>
             </DialogTitle>
 
             <div className={styles.rows}>
               <div className={styles.row}>
                 <span className={styles.rowIcon}><Image20Regular /></span>
-                <span>{item.width} × {item.height} · {item.extension.toUpperCase()}</span>
+                <span>{shown.width} × {shown.height} · {shown.extension.toUpperCase()}</span>
               </div>
               <div className={styles.row}>
                 <span className={styles.rowIcon}><DataUsage20Regular /></span>
-                <span>{Math.max(1, Math.round(item.sizeBytes / 1024))} KB</span>
+                <span>{Math.max(1, Math.round(shown.sizeBytes / 1024))} KB</span>
               </div>
               <div className={styles.row}>
                 <span className={styles.rowIcon}><FolderOpen20Regular /></span>
-                {groupNames.length > 0 ? (
+                {shownMeta.groupNames.length > 0 ? (
                   <div className={styles.chips}>
-                    {groupNames.map((name) => (
+                    {shownMeta.groupNames.map((name) => (
                       <Badge key={name} size="small" appearance="outline" className={styles.chip} title={name}>{name}</Badge>
                     ))}
                   </div>
@@ -204,9 +214,9 @@ export function EmojiPreviewDialog({
               </div>
               <div className={styles.row}>
                 <span className={styles.rowIcon}><Tag20Regular /></span>
-                {tagNames.length > 0 ? (
+                {shownMeta.tagNames.length > 0 ? (
                   <div className={styles.chips}>
-                    {tagNames.map((name) => (
+                    {shownMeta.tagNames.map((name) => (
                       <Badge key={name} size="small" appearance="outline" className={styles.chip} title={name}>{name}</Badge>
                     ))}
                   </div>
@@ -220,12 +230,12 @@ export function EmojiPreviewDialog({
               {!readOnly && (
                 <>
                   <Button
-                    icon={favorite ? <Star20Filled /> : <Star20Regular />}
-                    onClick={() => onToggleFavorite(item)}
+                    icon={shownMeta.favorite ? <Star20Filled /> : <Star20Regular />}
+                    onClick={() => onToggleFavorite(shown)}
                   >
-                    {favorite ? "取消收藏" : "收藏"}
+                    {shownMeta.favorite ? "取消收藏" : "收藏"}
                   </Button>
-                  <Button icon={<Copy20Regular />} onClick={() => onCopy(item)}>
+                  <Button icon={<Copy20Regular />} onClick={() => onCopy(shown)}>
                     复制
                   </Button>
                 </>

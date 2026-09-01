@@ -39,6 +39,13 @@ const useStyles = makeStyles({
     columnGap: tokens.spacingHorizontalM,
     paddingLeft: tokens.spacingHorizontalS,
     paddingRight: tokens.spacingHorizontalM,
+    // 首列宽度与 AppShell 侧栏同曲线同时长同步动画（此前无过渡，折叠时瞬跳）。
+    transitionProperty: "grid-template-columns",
+    transitionDuration: tokens.durationNormal,
+    transitionTimingFunction: tokens.curveEasyEase,
+    "@media (prefers-reduced-motion: reduce)": {
+      transitionProperty: "none",
+    },
     backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },

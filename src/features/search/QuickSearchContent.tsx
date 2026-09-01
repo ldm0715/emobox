@@ -2,9 +2,11 @@ import {
   SearchBox,
   makeStyles,
   mergeClasses,
+  motionTokens,
   tokens,
   type SearchBoxChangeEvent,
 } from "@fluentui/react-components";
+import { Slide } from "@fluentui/react-motion-components-preview";
 import { Image20Regular, Search20Regular } from "@fluentui/react-icons";
 import { useCallback, useEffect, useRef } from "react";
 import type { IndexedImage } from "../../types";
@@ -223,7 +225,12 @@ export function QuickSearchContent({
   const trimmedQuery = query.trim();
 
   return (
-    <div ref={rootRef} className={styles.root} onKeyDown={handleKeyDown} aria-busy={copying}>
+    // 每次唤起（activationId 变化）整体重挂载，触发一次性入场：150ms 上浮 8px +
+    // 淡入（复制成功后 500ms 自动关窗，入场必须留足操作窗口，时长硬约束 ≤150ms）。
+    // 重挂载顺带重置选中/焦点，与原 activationId effect 语义等价；useQuickSearchQuery
+    // 活在父层 QuickSearchWindow，不受影响。窗口本体 show/hide 是 Tauri 原生行为。
+    <Slide key={activationId} visible appear duration={motionTokens.durationFast} outY="-8px">
+      <div ref={rootRef} className={styles.root} onKeyDown={handleKeyDown} aria-busy={copying}>
       <SearchBox
         className={styles.search}
         size="large"
@@ -285,5 +292,6 @@ export function QuickSearchContent({
         )}
       </div>
     </div>
+    </Slide>
   );
 }

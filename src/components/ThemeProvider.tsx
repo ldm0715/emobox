@@ -100,12 +100,42 @@ const lightTheme: Theme = {
   ...createLightTheme(brand),
   fontFamilyBase: fontFamily,
   fontFamilyMonospace: '"Cascadia Mono", Consolas, monospace',
+  // 亮色微调（Surface 层级）：分割线降对比（去"表格感"，兼作卡片 1px 浅边框色），
+  // 选中导航改极浅品牌蓝 tint（更柔和，左侧品牌指示条保留）。卡片底 BG3 保留默认
+  // ——层级不清的根因是无边框，由 cardStyles 的 1px 边框解决，避免灰底加重。
+  colorNeutralStroke2: "#e8e8e8",
+  colorSubtleBackgroundSelected: "#e8f1fa",
 };
 
+// 暗色 Surface 层级（深灰蓝基底，hue≈220 低饱和）：窗口底(BG2)最暗 → 主内容区(BG1)
+// → 表情卡(BG3)最亮。Fluent 默认暗色 BG3=#141414 比 BG1 还暗（卡片比背景黑，层级
+// 方向反了），这里整组翻转重排；hover 每级 +3~4 亮度，选中态用低饱和深蓝 + 品牌指示。
 const darkTheme: Theme = {
   ...createDarkTheme(brand),
   fontFamilyBase: fontFamily,
   fontFamilyMonospace: '"Cascadia Mono", Consolas, monospace',
+  // 背景层：窗口/侧栏底 → 内容区 → 卡片（最亮中性层）。
+  colorNeutralBackground2: "#191d26",
+  colorNeutralBackground2Hover: "#20242f",
+  colorNeutralBackground1: "#222732",
+  colorNeutralBackground1Hover: "#2c3240",
+  colorNeutralBackground3: "#2a303d",
+  colorNeutralBackground3Hover: "#333a49",
+  colorNeutralBackground3Pressed: "#242a36",
+  // 悬停/选中：蓝灰 hover；选中 = 低饱和深蓝底（不铺大亮蓝，指示条与图标仍走品牌色）。
+  colorSubtleBackgroundHover: "#282f3b",
+  colorSubtleBackgroundSelected: "#24384f",
+  colorSubtleBackgroundPressed: "#1d2532",
+  // 文字：次要文字提亮并染同色相蓝灰，修"发灰难读"；1/2/4 保留默认。
+  colorNeutralForeground3: "#b3bac6",
+  // 边框/分割线：低对比蓝灰，消灭"亮灰线"。
+  colorNeutralStroke1: "#454c5a",
+  colorNeutralStroke1Hover: "#545c6c",
+  colorNeutralStroke2: "#333947",
+  colorNeutralStroke3: "#333a48",
+  colorNeutralStrokeAccessible: "#6d7689",
+  // 选中卡 / 拖放提示 / tint 徽章统一低饱和深蓝底（默认 #082338 在新基底上偏暗）。
+  colorBrandBackground2: "#1d3a5a",
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -184,8 +214,12 @@ export function ThemeProvider({ children }: PropsWithChildren) {
 
   // 原生滚动条（WebView2）跟随主题：FluentProvider 只切换组件 CSS 变量，
   // 不设置 color-scheme —— 不加这段，滚动条永远按浅色渲染（含深色主题）。
+  // 同时同步 <meta name="theme-color">（窗口底色，与 darkTheme BG2 / lightTheme BG2 对齐）。
   useEffect(() => {
     document.documentElement.style.colorScheme = resolvedTheme;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", resolvedTheme === "dark" ? "#191d26" : "#fafafa");
   }, [resolvedTheme]);
 
   // Phase 15：把「选中文字自动搜索」推送到 Rust（内存镜像，幂等；两个窗口
