@@ -27,8 +27,8 @@ import {
   Keyboard24Regular,
   MoreHorizontal20Regular,
   PaintBrushRegular,
-  PinOffRegular,
-  PinRegular,
+  PinOff16Regular,
+  Pin16Regular,
   Rename20Regular,
   Search20Regular,
   Settings24Regular,
@@ -422,7 +422,7 @@ export function LibrarySidebar({
                       <GroupIcon />
                       {!collapsed && (
                         <span className={styles.pinLabel}>
-                          {group.isPinned && <PinRegular fontSize={tokens.fontSizeBase200} />}
+                          {group.isPinned && <Pin16Regular />}
                           <span className={styles.label}>{group.name}</span>
                         </span>
                       )}
@@ -445,7 +445,7 @@ export function LibrarySidebar({
                             <MenuPopover>
                               <MenuList>
                                 <MenuItem
-                                  icon={group.isPinned ? <PinOffRegular /> : <PinRegular />}
+                                  icon={group.isPinned ? <PinOff16Regular /> : <Pin16Regular />}
                                   onClick={() => onTogglePinGroup(group.id, !group.isPinned)}
                                 >
                                   {group.isPinned ? "取消置顶" : "置顶"}

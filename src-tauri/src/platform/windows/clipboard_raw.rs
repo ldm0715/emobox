@@ -88,6 +88,20 @@ fn register_format(format_name: &str) -> Option<u32> {
 /// 绝不当错误处理。
 pub fn read_registered_format_bytes(format_name: &str) -> Option<Vec<u8>> {
     let format = register_format(format_name)?;
+    read_format_bytes(format)
+}
+
+/// 读标准剪贴板格式（如 `CF_DIB` / `CF_DIBV5`）的原始字节。
+///
+/// 语义与 [`read_registered_format_bytes`] 一致：任何失败 → `None`，调用方静默降级。
+pub fn read_standard_format_bytes(format: u32) -> Option<Vec<u8>> {
+    read_format_bytes(format)
+}
+
+/// 按格式 id 读剪贴板原始字节（guard + 可用性检查 + 拷贝）。
+///
+/// 数据所有权属系统：只拷贝，绝不 GlobalFree。
+fn read_format_bytes(format: u32) -> Option<Vec<u8>> {
     let _guard = ClipboardGuard::open().ok()?;
 
     if unsafe { IsClipboardFormatAvailable(format) }.is_err() {
@@ -106,7 +120,7 @@ pub fn read_registered_format_bytes(format_name: &str) -> Option<Vec<u8>> {
     }
     let pointer = unsafe { GlobalLock(global) };
     if pointer.is_null() {
-        log::debug!("[clipboard-raw] GlobalLock failed for format {format_name}");
+        log::debug!("[clipboard-raw] GlobalLock failed for format {format}");
         return None;
     }
     let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), size) }.to_vec();
@@ -119,28 +133,7 @@ pub fn read_registered_format_bytes(format_name: &str) -> Option<Vec<u8>> {
 /// 任何失败（剪贴板被占 / 格式不存在 / 列表为空 / ANSI 列表）→ `None`，
 /// 调用方静默降级。**只读路径，绝不写源文件。**
 pub fn read_file_drop() -> Option<Vec<std::path::PathBuf>> {
-    let _guard = ClipboardGuard::open().ok()?;
-
-    if unsafe { IsClipboardFormatAvailable(CF_HDROP.0 as u32) }.is_err() {
-        return None;
-    }
-    // 数据所有权属系统：只拷贝，绝不 GlobalFree。
-    let handle = unsafe { GetClipboardData(CF_HDROP.0 as u32) }.ok()?;
-    if handle.is_invalid() {
-        return None;
-    }
-    let global = HGLOBAL(handle.0);
-    let size = unsafe { GlobalSize(global) };
-    if size == 0 {
-        return None;
-    }
-    let pointer = unsafe { GlobalLock(global) };
-    if pointer.is_null() {
-        log::debug!("[clipboard-raw] GlobalLock failed for CF_HDROP");
-        return None;
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(pointer.cast::<u8>(), size) }.to_vec();
-    let _ = unsafe { GlobalUnlock(global) };
+    let bytes = read_format_bytes(CF_HDROP.0 as u32)?;
     parse_drop_files(&bytes)
 }
 
