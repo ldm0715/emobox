@@ -7,7 +7,7 @@ import {
 } from "@fluentui/react-components";
 import { Fade, FadeSnappy, Slide } from "@fluentui/react-motion-components-preview";
 import { ArrowDownload20Regular, Search20Regular, Star24Regular, History24Regular } from "@fluentui/react-icons";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type {
   GridDensity,
   IndexedImage,
@@ -30,8 +30,11 @@ interface EmojiLibraryViewProps {
   /** 还有未加载的页（触发网格哨兵 loadMore）。 */
   hasMore: boolean;
   onLoadMore: () => void;
-  /** 视图/搜索词/排序的复合 key：变化时网格重置渐进渲染量（追加页不清零）。 */
+  /** 落地代数 key：只在视图/搜索词/排序切换且新数据落地时变化（keep-previous，
+   * 旧内容无动画保留到落地瞬间），驱动入场动画与渐进渲染量重置。 */
   resetKey: string;
+  /** 第 1 页数据是否已落地：落地前不渲染空状态（防启动首帧闪现错误的空态）。 */
+  ready: boolean;
   query: string;
   density: GridDensity;
   sortOption: SortOption;
@@ -180,6 +183,7 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     hasMore,
     onLoadMore,
     resetKey,
+    ready,
     query,
     density,
     sortOption,
@@ -222,6 +226,13 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
   // 多选模式下只要有选中就浮出批量条（含"退出多选"）；非多选模式仅 2+ 项时浮出。
   const showBar = selectedIds.size >= (multiSelectMode ? 1 : 2);
   const allFav = selectedItems.length > 0 && selectedItems.every((item) => favoriteIds.has(item.id));
+
+  // keep-previous 后旧内容不被卸载、滚动位置不会被浏览器自动收口，
+  // 新视图数据落地（resetKey 变化）时显式回顶（与 SettingsMenu panelRef 同模式）。
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    contentRef.current?.scrollTo(0, 0);
+  }, [resetKey]);
 
   function renderEmptyContent() {
     if (query) {
@@ -307,11 +318,13 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
       </div>
 
       <div className={styles.contentWrap}>
-        <div className={styles.content}>
+        <div className={styles.content} ref={contentRef}>
           {/* 视图/搜索/排序切换的入场淡入：只做在容器层（key 重挂载触发），绝不做
               per-item——EmojiGridItem 是 memo 数百实例，逐项动画会击穿性能红线。
               内层垫普通 div：presence 组件克隆唯一 child 并直接施加动效，child 必须
-              是 DOM 元素（EmojiGrid 返回 Fragment 不能直接当 child）。 */}
+              是 DOM 元素（EmojiGrid 返回 Fragment 不能直接当 child）。
+              key 是落地代数（keep-previous）：旧内容无动画保留到新数据落地，
+              落地瞬间才重挂载淡入，空状态与网格获得一致的入场动画。 */}
           <FadeSnappy key={resetKey} visible appear>
             <div>
               {items.length > 0 ? (
@@ -340,7 +353,7 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
                 onRestore={onRestore}
                 onPermanentlyDelete={onPermanentlyDelete}
               />
-            ) : renderEmptyContent()}
+            ) : ready ? renderEmptyContent() : null}
             </div>
           </FadeSnappy>
 

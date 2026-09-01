@@ -194,12 +194,21 @@ export function App() {
   // 视图请求序号：视图/搜索词/排序变化时递增，loadMore 的迟到的追加响应
   // 据此丢弃（与浮层 requestSeq 同思路）。
   const viewSeqRef = useRef(0);
+  // 落地代数：只在视图/搜索词/排序真正切换且第 1 页数据落地时递增，驱动
+  // EmojiLibraryView 的入场动画 key（keep-previous：旧内容无动画保留到新数据
+  // 落地，落地瞬间才重挂载淡入，header 计数与内容同一次 commit 原子更新）。
+  const [viewGeneration, setViewGeneration] = useState(0);
+  // 上次落地的 view|query|sort 复合 key：同 key 的重拉（recentItems/groups/tags
+  // 变化触发）原地更新内容、不重播入场动画（否则 recent 视图每次复制都闪一次）。
+  const lastLandedKeyRef = useRef<string | null>(null);
   // loadMore 防重入（哨兵可能连续触发）。
   const loadingMoreRef = useRef(false);
   // 下一页 offset 游标：按「服务端返回的行数」前进（而非本地 currentEmojis 长度）。
   // 本地删除/去重会让 currentEmojis 与服务端结果集错位，若用其长度做 offset，
-  // 全被去重的页会永远请求同一 offset 造成死循环。
-  const nextOffsetRef = useRef(0);
+  // 全被去重的页会永远请求同一 offset 造成死循环。null = 第 1 页未落地
+  // （视图刚切换、旧内容还在显示），loadMore 据此跳过，防止用旧 offset
+  // 给新视图追加第 2 页。
+  const nextOffsetRef = useRef<number | null>(0);
   // 键盘快捷键的 latest-handler 容器：keydown effect deps 保持 []，避免闭包过期。
   const keyShortcutRef = useRef<(event: globalThis.KeyboardEvent) => void>(() => {});
   // 剪贴板收藏的 latest-handler 容器：事件监听 effect 不随设置变化重注册，
@@ -229,7 +238,6 @@ export function App() {
   const [confirmState, setConfirmState] = useState<PendingConfirm | null>(null);
 
   const [currentView, setCurrentView] = useState<LibraryView>(defaultView);
-  const [viewLoading, setViewLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOption, setSortOption] = useState<SortOption>("name-asc");
   const [density, setDensity] = useState<GridDensity>("comfortable");
@@ -776,12 +784,14 @@ export function App() {
 
   // 视图变化时重新拉取第 1 页（后端按 view 过滤 + 搜索 query 跨字段 OR + 排序下推）。
   // Phase 17：sortOption 变化也重拉第 1 页（服务端排序）；viewSeqRef 作废在途的
-  // loadMore 追加响应。
+  // loadMore 追加响应。keep-previous：拉取期间不清 currentEmojis（旧内容保留，
+  // 不闪空状态），落地瞬间经 viewGeneration 重挂载淡入新内容。
   useEffect(() => {
     let disposed = false;
     viewSeqRef.current += 1;
     const seq = viewSeqRef.current;
-    setViewLoading(true);
+    // 作废追加游标：第 1 页落地前 loadMore 一律跳过（见 nextOffsetRef 注释）。
+    nextOffsetRef.current = null;
     const trimmedQuery = debouncedQuery.trim();
     (async () => {
       try {
@@ -823,12 +833,17 @@ export function App() {
         setHasMore(items.length < total);
         nextOffsetRef.current = items.length;
         mergeFavoriteFlags(items);
+        // 真正的视图/搜索词/排序切换（而非同 key 重拉）→ 递增落地代数，
+        // 触发 EmojiLibraryView 的容器级入场动画（key 重挂载）。
+        const landingKey = `${currentView}|${trimmedQuery}|${sortOption}`;
+        if (lastLandedKeyRef.current !== landingKey) {
+          lastLandedKeyRef.current = landingKey;
+          setViewGeneration((g) => g + 1);
+        }
       } catch (e) {
         if (!disposed && seq === viewSeqRef.current) {
           notifyError(`读取视图失败：${getErrorMessage(e)}`);
         }
-      } finally {
-        if (!disposed && seq === viewSeqRef.current) setViewLoading(false);
       }
     })();
     return () => {
@@ -844,6 +859,8 @@ export function App() {
     if (loadingMoreRef.current || !hasMore) return;
     const seq = viewSeqRef.current;
     const offset = nextOffsetRef.current;
+    // 第 1 页未落地（视图刚切换、旧内容还在显示）→ 不追加。
+    if (offset === null) return;
     const trimmedQuery = debouncedQuery.trim();
     loadingMoreRef.current = true;
     try {
@@ -959,6 +976,10 @@ export function App() {
   // favoriteIds 经 latest-ref 读取：回调身份不随收藏集变化（memo(EmojiGridItem) 前提）。
   const favoriteIdsRef = useRef(favoriteIds);
   favoriteIdsRef.current = favoriteIds;
+  // toggleFavorite 定义在 useMultiSelection 之前且 deps 不含 currentView，
+  // 经 latest-ref 读实时视图（await 期间切走视图时跳过本地剪辑，防误递减 viewTotal）。
+  const currentViewRef = useRef(currentView);
+  currentViewRef.current = currentView;
 
   const toggleFavorite = useCallback(async (items: IndexedImage[]) => {
     const ids = items.map((item) => item.id);
@@ -987,6 +1008,15 @@ export function App() {
     setFavoriteIds((curr) => syncFavoriteIds(curr, next));
     try {
       await setEmojisFavorite(ids, next);
+      // 收藏视图里取消收藏：条目已不属于该视图，成功后本地剪辑掉（镜像
+      // performDelete 模式；hasMore 不动，哨兵自动回填）。放成功之后做，
+      // 回滚路径只需恢复标志翻转。
+      if (!next && currentViewRef.current === "favorites") {
+        const idSet = new Set(ids);
+        setCurrentEmojis((curr) => curr.filter((e) => !idSet.has(e.id)));
+        setViewTotal((curr) => Math.max(0, curr - ids.length));
+        deselectRef.current(ids);
+      }
       // 收藏计数（侧栏）只有后端知道真值，成功后刷新。
       void refreshLibrary();
     } catch (e) {
@@ -1051,6 +1081,10 @@ export function App() {
   // ===== 多选：hook 托管 selectedIds / anchor / Shift 范围 =====
   const { selectedIds, selectOnly, toggle, rangeSelect, selectAll, clear, deselect } =
     useMultiSelection(filteredItems);
+
+  // deselect 经 latest-ref 转发给定义在 hook 之前的 toggleFavorite。
+  const deselectRef = useRef(deselect);
+  deselectRef.current = deselect;
 
   // rangeSelect 依赖 anchorId（每次选区变化都换新），经 latest-ref 转发，
   // 保持 handleItemSelect 身份稳定（memo(EmojiGridItem) 前提）。
@@ -1410,7 +1444,10 @@ export function App() {
           total={viewTotal}
           hasMore={hasMore}
           onLoadMore={() => void loadMore()}
-          resetKey={`${currentView}|${debouncedQuery}|${sortOption}`}
+          /* 入场动画/重置 key = 落地代数：只在视图/搜索词/排序切换且新数据
+             落地时变化（keep-previous，见 viewGeneration 注释）。 */
+          resetKey={`${viewGeneration}`}
+          ready={viewGeneration > 0}
           query={searchQuery}
           density={density}
           sortOption={sortOption}
