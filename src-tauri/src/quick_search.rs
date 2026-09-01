@@ -42,9 +42,14 @@ pub fn show_quick_search<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     // 选中文字也必须在浮层抢焦点前读取（UIA 读的是"焦点控件"）。
     let selected_text = selection_capture::capture_selected_text(app);
 
-    window
-        .center()
-        .map_err(|error| format!("无法将快捷搜索窗口居中：{error}"))?;
+    // 仅首次显示居中：窗口只隐藏不销毁，用户拖动标题栏后的位置跨唤起保留。
+    // 进程重启后回到居中。
+    static CENTERED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+    if CENTERED_ONCE.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        window
+            .center()
+            .map_err(|error| format!("无法将快捷搜索窗口居中：{error}"))?;
+    }
     window
         .show()
         .map_err(|error| format!("无法显示快捷搜索窗口：{error}"))?;

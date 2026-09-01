@@ -7,6 +7,7 @@ import {
   useToastController,
 } from "@fluentui/react-components";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppSettings } from "../../components/ThemeProvider";
 import { DEFAULT_QUICK_SEARCH_SHORTCUT } from "../../config/shortcuts";
@@ -15,15 +16,24 @@ import {
   getErrorMessage,
   getQuickSearchShortcutStatus,
   hideQuickSearch,
+  listGroups,
   pasteToTargetWindow,
 } from "../../lib/tauri";
-import type { IndexedImage, PasteResult, QuickSearchOpenedPayload } from "../../types";
+import type {
+  IndexedImage,
+  LibraryGroup,
+  PasteResult,
+  QuickSearchOpenedPayload,
+} from "../../types";
 import { QuickSearchPanel } from "./QuickSearchPanel";
 import { useQuickSearchQuery } from "./useQuickSearchQuery";
+import { overlayDragGuard } from "./overlayDragGuard";
 
 const QUICK_SEARCH_OPENED_EVENT = "quick-search-opened";
 const LIBRARY_CHANGED_EVENT = "library-changed";
 const SUCCESS_VISIBILITY_MS = 500;
+/** 激活后的窗口期内忽略失焦事件：show/center/set_focus 序列可能产生瞬时 blur。 */
+const ACTIVATION_FOCUS_GUARD_MS = 300;
 
 export function QuickSearchWindow() {
   const toasterId = useId("quick-search-toaster");
@@ -34,15 +44,27 @@ export function QuickSearchWindow() {
   const [activationId, setActivationId] = useState(0);
   const [reloadToken, setReloadToken] = useState(0);
   const [shortcut, setShortcut] = useState(DEFAULT_QUICK_SEARCH_SHORTCUT);
+  const [pinnedGroups, setPinnedGroups] = useState<LibraryGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const closeTimer = useRef<number | undefined>(undefined);
+  const activatedAtRef = useRef(0);
 
-  const { query, setQuery, resetQuery, items, loading, error } = useQuickSearchQuery(
-    activationId,
-    reloadToken,
-  );
+  const {
+    query,
+    setQuery,
+    resetQuery,
+    items,
+    total,
+    loading,
+    loadingMore,
+    error,
+    loadMore,
+    hasMore,
+  } = useQuickSearchQuery(activationId, reloadToken, selectedGroupId);
 
   // seed：打开浮层时前台窗口选中的文字（Phase 15）。非空则作为初始搜索词，
   // 空/未读到则清空 query —— requestSeq 守卫保证旧请求不会污染新会话。
+  // 分组选择同时重置回「全部」（每次唤起都从最近使用开始）。
   const activate = useCallback(
     (seed?: string) => {
       if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current);
@@ -52,6 +74,8 @@ export function QuickSearchWindow() {
       } else {
         resetQuery();
       }
+      setSelectedGroupId(null);
+      activatedAtRef.current = Date.now();
       setCopyError("");
       setCopyingPath(undefined);
       setActivationId((current) => current + 1);
@@ -69,10 +93,56 @@ export function QuickSearchWindow() {
     if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current);
     closeTimer.current = undefined;
     setCopyingPath(undefined);
+    // 只隐藏窗口，绝不清 TargetWindowState（hide→paste 自动粘贴链依赖它，
+    // 由 Rust 侧 60s TTL 与下次打开时的先清后写负责过期）。
     hideQuickSearch().catch((hideError) => {
       console.error("隐藏快捷搜索窗口失败", hideError);
     });
   }, []);
+
+  // latest-ref 转发：失焦监听的 effect deps 保持 []，close 永远读最新闭包
+  // （与 keyShortcutRef 同模式，避免捕获旧 state）。
+  const closeRef = useRef(close);
+  closeRef.current = close;
+
+  // 点浮层外部（焦点转到其他窗口）→ 立即关闭。浮层内部任何点击（分组/搜索框/
+  // 加载更多/卡片）都不会让窗口失焦，天然不误触发。复制流里 hideQuickSearch
+  // 触发的 blur 会再调一次 close——幂等（重复 hide 无害）。
+  // 整窗拖拽（overlayDragGuard）的 move loop 会让窗口短暂失焦，属正常现象，
+  // 不关闭；拖拽结束重新获焦时清标志。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    const unlistenPromise = getCurrentWindow().onFocusChanged(({ payload }) => {
+      if (payload) {
+        overlayDragGuard.active = false;
+        return;
+      }
+      if (overlayDragGuard.active) return;
+      if (Date.now() - activatedAtRef.current > ACTIVATION_FOCUS_GUARD_MS) {
+        closeRef.current();
+      }
+    });
+    unlistenPromise
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // 点分组按钮 = 切回浏览态：清空关键词（搜索挂起分组筛选，见 useQuickSearchQuery）。
+  const handleSelectGroup = useCallback(
+    (groupId: number | null) => {
+      setSelectedGroupId(groupId);
+      setQuery("");
+    },
+    [setQuery],
+  );
 
   const copySelectedImage = useCallback(async (item: IndexedImage) => {
     if (copyingPath) return;
@@ -201,12 +271,33 @@ export function QuickSearchWindow() {
     };
   }, [activate]);
 
+  // 置顶分组：挂载、每次唤起（置顶是纯侧栏变更，不发 library-changed，靠唤起时
+  // 重拉兜住）与库变更时刷新。
+  useEffect(() => {
+    let disposed = false;
+    listGroups()
+      .then((groups) => {
+        if (!disposed) setPinnedGroups(groups.filter((group) => group.isPinned));
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, [activationId, reloadToken]);
+
   return (
     <>
       <QuickSearchPanel
         results={items}
+        total={total}
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={() => void loadMore()}
         query={query}
         onQueryChange={setQuery}
+        pinnedGroups={pinnedGroups}
+        selectedGroupId={selectedGroupId}
+        onSelectGroup={handleSelectGroup}
         loading={loading}
         error={error || undefined}
         copyError={copyError || undefined}

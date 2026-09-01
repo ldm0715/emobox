@@ -86,11 +86,24 @@ pub fn run() {
 
             // 浮层是透明圆角窗口：Windows 10 上 DWM 默认阴影若未清除，会在
             // 圆角外留下直角色块（tauri#11321）。tauri.conf.json 的 shadow:false
-            // 存在配置时序不生效的情况，这里运行时再关一次（幂等）。
-            if let Some(overlay) = app.get_webview_window(quick_search::WINDOW_LABEL)
-                && let Err(error) = overlay.set_shadow(false)
-            {
-                log::warn!("关闭浮层窗口阴影失败：{error}");
+            // 与 set_shadow(false)（tao 标志位）都存在时序不稳的记录，这里再经
+            // Win32 直接禁用 DWM 非客户区渲染（属性级设置，不触发样式重算/重绘，
+            // 幂等）——三重保险里真正确定性生效的是这一道。
+            if let Some(overlay) = app.get_webview_window(quick_search::WINDOW_LABEL) {
+                if let Err(error) = overlay.set_shadow(false) {
+                    log::warn!("关闭浮层窗口阴影失败：{error}");
+                }
+                #[cfg(windows)]
+                if let Ok(hwnd) = overlay.hwnd() {
+                    if let Err(error) =
+                        platform::windows::dwm::disable_nc_rendering(hwnd.0 as isize)
+                    {
+                        log::warn!("禁用浮层 DWM 非客户区渲染失败：{error}");
+                    }
+                    // OS 级圆角裁剪：区域外像素（DWM 残余阴影 / WebView2 底边
+                    // 透明残片）一律无法绘制。
+                    platform::windows::dwm::apply_rounded_region(hwnd.0 as isize);
+                }
             }
 
             Ok(())

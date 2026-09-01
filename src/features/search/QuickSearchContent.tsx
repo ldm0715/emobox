@@ -1,4 +1,5 @@
 import {
+  Button,
   SearchBox,
   makeStyles,
   mergeClasses,
@@ -8,17 +9,25 @@ import {
 } from "@fluentui/react-components";
 import { Slide } from "@fluentui/react-motion-components-preview";
 import { Image20Regular, Search20Regular } from "@fluentui/react-icons";
-import { useCallback, useEffect, useRef } from "react";
-import type { IndexedImage } from "../../types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { IndexedImage, LibraryGroup } from "../../types";
 import { cardBorderResetStyle, cardSelectedRingStyle } from "../library/cardStyles";
+import { getGroupIcon } from "../library/groupIcons";
 import { useThumbnail } from "../library/useThumbnail";
 import { useGifPreview } from "../library/useGifPreview";
 import { useSearchKeyboard } from "./useSearchKeyboard";
 
 interface QuickSearchContentProps {
   results: IndexedImage[];
+  total: number;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
   query: string;
   onQueryChange: (query: string) => void;
+  pinnedGroups: LibraryGroup[];
+  selectedGroupId: number | null;
+  onSelectGroup: (groupId: number | null) => void;
   loading?: boolean;
   error?: string;
   copyError?: string;
@@ -34,22 +43,60 @@ const useStyles = makeStyles({
   root: {
     minWidth: 0,
     minHeight: 0,
+    flexGrow: 1,
     display: "grid",
-    gridTemplateRows: "auto minmax(0, 1fr) auto",
-    gap: tokens.spacingVerticalM,
+    // 搜索框 → 置顶分组行 → 状态行 → 结果（弹性滚动） → footer
+    gridTemplateRows: "auto auto auto minmax(0, 1fr) auto",
+    gap: tokens.spacingVerticalS,
   },
   search: {
     width: "100%",
+    // Fluent SearchBox 根元素自带 max-width: 468px（inline-flex），width:100%
+    // 会被它截断成 468px 贴左（CLAUDE.md 已记录的坑）。显式解除才真正撑满
+    // 内容区（左右等宽 padding，即水平居中）。
+    maxWidth: "none",
+    // 放大搜索框：SearchBox 只有 medium/large 两档，浮层里 large 视觉仍偏小，
+    // 对内层 input 提字号 + 加内边距（Griffel 嵌套选择器必须带 & 占位符，
+    // 裸 "input" 会静默不生效——见 SettingsMenu.pathInput 的既有告警）。
+    "& input": {
+      fontSize: tokens.fontSizeBase400,
+      paddingBlock: "10px",
+    },
+  },
+  groupRow: {
+    // 固定行高 + 横向滚动：分组再多也不撑高浮层。
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
+    height: "36px",
+    flexShrink: 0,
+    minWidth: 0,
+    overflowX: "auto",
+    overflowY: "hidden",
+  },
+  groupChip: {
+    flexShrink: 0,
+  },
+  status: {
+    display: "flex",
+    alignItems: "center",
+    minHeight: "18px",
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
   },
   results: {
-    minHeight: "260px",
-    maxHeight: "316px",
+    minHeight: 0,
     overflowY: "auto",
   },
   grid: {
     display: "grid",
     gridTemplateColumns: `repeat(${COLUMN_COUNT}, minmax(0, 1fr))`,
     gap: tokens.spacingHorizontalS,
+  },
+  loadMoreWrap: {
+    display: "flex",
+    justifyContent: "center",
+    padding: `${tokens.spacingVerticalM} 0 ${tokens.spacingVerticalXS}`,
   },
   item: {
     minWidth: 0,
@@ -103,7 +150,7 @@ const useStyles = makeStyles({
     whiteSpace: "nowrap",
   },
   empty: {
-    minHeight: "250px",
+    minHeight: "180px",
     display: "grid",
     placeItems: "center",
     color: tokens.colorNeutralForeground3,
@@ -147,9 +194,12 @@ function QuickSearchItem({
   itemRef: (element: HTMLButtonElement | null) => void;
 }) {
   const styles = useStyles();
-  const { source } = useThumbnail(item.id, 128);
+  const { source, failed } = useThumbnail(item.id, 128);
+  // 静态缩略图本身解码失败（本地 state，GIF 回退由 useGifPreview 处理）。
+  const [imageFailed, setImageFailed] = useState(false);
   // 选中态 = 鼠标 hover（onMouseEnter→onPoint）+ 键盘高亮，一套状态覆盖两种输入。
   const { gifSrc, handleGifError } = useGifPreview(item, selected);
+  const showPlaceholder = !source || failed || imageFailed;
 
   return (
     <button
@@ -165,12 +215,14 @@ function QuickSearchItem({
       onClick={onActivate}
     >
       <span className={styles.frame}>
-        {source ? (
+        {source && !showPlaceholder ? (
           <img
             className={styles.image}
             src={gifSrc ?? source}
             alt={item.name}
-            onError={gifSrc ? handleGifError : undefined}
+            loading="lazy"
+            decoding="async"
+            onError={gifSrc ? handleGifError : () => setImageFailed(true)}
           />
         ) : (
           <Image20Regular className={styles.placeholder} />
@@ -183,8 +235,15 @@ function QuickSearchItem({
 
 export function QuickSearchContent({
   results,
+  total,
+  hasMore,
+  loadingMore,
+  onLoadMore,
   query,
   onQueryChange,
+  pinnedGroups,
+  selectedGroupId,
+  onSelectGroup,
   loading = false,
   error,
   copyError,
@@ -216,7 +275,7 @@ export function QuickSearchContent({
     window.requestAnimationFrame(() => {
       rootRef.current?.querySelector<HTMLInputElement>("input")?.focus();
     });
-  }, [activationId, setSelectedIndex]);
+  }, [activationId, selectedGroupId, setSelectedIndex]);
 
   useEffect(() => {
     itemRefs.current[selectedIndex]?.scrollIntoView({ block: "nearest" });
@@ -224,11 +283,25 @@ export function QuickSearchContent({
 
   const trimmedQuery = query.trim();
 
+  // 状态行：展示当前是 搜索结果 / 分组浏览 / 最近使用。首屏加载与出错时不显示。
+  let statusText = "";
+  if (!loading && !error && total > 0) {
+    if (trimmedQuery) {
+      statusText = `搜索 “${trimmedQuery}” · ${total} 张结果`;
+    } else {
+      const group = pinnedGroups.find((candidate) => candidate.id === selectedGroupId);
+      statusText = group
+        ? `分组「${group.name}」 · ${total} 张`
+        : `最近使用 · ${total} 张`;
+    }
+  }
+
   return (
     // 每次唤起（activationId 变化）整体重挂载，触发一次性入场：150ms 上浮 8px +
     // 淡入（复制成功后 500ms 自动关窗，入场必须留足操作窗口，时长硬约束 ≤150ms）。
-    // 重挂载顺带重置选中/焦点，与原 activationId effect 语义等价；useQuickSearchQuery
+    // 重挂载顺带重置选中/焦点，与 activationId effect 语义等价；useQuickSearchQuery
     // 活在父层 QuickSearchWindow，不受影响。窗口本体 show/hide 是 Tauri 原生行为。
+    // 分组行/状态行在关键词输入时只重渲染、不随 key 变化重挂载（入场动画只在唤起时播）。
     <Slide key={activationId} visible appear duration={motionTokens.durationFast} outY="-8px">
       <div ref={rootRef} className={styles.root} onKeyDown={handleKeyDown} aria-busy={copying}>
       <SearchBox
@@ -246,23 +319,72 @@ export function QuickSearchContent({
         }}
       />
 
-      <div className={styles.results}>
-        {results.length > 0 ? (
-          <div className={styles.grid} role="listbox" aria-label="快速搜索结果，空搜索时最近使用优先">
-            {results.map((item, index) => (
-              <QuickSearchItem
-                key={item.id}
-                item={item}
-                selected={index === selectedIndex}
+      {pinnedGroups.length > 0 ? (
+        <div className={styles.groupRow} role="tablist" aria-label="置顶分组">
+          <Button
+            className={styles.groupChip}
+            size="small"
+            appearance={selectedGroupId === null ? "primary" : "secondary"}
+            disabled={copying}
+            onClick={() => onSelectGroup(null)}
+          >
+            全部
+          </Button>
+          {pinnedGroups.map((group) => {
+            const Icon = getGroupIcon(group.icon);
+            return (
+              <Button
+                key={group.id}
+                className={styles.groupChip}
+                size="small"
+                appearance={selectedGroupId === group.id ? "primary" : "secondary"}
+                icon={<Icon />}
                 disabled={copying}
-                itemRef={(element) => {
-                  itemRefs.current[index] = element;
-                }}
-                onPoint={() => setSelectedIndex(index)}
-                onActivate={() => confirmItem(item)}
-              />
-            ))}
-          </div>
+                title={group.name}
+                onClick={() => onSelectGroup(group.id)}
+              >
+                {group.name}
+              </Button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className={styles.status}>{statusText || null}</div>
+
+      <div className={styles.results} data-no-window-drag>
+        {results.length > 0 ? (
+          <>
+            <div className={styles.grid} role="listbox" aria-label="快速搜索结果，空搜索时最近使用优先">
+              {results.map((item, index) => (
+                <QuickSearchItem
+                  key={item.id}
+                  item={item}
+                  selected={index === selectedIndex}
+                  disabled={copying}
+                  itemRef={(element) => {
+                    itemRefs.current[index] = element;
+                  }}
+                  onPoint={() => setSelectedIndex(index)}
+                  onActivate={() => confirmItem(item)}
+                />
+              ))}
+            </div>
+            {hasMore ? (
+              <div className={styles.loadMoreWrap}>
+                <Button
+                  size="small"
+                  appearance="secondary"
+                  // tabIndex -1：Enter 由根容器统一拦截为「复制选中项」，不触发按钮点击。
+                  tabIndex={-1}
+                  disabled={copying || loadingMore}
+                  onClick={onLoadMore}
+                >
+                  {loadingMore ? "加载中…" : `加载更多（已显示 ${results.length}/${total}）`}
+                </Button>
+              </div>
+            ) : null}
+          </>
         ) : (
           <div className={styles.empty}>
             {loading ? (
@@ -285,9 +407,9 @@ export function QuickSearchContent({
           <span className={styles.error}>{copyError}</span>
         ) : (
           <>
-            <span><span className={styles.key}>方向键</span> 移动</span>
+            <span><span className={styles.key}>↑↓</span> 选择</span>
             <span><span className={styles.key}>Enter</span> 复制</span>
-            <span><span className={styles.key}>Esc</span> 隐藏</span>
+            <span><span className={styles.key}>Esc</span> 关闭</span>
           </>
         )}
       </div>
