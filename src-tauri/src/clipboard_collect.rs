@@ -68,31 +68,42 @@ pub enum ClipboardCollectOutcome {
 /// `download_web_gif` 是「联网下载网页 GIF」设置开关：开启时对剪贴板上的
 /// 网页 GIF URL（Chrome/Edge 复制时只放首帧位图 + URL）联网下载原始字节
 /// 保留动画；关闭时静态导入，但检测到网页动图会在 message 里提醒用户。
+/// `target_group`（Phase 22）是前端发起收藏那一刻主窗口浏览的分组 id：
+/// 有值时新导入的图片归入该分组（重复跳过的不入组），所有通道共用。
 pub fn collect_image_from_clipboard<R: Runtime>(
     app: &AppHandle<R>,
     database_state: &DatabaseState,
     skip_perceptual_dedup: bool,
     download_web_gif: bool,
+    target_group: Option<i64>,
 ) -> ClipboardCollectOutcome {
     // 0. Windows 上优先走本地动画通道（"image/gif" 字节 / CF_HDROP 文件路径）。
-    if let Some(outcome) = try_collect_gif_bytes(database_state, skip_perceptual_dedup) {
+    if let Some(outcome) =
+        try_collect_gif_bytes(database_state, skip_perceptual_dedup, target_group)
+    {
         return outcome;
     }
 
     // 0.1 资源管理器复制非 GIF 图片文件：剪贴板只有 CF_HDROP 路径、无任何
     //     位图格式，arboard 读不到 —— 此前被误报「剪贴板中没有图片」。
-    if let Some(outcome) = try_collect_file_drop_image(database_state, skip_perceptual_dedup) {
+    if let Some(outcome) =
+        try_collect_file_drop_image(database_state, skip_perceptual_dedup, target_group)
+    {
         return outcome;
     }
 
     // 0.5 网页 GIF：开启 → 下载原始字节导入；未开启 / 下载失败 → 降级 RGBA
     //     路径并携带提示（拼进 Imported 的 message，前端 toast 展示）。
-    let web_gif_note =
-        match attempt_web_gif(database_state, skip_perceptual_dedup, download_web_gif) {
-            WebGifAttempt::Done(outcome) => return outcome,
-            WebGifAttempt::Fallback(note) => note,
-            WebGifAttempt::NotWebGif => None,
-        };
+    let web_gif_note = match attempt_web_gif(
+        database_state,
+        skip_perceptual_dedup,
+        download_web_gif,
+        target_group,
+    ) {
+        WebGifAttempt::Done(outcome) => return outcome,
+        WebGifAttempt::Fallback(note) => note,
+        WebGifAttempt::NotWebGif => None,
+    };
 
     // 1. 读剪贴板：先走插件（arboard）解码；失败时 Windows 上原生回退
     //    （"PNG" 注册格式 → CF_DIBV5 → CF_DIB，见 read_image_native_fallback）。
@@ -137,6 +148,7 @@ pub fn collect_image_from_clipboard<R: Runtime>(
         "png",
         &filename,
         skip_perceptual_dedup,
+        target_group,
     );
 
     match result {
@@ -363,6 +375,7 @@ fn read_le_u32(bytes: &[u8], offset: usize) -> u32 {
 fn try_collect_gif_bytes(
     database_state: &DatabaseState,
     skip_perceptual_dedup: bool,
+    target_group: Option<i64>,
 ) -> Option<ClipboardCollectOutcome> {
     #[cfg(windows)]
     {
@@ -392,12 +405,13 @@ fn try_collect_gif_bytes(
             "gif",
             &filename,
             skip_perceptual_dedup,
+            target_group,
             "已从剪贴板收藏（GIF 动画已保留）。".to_string(),
         ))
     }
     #[cfg(not(windows))]
     {
-        let _ = (database_state, skip_perceptual_dedup);
+        let _ = (database_state, skip_perceptual_dedup, target_group);
         None
     }
 }
@@ -410,6 +424,7 @@ fn import_bytes_to_outcome(
     file_extension: &str,
     filename: &str,
     skip_perceptual_dedup: bool,
+    target_group: Option<i64>,
     imported_message: String,
 ) -> ClipboardCollectOutcome {
     match ImportService::import_bytes(
@@ -418,6 +433,7 @@ fn import_bytes_to_outcome(
         file_extension,
         filename,
         skip_perceptual_dedup,
+        target_group,
     ) {
         Ok(ImportOneOutcome::Imported { item, .. }) => ClipboardCollectOutcome::Imported {
             summary: build_summary_for_imported(&item, filename),
@@ -480,6 +496,7 @@ fn gif_first_frame_decodable(bytes: &[u8]) -> bool {
 fn try_collect_file_drop_image(
     database_state: &DatabaseState,
     skip_perceptual_dedup: bool,
+    target_group: Option<i64>,
 ) -> Option<ClipboardCollectOutcome> {
     #[cfg(windows)]
     {
@@ -502,12 +519,13 @@ fn try_collect_file_drop_image(
             &extension,
             &filename,
             skip_perceptual_dedup,
+            target_group,
             "已从剪贴板收藏。".to_string(),
         ))
     }
     #[cfg(not(windows))]
     {
-        let _ = (database_state, skip_perceptual_dedup);
+        let _ = (database_state, skip_perceptual_dedup, target_group);
         None
     }
 }
@@ -568,6 +586,7 @@ fn attempt_web_gif(
     database_state: &DatabaseState,
     skip_perceptual_dedup: bool,
     enabled: bool,
+    target_group: Option<i64>,
 ) -> WebGifAttempt {
     #[cfg(windows)]
     {
@@ -608,8 +627,14 @@ fn attempt_web_gif(
             emojis_directory: database_state.emojis_directory().to_path_buf(),
             thumbnails_directory: database_state.thumbnails_directory().to_path_buf(),
         };
-        let result =
-            ImportService::import_bytes(&context, bytes, "gif", &filename, skip_perceptual_dedup);
+        let result = ImportService::import_bytes(
+            &context,
+            bytes,
+            "gif",
+            &filename,
+            skip_perceptual_dedup,
+            target_group,
+        );
         WebGifAttempt::Done(match result {
             Ok(ImportOneOutcome::Imported { item, .. }) => ClipboardCollectOutcome::Imported {
                 summary: build_summary_for_imported(&item, &filename),
@@ -635,7 +660,7 @@ fn attempt_web_gif(
     }
     #[cfg(not(windows))]
     {
-        let _ = (database_state, skip_perceptual_dedup, enabled);
+        let _ = (database_state, skip_perceptual_dedup, enabled, target_group);
         WebGifAttempt::NotWebGif
     }
 }

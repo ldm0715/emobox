@@ -6,6 +6,7 @@ use std::{
 };
 
 use image::DynamicImage;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use walkdir::WalkDir;
 
@@ -28,6 +29,36 @@ fn lock_import() -> MutexGuard<'static, ()> {
     IMPORT_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Phase 22：目标分组参数 → `ImportGroup`。`None` = 维持各入口原行为
+/// （普通导入不归组 / 文件夹导入按目录推导 / 剪贴板收藏不归组）。
+fn import_group_for_target(target_group: Option<i64>) -> ImportGroup {
+    target_group
+        .map(ImportGroup::Existing)
+        .unwrap_or(ImportGroup::None)
+}
+
+/// 校验目标分组存在。`insert_managed` 对 `Existing(id)` 不做存在性校验，
+/// 组缺失时会在写关联时以 FK 错误逐张失败；这里在批量开始前给出一个
+/// 干净的整批错误，避免半成品汇总。
+fn ensure_target_group_exists(
+    connection: &rusqlite::Connection,
+    target_group: Option<i64>,
+) -> Result<(), String> {
+    let Some(id) = target_group else {
+        return Ok(());
+    };
+    let exists: Option<i64> = connection
+        .query_row("SELECT id FROM groups WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(|error| format!("无法查询目标分组：{error}"))?;
+    if exists.is_none() {
+        return Err("目标分组不存在或已被删除。".to_string());
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -166,12 +197,14 @@ impl ImportService {
         context: &ImportContext,
         requested_paths: &[PathBuf],
         skip_perceptual_dedup: bool,
+        target_group: Option<i64>,
     ) -> Result<ManagedImportSummary, String> {
         let _guard = lock_import();
         let started_at = Instant::now();
         let mut summary = ManagedImportSummary::new();
         let candidates = collect_candidates(requested_paths, &mut summary);
         let mut connection = database::open_connection(&context.database_path)?;
+        ensure_target_group_exists(&connection, target_group)?;
         let mut seen_paths = HashSet::new();
 
         for candidate in candidates {
@@ -192,7 +225,7 @@ impl ImportService {
                 &mut connection,
                 context,
                 &canonical,
-                ImportGroup::None,
+                import_group_for_target(target_group),
                 skip_perceptual_dedup,
             ) {
                 Ok(ImportOneOutcome::Imported { item, .. }) => {
@@ -223,9 +256,11 @@ impl ImportService {
         file_extension: &str,
         original_filename: &str,
         skip_perceptual_dedup: bool,
+        target_group: Option<i64>,
     ) -> Result<ImportOneOutcome, String> {
         let _guard = lock_import();
         let mut connection = database::open_connection(&context.database_path)?;
+        ensure_target_group_exists(&connection, target_group)?;
         let staged = AssetService::stage_dynamic_image(
             &context.emojis_directory,
             image,
@@ -242,7 +277,7 @@ impl ImportService {
             "clipboard",
             original_filename,
             None,
-            ImportGroup::None,
+            import_group_for_target(target_group),
             skip_perceptual_dedup,
         )
     }
@@ -259,9 +294,11 @@ impl ImportService {
         file_extension: &str,
         original_filename: &str,
         skip_perceptual_dedup: bool,
+        target_group: Option<i64>,
     ) -> Result<ImportOneOutcome, String> {
         let _guard = lock_import();
         let mut connection = database::open_connection(&context.database_path)?;
+        ensure_target_group_exists(&connection, target_group)?;
         let staged = AssetService::stage_bytes(
             &context.emojis_directory,
             &bytes,
@@ -275,7 +312,7 @@ impl ImportService {
             "clipboard",
             original_filename,
             None,
-            ImportGroup::None,
+            import_group_for_target(target_group),
             skip_perceptual_dedup,
         )
     }
@@ -285,12 +322,16 @@ impl ImportService {
     /// - 每个**顶层子文件夹**自动建同名分组（懒建：仅当该子文件夹第一张图
     ///   成功导入才建组，失败/重复不建空组）；根目录散图不归组；嵌套目录
     ///   归其顶层子文件夹的分组。
+    /// - Phase 22：指定 `target_group` 时**抑制**上述目录推导——所有图片
+    ///   （含子文件夹与根目录散图）一律归入该分组，不新建任何分组（“把整个
+    ///   文件夹放进当前浏览的分组”语义）。
     /// - 分组创建/复用发生在 `insert_managed` 同一事务内，失败整体回滚。
     /// - 重复内容（精确 SHA 或感知）跳过并计入汇总。
     pub fn import_folder(
         context: &ImportContext,
         root: &Path,
         skip_perceptual_dedup: bool,
+        target_group: Option<i64>,
     ) -> Result<FolderImportSummary, String> {
         let _guard = lock_import();
         let started_at = Instant::now();
@@ -306,6 +347,7 @@ impl ImportService {
             summary.record_warning(warning);
         }
         let mut connection = database::open_connection(&context.database_path)?;
+        ensure_target_group_exists(&connection, target_group)?;
 
         // 平铺文件夹：所有图片都在根目录（没有任何子文件夹）时，把文件夹本身
         // 建成一个同名分组，根目录图全部归入。有子文件夹时维持"子文件夹建组、
@@ -321,18 +363,26 @@ impl ImportService {
         let mut group_cache: HashMap<String, i64> = HashMap::new();
 
         for file in files {
-            // 该文件应归属的分组名（无 → 不归组）。
-            let dir = match top_level_subfolder(&file, &canonical_root) {
-                Some(sub) => Some(sub),
-                None if flat_folder => folder_group_name.clone(),
-                None => None,
+            // 该文件应归属的分组名（无 → 不归组）。指定目标分组时跳过目录
+            // 推导（dir 保持 None → 不写 groups_created，全部走 Existing）。
+            let dir = if target_group.is_some() {
+                None
+            } else {
+                match top_level_subfolder(&file, &canonical_root) {
+                    Some(sub) => Some(sub),
+                    None if flat_folder => folder_group_name.clone(),
+                    None => None,
+                }
             };
-            let group = match &dir {
-                Some(name) => match group_cache.get(name) {
-                    Some(id) => ImportGroup::Existing(*id),
-                    None => ImportGroup::ByName(name.clone()),
+            let group = match target_group {
+                Some(id) => ImportGroup::Existing(id),
+                None => match &dir {
+                    Some(name) => match group_cache.get(name) {
+                        Some(id) => ImportGroup::Existing(*id),
+                        None => ImportGroup::ByName(name.clone()),
+                    },
+                    None => ImportGroup::None,
                 },
-                None => ImportGroup::None,
             };
             match import_one(
                 &mut connection,
@@ -677,6 +727,7 @@ mod tests {
 
     use super::{ImportContext, ImportOneOutcome, ImportService};
     use crate::database::{open_connection, run_migrations};
+    use crate::repositories::group_repository::GroupRepository;
 
     fn test_root(label: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -746,7 +797,8 @@ mod tests {
             .expect("write a");
         checker(48, 48, 8).save(dog.join("b.png")).expect("write b");
 
-        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        let summary =
+            ImportService::import_folder(&context, &input, false, None).expect("import folder");
         assert_eq!(summary.success_count, 2);
         assert_eq!(summary.exact_duplicate_count, 0);
         assert_eq!(summary.failed_count, 0);
@@ -782,7 +834,8 @@ mod tests {
             .save(input.join("pack/d.png"))
             .expect("write d");
 
-        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        let summary =
+            ImportService::import_folder(&context, &input, false, None).expect("import folder");
         assert_eq!(summary.success_count, 2);
         assert_eq!(summary.groups_created, vec!["pack"], "深层文件归顶层目录");
         let _ = fs::remove_dir_all(root);
@@ -802,7 +855,8 @@ mod tests {
             .save(input.join("b.png"))
             .expect("write b");
 
-        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        let summary =
+            ImportService::import_folder(&context, &input, false, None).expect("import folder");
         assert_eq!(summary.success_count, 2);
         assert_eq!(
             summary.groups_created,
@@ -831,7 +885,8 @@ mod tests {
             .save(input.join("pack/b.png"))
             .expect("write b");
 
-        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        let summary =
+            ImportService::import_folder(&context, &input, false, None).expect("import folder");
         assert_eq!(summary.success_count, 2);
         assert_eq!(summary.groups_created, vec!["pack"]);
 
@@ -840,6 +895,126 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM emoji_groups", [], |row| row.get(0))
             .expect("relations");
         assert_eq!(relation_count, 1, "根目录散图不归组");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_paths_with_target_group_places_emojis_in_group() {
+        let root = test_root("paths-target-group");
+        let context = context(&root);
+        let source = root.join("seed.png");
+        write_png(&source);
+
+        let mut connection = open_connection(&context.database_path).expect("open");
+        let group = GroupRepository::create_group(&mut connection, "目标组").expect("create group");
+        drop(connection);
+
+        let summary = ImportService::import_paths(&context, &[source], false, Some(group.id))
+            .expect("import");
+        assert_eq!(summary.success_count, 1);
+
+        let connection = open_connection(&context.database_path).expect("open");
+        let relation_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM emoji_groups WHERE group_id = ?1",
+                [group.id],
+                |row| row.get(0),
+            )
+            .expect("relations");
+        assert_eq!(relation_count, 1, "导入图片归入目标分组");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_import_with_target_group_skips_subfolder_grouping() {
+        let root = test_root("folder-target-group");
+        let context = folder_context(&root);
+        let input = root.join("input");
+        fs::create_dir_all(input.join("猫猫")).expect("create cat dir");
+        smooth_pattern(32, 32)
+            .save(input.join("猫猫/a.png"))
+            .expect("write a");
+        checker(48, 48, 8)
+            .save(input.join("root.png"))
+            .expect("write root");
+
+        let mut connection = open_connection(&context.database_path).expect("open");
+        let group = GroupRepository::create_group(&mut connection, "当前组").expect("create group");
+        drop(connection);
+
+        let summary = ImportService::import_folder(&context, &input, false, Some(group.id))
+            .expect("import folder");
+        assert_eq!(summary.success_count, 2);
+        assert!(
+            summary.groups_created.is_empty(),
+            "目标分组模式下不新建子文件夹分组"
+        );
+
+        let connection = open_connection(&context.database_path).expect("open");
+        let relation_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM emoji_groups", [], |row| row.get(0))
+            .expect("relations");
+        assert_eq!(relation_count, 2, "全部图片（含根散图）归入目标分组");
+        let group_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM groups", [], |row| row.get(0))
+            .expect("groups");
+        assert_eq!(group_count, 1, "不新建子文件夹分组");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_paths_with_missing_target_group_fails_cleanly() {
+        let root = test_root("paths-target-missing");
+        let context = context(&root);
+        let source = root.join("seed.png");
+        write_png(&source);
+
+        let error = ImportService::import_paths(&context, &[source], false, Some(9999))
+            .expect_err("missing target group must fail");
+        assert!(error.contains("目标分组不存在"), "实际错误：{error}");
+
+        // 预检在批量开始前，不产生任何半成品。
+        let connection = open_connection(&context.database_path).expect("open");
+        let emoji_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM emojis", [], |row| row.get(0))
+            .expect("emojis");
+        assert_eq!(emoji_count, 0, "校验失败不落库");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clipboard_import_with_target_group_places_emoji_in_group() {
+        let root = test_root("clipboard-target-group");
+        let context = context(&root);
+        let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(6, 4, Rgba([1, 2, 3, 255])));
+
+        let mut connection = open_connection(&context.database_path).expect("open");
+        let group = GroupRepository::create_group(&mut connection, "收藏组").expect("create group");
+        drop(connection);
+
+        let outcome = ImportService::import_dynamic_image(
+            &context,
+            image,
+            "png",
+            "clipboard-target.png",
+            false,
+            Some(group.id),
+        )
+        .expect("import_dynamic_image");
+        let item = match outcome {
+            ImportOneOutcome::Imported { item, .. } => item,
+            other => panic!("expected Imported, got {other:?}"),
+        };
+
+        let connection = open_connection(&context.database_path).expect("open");
+        let in_group: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM emoji_groups WHERE emoji_id = ?1 AND group_id = ?2",
+                [item.id, group.id],
+                |row| row.get(0),
+            )
+            .expect("relation");
+        assert_eq!(in_group, 1, "剪贴板收藏归入目标分组");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -860,7 +1035,8 @@ mod tests {
             .save(dog.join("a-copy.png"))
             .expect("write copy");
 
-        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        let summary =
+            ImportService::import_folder(&context, &input, false, None).expect("import folder");
         assert_eq!(summary.success_count, 1);
         assert_eq!(summary.exact_duplicate_count, 1);
         // 两个子文件夹内容相同：先导入的那个建组，重复的那个子文件夹不建空组。
@@ -879,9 +1055,11 @@ mod tests {
             .save(input.join("pack/a.png"))
             .expect("write a");
 
-        let first = ImportService::import_folder(&context, &input, false).expect("first import");
+        let first =
+            ImportService::import_folder(&context, &input, false, None).expect("first import");
         assert_eq!(first.groups_created, vec!["pack"]);
-        let second = ImportService::import_folder(&context, &input, false).expect("second import");
+        let second =
+            ImportService::import_folder(&context, &input, false, None).expect("second import");
         assert_eq!(second.success_count, 0);
         assert_eq!(second.groups_created.len(), 0, "重复导入不建新组");
 
@@ -902,7 +1080,8 @@ mod tests {
         fs::create_dir_all(&bad).expect("create bad dir");
         fs::write(bad.join("corrupt.png"), b"not a real png").expect("write corrupt");
 
-        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        let summary =
+            ImportService::import_folder(&context, &input, false, None).expect("import folder");
         assert_eq!(summary.success_count, 0);
         assert_eq!(summary.failed_count, 1);
         assert!(summary.groups_created.is_empty(), "导入失败不得产生空组");
@@ -934,7 +1113,8 @@ mod tests {
             .expect("pre-create group");
         }
 
-        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        let summary =
+            ImportService::import_folder(&context, &input, false, None).expect("import folder");
         assert_eq!(summary.success_count, 1);
         assert!(
             summary.groups_created.is_empty(),
@@ -953,7 +1133,8 @@ mod tests {
             .save(input.join("猫猫/开心.png"))
             .expect("write a");
 
-        let summary = ImportService::import_folder(&context, &input, false).expect("import folder");
+        let summary =
+            ImportService::import_folder(&context, &input, false, None).expect("import folder");
         assert_eq!(summary.success_count, 1);
 
         let connection = open_connection(&context.database_path).expect("open");
@@ -987,7 +1168,8 @@ mod tests {
         let source = root.join("搞笑.png");
         write_png(&source);
 
-        let summary = ImportService::import_paths(&context, &[source], false).expect("import");
+        let summary =
+            ImportService::import_paths(&context, &[source], false, None).expect("import");
         assert_eq!(summary.success_count, 1);
         let connection = open_connection(&context.database_path).expect("open");
         let tag_count: i64 = connection
@@ -1013,6 +1195,7 @@ mod tests {
             "png",
             "clipboard-test.png",
             false,
+            None,
         )
         .expect("import_dynamic_image");
         assert!(matches!(outcome, ImportOneOutcome::Imported { .. }));
@@ -1069,7 +1252,8 @@ mod tests {
         let source = root.join("mtime.png");
         write_png(&source);
 
-        let summary = ImportService::import_paths(&context, &[source], false).expect("import");
+        let summary =
+            ImportService::import_paths(&context, &[source], false, None).expect("import");
         assert_eq!(summary.success_count, 1);
 
         let connection = open_connection(&context.database_path).expect("open");
@@ -1094,9 +1278,11 @@ mod tests {
         image.save(&png_path).expect("save png");
         image.save(&jpg_path).expect("save jpg");
 
-        let first = ImportService::import_paths(&context, &[png_path], false).expect("png import");
+        let first =
+            ImportService::import_paths(&context, &[png_path], false, None).expect("png import");
         assert_eq!(first.success_count, 1);
-        let second = ImportService::import_paths(&context, &[jpg_path], false).expect("jpg import");
+        let second =
+            ImportService::import_paths(&context, &[jpg_path], false, None).expect("jpg import");
         assert_eq!(second.success_count, 0);
         assert_eq!(second.perceptual_duplicate_count, 1, "跨格式同图应感知判重");
     }
@@ -1111,9 +1297,9 @@ mod tests {
         image.save(&png_path).expect("save png");
         image.save(&jpg_path).expect("save jpg");
 
-        ImportService::import_paths(&context, &[png_path], false).expect("seed import");
+        ImportService::import_paths(&context, &[png_path], false, None).expect("seed import");
         let second =
-            ImportService::import_paths(&context, &[jpg_path], true).expect("forced import");
+            ImportService::import_paths(&context, &[jpg_path], true, None).expect("forced import");
         assert_eq!(second.perceptual_duplicate_count, 0);
         assert_eq!(second.success_count, 1, "强制导入应绕过感知判重");
     }
@@ -1128,7 +1314,7 @@ mod tests {
         image.save(&png_path).expect("save png");
         image.save(&jpg_path).expect("save jpg");
 
-        ImportService::import_paths(&context, &[png_path], false).expect("seed import");
+        ImportService::import_paths(&context, &[png_path], false, None).expect("seed import");
         // 把存量行感知哈希置 NULL，模拟迁移 0004 后的旧数据。
         {
             let connection = open_connection(&context.database_path).expect("open");
@@ -1138,7 +1324,7 @@ mod tests {
         }
         // 再导入同内容 JPG → 先惰性回填存量行 hash，再感知判重命中。
         let second =
-            ImportService::import_paths(&context, &[jpg_path], false).expect("copy import");
+            ImportService::import_paths(&context, &[jpg_path], false, None).expect("copy import");
         assert_eq!(second.success_count, 0);
         assert_eq!(
             second.perceptual_duplicate_count, 1,
@@ -1163,10 +1349,12 @@ mod tests {
         let source = root.join("source.png");
         write_png(&source);
 
-        let first = ImportService::import_paths(&context, std::slice::from_ref(&source), false)
-            .expect("first import");
-        let second = ImportService::import_paths(&context, std::slice::from_ref(&source), false)
-            .expect("second import");
+        let first =
+            ImportService::import_paths(&context, std::slice::from_ref(&source), false, None)
+                .expect("first import");
+        let second =
+            ImportService::import_paths(&context, std::slice::from_ref(&source), false, None)
+                .expect("second import");
 
         assert_eq!(
             (
@@ -1217,7 +1405,7 @@ mod tests {
         fs::create_dir_all(&input_directory).expect("create nested input");
         write_png(&input_directory.join("nested.png"));
 
-        let summary = ImportService::import_paths(&context, &[root.join("input")], false)
+        let summary = ImportService::import_paths(&context, &[root.join("input")], false, None)
             .expect("recursive import");
         assert_eq!(
             (
@@ -1255,7 +1443,7 @@ mod tests {
         drop(connection);
 
         let summary =
-            ImportService::import_paths(&context, &[source], false).expect("import summary");
+            ImportService::import_paths(&context, &[source], false, None).expect("import summary");
         assert_eq!(
             (
                 summary.success_count,
@@ -1292,6 +1480,7 @@ mod tests {
             "png",
             "clipboard-test.png",
             false,
+            None,
         )
         .expect("import_dynamic_image should succeed");
 
@@ -1348,6 +1537,7 @@ mod tests {
             "gif",
             "clipboard-test.gif",
             false,
+            None,
         )
         .expect("import_bytes should succeed");
 
@@ -1394,14 +1584,21 @@ mod tests {
             .expect("write gif");
         let gif_bytes = fs::read(&gif_path).expect("read gif bytes");
 
-        let first =
-            ImportService::import_bytes(&context, gif_bytes.clone(), "gif", "first.gif", false)
-                .expect("first import");
+        let first = ImportService::import_bytes(
+            &context,
+            gif_bytes.clone(),
+            "gif",
+            "first.gif",
+            false,
+            None,
+        )
+        .expect("first import");
         assert!(matches!(first, ImportOneOutcome::Imported { .. }));
 
         // 同一 GIF 字节再收藏 → SHA-256 精确命中。
-        let second = ImportService::import_bytes(&context, gif_bytes, "gif", "second.gif", false)
-            .expect("second import");
+        let second =
+            ImportService::import_bytes(&context, gif_bytes, "gif", "second.gif", false, None)
+                .expect("second import");
         assert!(matches!(second, ImportOneOutcome::ExactDuplicate));
 
         let _ = fs::remove_dir_all(root);
@@ -1413,11 +1610,17 @@ mod tests {
         let context = context(&root);
         let image = DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 6, Rgba([20, 40, 60, 255])));
 
-        let first =
-            ImportService::import_dynamic_image(&context, image.clone(), "png", "first.png", false)
-                .expect("first import");
+        let first = ImportService::import_dynamic_image(
+            &context,
+            image.clone(),
+            "png",
+            "first.png",
+            false,
+            None,
+        )
+        .expect("first import");
         let second =
-            ImportService::import_dynamic_image(&context, image, "png", "second.png", false)
+            ImportService::import_dynamic_image(&context, image, "png", "second.png", false, None)
                 .expect("second import");
 
         match second {

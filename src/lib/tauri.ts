@@ -19,20 +19,25 @@ import type {
 export function importFolder(
   path: string,
   skipPerceptualDedup = false,
+  targetGroupId?: number,
 ): Promise<FolderImportSummary> {
   return invoke<FolderImportSummary>("import_folder", {
     path,
     skipPerceptualDedup,
+    // Phase 22：分组视图内导入时目标分组 id（undefined/null → 不指定）。
+    targetGroupId: targetGroupId ?? null,
   });
 }
 
 export function importManagedPaths(
   paths: string[],
   skipPerceptualDedup = false,
+  targetGroupId?: number,
 ): Promise<ManagedImportSummary> {
   return invoke<ManagedImportSummary>("import_managed_paths", {
     paths,
     skipPerceptualDedup,
+    targetGroupId: targetGroupId ?? null,
   });
 }
 
@@ -93,10 +98,12 @@ export type ClipboardCollectOutcome =
 export function collectImageFromClipboard(
   skipPerceptualDedup = false,
   downloadWebGif = false,
+  targetGroupId?: number,
 ): Promise<ClipboardCollectOutcome> {
   return invoke<ClipboardCollectOutcome>("collect_image_from_clipboard", {
     skipPerceptualDedup,
     downloadWebGif,
+    targetGroupId: targetGroupId ?? null,
   });
 }
 

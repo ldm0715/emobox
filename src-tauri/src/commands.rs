@@ -108,6 +108,7 @@ pub async fn import_folder(
     database_state: State<'_, database::DatabaseState>,
     path: String,
     skip_perceptual_dedup: Option<bool>,
+    target_group_id: Option<i64>,
 ) -> Result<crate::services::import_service::FolderImportSummary, String> {
     use crate::services::import_service::{ImportContext, ImportService};
     let context = ImportContext {
@@ -117,9 +118,11 @@ pub async fn import_folder(
     };
     let root = PathBuf::from(path);
     let skip = skip_perceptual_dedup.unwrap_or(false);
+    // Phase 22：前端在分组视图内发起导入时携带当前分组 id，全部图片归入。
+    let target_group_id = target_group_id.filter(|id| *id > 0);
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        ImportService::import_folder(&context, &root, skip)
+        ImportService::import_folder(&context, &root, skip, target_group_id)
     })
     .await
     .map_err(|error| format!("文件夹导入任务意外中止：{error}"))?;
@@ -133,6 +136,7 @@ pub async fn import_managed_paths(
     database_state: State<'_, database::DatabaseState>,
     paths: Vec<String>,
     skip_perceptual_dedup: Option<bool>,
+    target_group_id: Option<i64>,
 ) -> Result<crate::services::import_service::ManagedImportSummary, String> {
     use crate::services::import_service::{ImportContext, ImportService};
     let context = ImportContext {
@@ -142,9 +146,11 @@ pub async fn import_managed_paths(
     };
     let requested_paths = paths.into_iter().map(PathBuf::from).collect::<Vec<_>>();
     let skip = skip_perceptual_dedup.unwrap_or(false);
+    // Phase 22：前端在分组视图内发起导入（文件选择/拖放）时携带当前分组 id。
+    let target_group_id = target_group_id.filter(|id| *id > 0);
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        ImportService::import_paths(&context, &requested_paths, skip)
+        ImportService::import_paths(&context, &requested_paths, skip, target_group_id)
     })
     .await
     .map_err(|error| format!("图片导入任务意外中止：{error}"))?;
@@ -362,10 +368,13 @@ pub async fn collect_image_from_clipboard(
     database_state: State<'_, database::DatabaseState>,
     skip_perceptual_dedup: Option<bool>,
     download_web_gif: Option<bool>,
+    target_group_id: Option<i64>,
 ) -> Result<clipboard_collect::ClipboardCollectOutcome, String> {
     let db_state = database_state.inner().clone();
     let skip = skip_perceptual_dedup.unwrap_or(false);
     let download_web_gif = download_web_gif.unwrap_or(false);
+    // Phase 22：前端在分组视图内收藏时携带当前分组 id（发起那一刻的视图）。
+    let target_group_id = target_group_id.filter(|id| *id > 0);
     let app_for_task = app.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         clipboard_collect::collect_image_from_clipboard(
@@ -373,6 +382,7 @@ pub async fn collect_image_from_clipboard(
             &db_state,
             skip,
             download_web_gif,
+            target_group_id,
         )
     })
     .await

@@ -30,8 +30,13 @@ export function useLibraryImport(onError: (message: string) => void) {
   const [isImporting, setIsImporting] = useState(false);
 
   // 文件夹导入：递归复制进受管库，顶层子文件夹自动建同名分组。
+  // Phase 22：targetGroupId 有值时（当前浏览分组视图内发起）全部图片只归入该
+  // 分组，抑制子文件夹自动建组。
   const importFolder = useCallback(
-    async (skipPerceptualDedup = false): Promise<FolderImportSummary | null> => {
+    async (
+      skipPerceptualDedup = false,
+      targetGroupId?: number,
+    ): Promise<FolderImportSummary | null> => {
       try {
         const selected = await open({
           directory: true,
@@ -41,7 +46,7 @@ export function useLibraryImport(onError: (message: string) => void) {
         if (typeof selected !== "string") return null;
         setIsImporting(true);
         try {
-          return await importFolderCmd(selected, skipPerceptualDedup);
+          return await importFolderCmd(selected, skipPerceptualDedup, targetGroupId);
         } finally {
           setIsImporting(false);
         }
@@ -57,11 +62,12 @@ export function useLibraryImport(onError: (message: string) => void) {
     async (
       paths: string[],
       skipPerceptualDedup = false,
+      targetGroupId?: number,
     ): Promise<ManagedImportSummary | null> => {
       if (paths.length === 0) return null;
       setIsImporting(true);
       try {
-        return await importManagedPaths(paths, skipPerceptualDedup);
+        return await importManagedPaths(paths, skipPerceptualDedup, targetGroupId);
       } catch (importError) {
         onError(toUserMessage(importError));
         return null;
@@ -72,27 +78,30 @@ export function useLibraryImport(onError: (message: string) => void) {
     [onError],
   );
 
-  const importImages = useCallback(async (): Promise<ManagedImportSummary | null> => {
-    try {
-      const selected = await open({
-        directory: false,
-        multiple: true,
-        title: "选择要保存到 EmoBox 的图片",
-        filters: imageFilters,
-      });
-      const paths = typeof selected === "string" ? [selected] : selected;
-      if (!paths || paths.length === 0) return null;
-      return await importPaths(paths);
-    } catch (dialogError) {
-      onError(toUserMessage(dialogError));
-      return null;
-    }
-  }, [importPaths, onError]);
+  const importImages = useCallback(
+    async (targetGroupId?: number): Promise<ManagedImportSummary | null> => {
+      try {
+        const selected = await open({
+          directory: false,
+          multiple: true,
+          title: "选择要保存到 EmoBox 的图片",
+          filters: imageFilters,
+        });
+        const paths = typeof selected === "string" ? [selected] : selected;
+        if (!paths || paths.length === 0) return null;
+        return await importPaths(paths, false, targetGroupId);
+      } catch (dialogError) {
+        onError(toUserMessage(dialogError));
+        return null;
+      }
+    },
+    [importPaths, onError],
+  );
 
   const collectFromClipboard = useCallback(
-    async (skipPerceptualDedup = false, downloadWebGif = false) => {
+    async (skipPerceptualDedup = false, downloadWebGif = false, targetGroupId?: number) => {
       try {
-        return await collectImageFromClipboard(skipPerceptualDedup, downloadWebGif);
+        return await collectImageFromClipboard(skipPerceptualDedup, downloadWebGif, targetGroupId);
       } catch (invokeError) {
         onError(toUserMessage(invokeError));
         return null;

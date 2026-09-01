@@ -201,6 +201,9 @@ export function App() {
   // 上次落地的 view|query|sort 复合 key：同 key 的重拉（recentItems/groups/tags
   // 变化触发）原地更新内容、不重播入场动画（否则 recent 视图每次复制都闪一次）。
   const lastLandedKeyRef = useRef<string | null>(null);
+  // Phase 22：分组视图内导入后留在原视图，需要手动触发视图 effect 重拉第 1 页
+  // （currentView 等 deps 未变）。landingKey 不变 → 不重播入场动画。
+  const [viewReloadTick, setViewReloadTick] = useState(0);
   // loadMore 防重入（哨兵可能连续触发）。
   const loadingMoreRef = useRef(false);
   // 下一页 offset 游标：按「服务端返回的行数」前进（而非本地 currentEmojis 长度）。
@@ -238,6 +241,18 @@ export function App() {
   const [confirmState, setConfirmState] = useState<PendingConfirm | null>(null);
 
   const [currentView, setCurrentView] = useState<LibraryView>(defaultView);
+  // latest-ref 镜像：拖放 / 全局快捷键收藏等不随视图变化重注册的入口读这里
+  // 取「发起那一刻」的视图，避免闭包捕获旧值（App.tsx 闭包陷阱惯例）。
+  const currentViewRef = useRef<LibraryView>(currentView);
+  currentViewRef.current = currentView;
+  // Phase 22：当前浏览的分组 id（仅 group:N 视图有值）。导入四入口在发起时
+  // 捕获它作为目标分组；只读 ref，回调身份稳定。
+  const getCurrentGroupId = useCallback((): number | null => {
+    const view = currentViewRef.current;
+    if (!view.startsWith("group:")) return null;
+    const groupId = parseInt(view.slice(6), 10);
+    return Number.isFinite(groupId) ? groupId : null;
+  }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOption, setSortOption] = useState<SortOption>("name-asc");
   const [density, setDensity] = useState<GridDensity>("comfortable");
@@ -591,22 +606,48 @@ export function App() {
     };
   }, [clipboardCollectShortcut, dispatchToast]);
 
-  const prepareAfterImport = useCallback(async () => {
-    setCurrentView("all");
+  // Phase 22：带 targetGroupId（分组视图内发起的导入）且用户仍停留在该分组
+  // 视图时，留在分组并经 viewReloadTick 重拉第 1 页；其余情况维持原行为
+  // （切回「全部」，让用户看到刚导入的内容）。
+  const prepareAfterImport = useCallback(async (targetGroupId: number | null) => {
+    const stayedInTargetGroup =
+      targetGroupId !== null && currentViewRef.current === `group:${targetGroupId}`;
+    if (!stayedInTargetGroup) {
+      setCurrentView("all");
+    }
     setSearchQuery("");
     clearSelectionRef.current();
     await refreshLibrary();
     await refreshSidebar();
+    if (stayedInTargetGroup) {
+      setViewReloadTick((tick) => tick + 1);
+    }
   }, [refreshLibrary, refreshSidebar]);
 
+  // toast 文案里的目标分组名（用发起导入时捕获的 id 查名，防中途换视图漂移）。
+  const groupNameForToast = useCallback(
+    (targetGroupId: number | null): string | null => {
+      if (targetGroupId === null) return null;
+      const group = groups.find((g) => g.id === targetGroupId);
+      return group ? `已加入分组「${group.name}」` : "已加入当前分组";
+    },
+    [groups],
+  );
+
   const showManagedImportResult = useCallback(
-    (summary: ManagedImportSummary, note?: string) => {
+    (
+      summary: ManagedImportSummary,
+      note?: string,
+      targetGroupId: number | null = null,
+    ) => {
     const intent = summary.failedCount > 0
       ? summary.successCount > 0 ? "warning" : "error"
       : "success";
     const totalDuplicates =
       summary.exactDuplicateCount + summary.perceptualDuplicateCount;
     const retryPaths = summary.perceptualDuplicates.map((d) => d.sourcePath);
+    const groupNote = groupNameForToast(targetGroupId);
+    const prefix = [note, groupNote].filter(Boolean).join(" ");
 
     dispatchToast(
       <Toast>
@@ -617,10 +658,10 @@ export function App() {
                 appearance="primary"
                 onClick={() => {
                   void (async () => {
-                    const retried = await importPaths(retryPaths, true);
+                    const retried = await importPaths(retryPaths, true, targetGroupId ?? undefined);
                     if (retried) {
-                      await prepareAfterImport();
-                      showManagedImportResult(retried);
+                      await prepareAfterImport(targetGroupId);
+                      showManagedImportResult(retried, undefined, targetGroupId);
                     }
                   })();
                 }}
@@ -633,7 +674,7 @@ export function App() {
           导入完成：成功 {summary.successCount} 张
         </ToastTitle>
         <ToastBody>
-          {note ? `${note} ` : ""}重复跳过 {totalDuplicates} 张
+          {prefix ? `${prefix} ` : ""}重复跳过 {totalDuplicates} 张
           {summary.perceptualDuplicateCount > 0
             ? `（其中感知相似 ${summary.perceptualDuplicateCount} 张）`
             : ""}
@@ -643,29 +684,34 @@ export function App() {
       </Toast>,
       { intent },
     );
-  }, [dispatchToast, importPaths, prepareAfterImport]);
+  }, [dispatchToast, groupNameForToast, importPaths, prepareAfterImport]);
 
   const handleImportImages = useCallback(async () => {
-    const summary = await importImages();
+    // 发起时捕获目标分组（分组视图内发起 → 导入的图自动归入，Phase 22）。
+    const targetGroupId = getCurrentGroupId();
+    const summary = await importImages(targetGroupId ?? undefined);
     if (!summary) return;
-    await prepareAfterImport();
-    showManagedImportResult(summary);
-  }, [importImages, prepareAfterImport, showManagedImportResult]);
+    await prepareAfterImport(targetGroupId);
+    showManagedImportResult(summary, undefined, targetGroupId);
+  }, [getCurrentGroupId, importImages, prepareAfterImport, showManagedImportResult]);
 
   const handleImportFolder = useCallback(async () => {
-    const summary = await importFolder();
+    const targetGroupId = getCurrentGroupId();
+    const summary = await importFolder(false, targetGroupId ?? undefined);
     if (!summary) return;
-    await prepareAfterImport();
+    await prepareAfterImport(targetGroupId);
 
     const totalDuplicates =
       summary.exactDuplicateCount + summary.perceptualDuplicateCount;
     const intent = summary.failedCount > 0
       ? summary.successCount > 0 ? "warning" : "error"
       : "success";
+    const groupNote = groupNameForToast(targetGroupId);
     dispatchToast(
       <Toast>
         <ToastTitle>导入完成：成功 {summary.successCount} 张</ToastTitle>
         <ToastBody>
+          {groupNote ? `${groupNote}。` : ""}
           {summary.groupsCreated.length > 0
             ? `已新建分组：${summary.groupsCreated.join("、")}。`
             : ""}
@@ -679,17 +725,19 @@ export function App() {
       </Toast>,
       { intent },
     );
-  }, [dispatchToast, importFolder, prepareAfterImport]);
+  }, [dispatchToast, getCurrentGroupId, groupNameForToast, importFolder, prepareAfterImport]);
 
   const handleDroppedPaths = useCallback(async (paths: string[]) => {
-    const summary = await importPaths(paths);
+    const targetGroupId = getCurrentGroupId();
+    const summary = await importPaths(paths, false, targetGroupId ?? undefined);
     if (!summary) return;
-    await prepareAfterImport();
-    showManagedImportResult(summary);
-  }, [importPaths, prepareAfterImport, showManagedImportResult]);
+    await prepareAfterImport(targetGroupId);
+    showManagedImportResult(summary, undefined, targetGroupId);
+  }, [getCurrentGroupId, importPaths, prepareAfterImport, showManagedImportResult]);
 
   const handleCollectFromClipboard = useCallback(async () => {
-    const outcome = await collectFromClipboard(false, downloadWebGif);
+    const targetGroupId = getCurrentGroupId();
+    const outcome = await collectFromClipboard(false, downloadWebGif, targetGroupId ?? undefined);
     if (!outcome) return;
     switch (outcome.kind) {
       case "empty":
@@ -702,12 +750,12 @@ export function App() {
         );
         return;
       case "imported":
-        await prepareAfterImport();
+        await prepareAfterImport(targetGroupId);
         // message 携带剪贴板来源说明（GIF 动画保留 / 网页动图提醒等），拼进导入 toast。
-        showManagedImportResult(outcome.summary, outcome.message);
+        showManagedImportResult(outcome.summary, outcome.message, targetGroupId);
         return;
       case "duplicate":
-        await prepareAfterImport();
+        await prepareAfterImport(targetGroupId);
         dispatchToast(
           <Toast>
             <ToastTitle>已在素材库中</ToastTitle>
@@ -735,7 +783,7 @@ export function App() {
         );
         return;
     }
-  }, [collectFromClipboard, dispatchToast, downloadWebGif, prepareAfterImport, showManagedImportResult]);
+  }, [collectFromClipboard, dispatchToast, downloadWebGif, getCurrentGroupId, prepareAfterImport, showManagedImportResult]);
 
   // 事件监听 effect（deps 不含本 handler）经 ref 拿到最新闭包。
   collectFromClipboardRef.current = () => {
@@ -850,7 +898,7 @@ export function App() {
       disposed = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentView, debouncedQuery, sortOption, recentItems, groups, tags]);
+  }, [currentView, debouncedQuery, sortOption, recentItems, groups, tags, viewReloadTick]);
 
   // Phase 17 无限滚动：滚动到底（EmojiGrid 哨兵）时按 nextOffsetRef 追加下一页。
   // seq 守卫丢弃视图/搜索词/排序已切换的迟到响应；追加按 id 去重防删除导致的
@@ -978,8 +1026,7 @@ export function App() {
   favoriteIdsRef.current = favoriteIds;
   // toggleFavorite 定义在 useMultiSelection 之前且 deps 不含 currentView，
   // 经 latest-ref 读实时视图（await 期间切走视图时跳过本地剪辑，防误递减 viewTotal）。
-  const currentViewRef = useRef(currentView);
-  currentViewRef.current = currentView;
+  // currentViewRef 已上移到 currentView 声明处（Phase 22：导入入口也要读它）。
 
   const toggleFavorite = useCallback(async (items: IndexedImage[]) => {
     const ids = items.map((item) => item.id);
