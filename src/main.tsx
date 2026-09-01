@@ -7,6 +7,10 @@ import { QuickSearchWindow } from "./features/search/QuickSearchWindow";
 import "./styles/global.css";
 
 const windowLabel = getCurrentWindow().label;
+// 透明窗口（圆角浮层）需要 html/body 背景透明，见 global.css。
+if (windowLabel === "quick-search") {
+  document.documentElement.classList.add("quick-search-window");
+}
 const content = windowLabel === "quick-search" ? <QuickSearchWindow /> : <App />;
 
 createRoot(document.getElementById("root")!).render(

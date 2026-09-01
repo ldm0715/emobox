@@ -84,6 +84,15 @@ pub fn run() {
                 log::warn!("启动时清理全局快捷键失败：{error}");
             }
 
+            // 浮层是透明圆角窗口：Windows 10 上 DWM 默认阴影若未清除，会在
+            // 圆角外留下直角色块（tauri#11321）。tauri.conf.json 的 shadow:false
+            // 存在配置时序不生效的情况，这里运行时再关一次（幂等）。
+            if let Some(overlay) = app.get_webview_window(quick_search::WINDOW_LABEL)
+                && let Err(error) = overlay.set_shadow(false)
+            {
+                log::warn!("关闭浮层窗口阴影失败：{error}");
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

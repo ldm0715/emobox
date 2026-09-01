@@ -23,14 +23,9 @@ interface QuickSearchPanelProps {
 }
 
 const useStyles = makeStyles({
-  window: {
-    width: "100%",
-    height: "100%",
-    padding: tokens.spacingHorizontalS,
-    // 外衬用 BG2（窗口底层级）：BG3 语义是"最亮卡片层"，做外衬会比 surface(BG1) 还亮。
-    // 浮层阶梯 = 外衬 BG2 → surface BG1 → 结果卡 BG3。
-    backgroundColor: tokens.colorNeutralBackground2,
-  },
+  // surface 直接铺满透明窗口：圆角外区域透出底层窗口，无外衬、无投影
+  // （tauri.conf.json 已关 shadow，CSS 投影没有衬垫空间可画）。
+  // 浮层阶梯 = surface BG1 → 结果卡 BG3。
   surface: {
     width: "100%",
     height: "100%",
@@ -40,7 +35,6 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
     borderRadius: tokens.borderRadiusXLarge,
-    boxShadow: tokens.shadow16,
   },
   titleBar: {
     minWidth: 0,
@@ -87,36 +81,34 @@ export function QuickSearchPanel({
   const styles = useStyles();
 
   return (
-    <main className={styles.window} aria-label="快捷搜索浮层">
-      <section className={styles.surface}>
-        <header className={styles.titleBar} data-tauri-drag-region>
-          <SearchSquare20Regular className={styles.icon} />
-          <span className={styles.title} data-tauri-drag-region>快捷搜索</span>
-          <span className={styles.shortcut} data-tauri-drag-region>
-            {formatShortcutLabel(shortcut)}
-          </span>
-          <Button
-            appearance="subtle"
-            aria-label="隐藏快捷搜索"
-            icon={<Dismiss20Regular />}
-            onClick={onClose}
-          />
-        </header>
-        <div className={styles.content}>
-          <QuickSearchContent
-            results={results}
-            query={query}
-            onQueryChange={onQueryChange}
-            loading={loading}
-            error={error}
-            copyError={copyError}
-            copyingPath={copyingPath}
-            activationId={activationId}
-            onSelect={onSelect}
-            onClose={onClose}
-          />
-        </div>
-      </section>
-    </main>
+    <section className={styles.surface} aria-label="快捷搜索浮层">
+      <header className={styles.titleBar} data-tauri-drag-region>
+        <SearchSquare20Regular className={styles.icon} />
+        <span className={styles.title} data-tauri-drag-region>快捷搜索</span>
+        <span className={styles.shortcut} data-tauri-drag-region>
+          {formatShortcutLabel(shortcut)}
+        </span>
+        <Button
+          appearance="subtle"
+          aria-label="隐藏快捷搜索"
+          icon={<Dismiss20Regular />}
+          onClick={onClose}
+        />
+      </header>
+      <div className={styles.content}>
+        <QuickSearchContent
+          results={results}
+          query={query}
+          onQueryChange={onQueryChange}
+          loading={loading}
+          error={error}
+          copyError={copyError}
+          copyingPath={copyingPath}
+          activationId={activationId}
+          onSelect={onSelect}
+          onClose={onClose}
+        />
+      </div>
+    </section>
   );
 }
