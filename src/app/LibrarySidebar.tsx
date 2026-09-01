@@ -214,7 +214,8 @@ const useStyles = makeStyles({
     width: "100%",
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    // 不要加 gap:夹在两按钮之间的 Divider 自带 8px 上下 margin,容器 gap 会与之
+    // 叠加翻倍,导致快捷键按钮偏上、设置按钮偏下(2026-09 修复)。
   },
   hintButton: {
     width: "100%",
