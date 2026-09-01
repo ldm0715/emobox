@@ -167,8 +167,13 @@ pub async fn load_thumbnail(
         // 路径规范化 / Windows 大小写 / 重复路径歧义。
         let row: Option<(Option<String>, String)> = connection
             .query_row(
-                "SELECT thumbnail_path, COALESCE(managed_path, source_path)
-                 FROM emojis WHERE id = ?1 AND is_deleted = 0",
+                // 回收站感知：软删行文件已移到 trash/，thumbnail_path /
+                // managed_path 指向旧位置（悬空），要按 list_deleted 同款
+                // COALESCE 顺序优先取 trash 路径，否则重启后网格缩略图
+                // 报「预览不可用」（运行期被前端内存缓存掩盖）。
+                "SELECT COALESCE(trash_thumbnail_path, thumbnail_path),
+                        COALESCE(trash_path, managed_path, source_path)
+                 FROM emojis WHERE id = ?1",
                 [emoji_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )

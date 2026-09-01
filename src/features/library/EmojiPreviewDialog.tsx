@@ -86,9 +86,9 @@ const useStyles = makeStyles({
     paddingRight: tokens.spacingHorizontalXS,
   },
   titleText: {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    // 块级 + 换行：截断样式对 inline 元素无效，长文件名会单行溢出卡片。
+    display: "block",
+    overflowWrap: "anywhere",
   },
   rows: {
     display: "flex",
@@ -188,7 +188,7 @@ export function EmojiPreviewDialog({
 
           <div className={styles.info}>
             <DialogTitle className={styles.title}>
-              <span className={styles.titleText} title={shown.name}>{shown.name}</span>
+              <span className={styles.titleText}>{shown.name}</span>
             </DialogTitle>
 
             <div className={styles.rows}>

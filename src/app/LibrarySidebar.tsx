@@ -205,6 +205,11 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingHorizontalXS,
   },
+  pinIcon: {
+    // 长分组名让 pinLabel 溢出时，flex 默认收缩会把固定 16px 的 SVG 压小
+    // （名字越长压得越狠，表现为置顶图钉忽大忽小）；图标绝不可收缩。
+    flexShrink: 0,
+  },
   bottom: {
     width: "100%",
     display: "flex",
@@ -422,7 +427,7 @@ export function LibrarySidebar({
                       <GroupIcon />
                       {!collapsed && (
                         <span className={styles.pinLabel}>
-                          {group.isPinned && <Pin16Regular />}
+                          {group.isPinned && <Pin16Regular className={styles.pinIcon} />}
                           <span className={styles.label}>{group.name}</span>
                         </span>
                       )}
