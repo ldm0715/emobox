@@ -122,3 +122,53 @@
 3. `EmojiLibraryView` 删除 `error` / `onClearError` props 与 `LibraryMessage` 渲染；status 区只剩导入 `ProgressBar`。`LibraryMessage.tsx` 因此成为孤儿文件（待删）。
 
 验证：`npm run build` ✅ + `npx vitest run` 35/35 ✅。约定已写入 CLAUDE.md「统一通知模型」不变量。
+
+## 后续修复（2026-09-01）：收藏视图刷新 / 切视图闪屏 / 浮层透明圆角
+
+三个 bug 一轮修完。验证：`npm run build` + `npx vitest run` 35/35 + `cargo check` + `cargo clippy -D warnings` ✅。
+
+### 1. 收藏视图不即时刷新
+
+**问题**：收藏视图里取消收藏后，条目仍留在列表里，直到下次切视图/搜索/排序。根因：`toggleFavorite` 只乐观翻转 `currentEmojis` 里的 `isFavorite` 标志 + 维护 `favoriteIds`，但收藏视图的渲染不过滤 `isFavorite`（视图过滤在后端 `search_emojis`），而视图加载 effect 的 deps 不含任何收藏状态；`refreshLibrary` 只更新侧栏计数。
+
+**修复**（`App.tsx::toggleFavorite`）：`await setEmojisFavorite` 成功后，若 `next === false` 且实时视图仍是收藏视图——从 `currentEmojis` 过滤、`viewTotal` 递减、`deselect`（镜像 `performDelete` 的本地剪辑模式；`hasMore` 不动，哨兵自动回填）。移除放在成功之后，回滚路径只需恢复标志翻转。单选星标/右键/批量条/预览弹窗共用此函数，一处覆盖全部入口。
+
+**坑**：`toggleFavorite` 定义在 `useMultiSelection` 之前且 useCallback deps 不含 `currentView`——判定必须走 latest-ref（新增 `currentViewRef`）读实时视图，否则 await 期间切走视图会对新视图的数据误递减 `viewTotal`；`deselect` 同理经 `deselectRef` 转发。
+
+### 2. 切视图闪屏（尤其空视图）
+
+**问题**：切视图的同一渲染里 `resetKey`（`view|query|sort`）已变化，`FadeSnappy key={resetKey} visible appear` 立即重挂载并淡入**旧视图的数据**（fetch 未返回）；数据落地后内容在同一个 key 下无动画突变（空状态尤其生硬）；header 计数（`viewTotal`）窗口期显示旧值。另有启动首帧空状态闪现（数据未落地时 `currentEmojis` 为空，先闪「还没有收藏」再变正确空态/网格）。`viewLoading` state 是死代码（只写不读）。
+
+**修复**：keep-previous + 落地代数 key（`App.tsx` + `EmojiLibraryView.tsx`）：
+
+- 新增 `viewGeneration`（落地代数）与 `lastLandedKeyRef`（上次落地的 `view|query|sort` 复合 key）。视图 effect 成功落地时，只有复合 key 与上次不同才递增 generation——同 key 重拉（recentItems/groups/tags 变化触发，如 recent 视图每次复制、分组改名）原地更新内容、不重播入场动画。
+- `EmojiLibraryView` 的 `resetKey` prop 从复合 key 改为 `` `${viewGeneration}` ``：旧内容无动画保留到新数据落地，落地瞬间才 `key` 重挂载 + `FadeSnappy` 淡入（网格与空状态动画一致），`setCurrentEmojis` / `setViewTotal` / `setViewGeneration` 同一次 commit 原子更新。
+- 新增 `ready` prop（`viewGeneration > 0`）：落地前内容区渲染 `null`，启动首帧不闪空状态。
+- 滚动复位：keep-previous 后旧内容不再被卸载、浏览器不会自动收口 scrollTop，`contentRef` 在 `resetKey` 变化（= 新数据落地）时 `scrollTo(0, 0)`（与 SettingsMenu `panelRef` 同模式）。
+- **loadMore 守卫**：`nextOffsetRef` 改 `number | null`，视图 effect 开头置 null、第 1 页落地才赋值；`loadMore` 见 null 直接返回。堵住 keep-previous 窗口期（旧内容 + 新 `hasMore`）哨兵用旧 offset 给新视图拉第 2 页的洞。
+- 删除死代码 `viewLoading`。
+
+动效不变式核对：仍是容器层 `key` 重挂载（Phase 18 红线）；loadMore 追加不递增 generation → 追加批次无动画；迟到响应仍由 `viewSeqRef` 丢弃。
+
+### 3. 浮层透明圆角窗口
+
+**需求演进**：去掉浮层 BG2 外衬色环 → 保留圆角 → 去掉投影。最终形态：
+
+- `tauri.conf.json` quick-search：`transparent: true` + `shadow: false`（Windows 分层透明窗口拿不到 DWM 原生投影，且 Win10 上不清除的 DWM 阴影会在圆角外留直角色块，见下）。
+- `main.tsx` 按窗口 label 给 `<html>` 挂 `quick-search-window` 类，`global.css` 据此把 html/body/#root 背景置透明（主窗口不受影响）。
+- `QuickSearchPanel.tsx`：**无外衬包裹层**，BG1 surface 直接铺满窗口，`borderRadiusXLarge` 圆角 + 1px 描边、无 CSS 投影，圆角外区域透出底层窗口。
+- **Windows 10 坑（[tauri#11321](https://github.com/tauri-apps/tauri/issues/11321)，报告者同为 19045）**：透明 + 圆角窗口在 Win10 上四角出现直角色块，Win11 无此问题——DWM 默认阴影未清除所致；且 `tauri.conf.json` 的 `shadow: false` 存在配置时序不生效的情况。修复：`lib.rs::setup` 对浮层窗口**运行时**再调一次 `set_shadow(false)`（幂等，勿删）。窗口配置（transparent/shadow）是窗口创建时生效的属性，改配置必须完全重启 `tauri dev`，Vite HMR 不会重建窗口。
+
+文档同步：CLAUDE.md 的「网格多选」「主窗口分页」「Surface 层级」不变量与 Phase 17 哨兵描述已更新，AGENTS.md 整体覆盖。
+
+## 后续修复（2026-09-01）：主题快速菜单选中行变高
+
+**问题**：主题按钮（`ThemeQuickMenu`）菜单三项里，**选中项（带对勾）比其余两项高 5px**（实测 37 vs 32），用户报告"间距不一样、被选中就会更大一些"。
+
+**根因**（无头浏览器量化复现，Playwright + 独立复现页量取 boundingBox）：对勾放在 `MenuItem` 的 `secondaryContent` 里，Fluent 给该容器设 `line-height: 20px`，但内部 20px 的 inline SVG 按**基线对齐**参与行内布局，把行盒撑到 25px → 选中行内容高 25px，超出 `minHeight: 32px` 的富余，行高变 37px。宽度不受影响（MenuList flex column 拉伸，三项同为 128px——`MenuPopover` 是 `width: max-content`，按最宽行取宽）。
+
+**修复**（`ThemeQuickMenu.tsx`）：对勾加 `style={{ display: "block" }}`，SVG 脱离基线对齐，行盒回到 20px，三项全部 32px。复现页实测通过。
+
+**备选方案（未采用）**：Fluent `MenuItem` 有内置 `checkmark` slot，但它在菜单项**左侧**（icon 之前）——只给选中项传会造成左侧列错位，每项都传需要空占位，且会改变现有"右侧对勾"的设计。`display: block` 是保持视觉的最小改动。
+
+**排查方法备忘**：组件是纯前端结构，可脱离 Tauri 在独立复现页（同结构 JSX + `FluentProvider`）里用 `playwright-core`（`--no-save` 安装，`channel: "msedge"` 免下载浏览器）截图并量取子元素盒高定位——比启动整个 `tauri dev` 快得多。

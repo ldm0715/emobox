@@ -43,7 +43,14 @@ export function ThemeQuickMenu() {
             <MenuItem
               key={option.value}
               icon={option.icon}
-              secondaryContent={theme === option.value ? <Checkmark20Regular /> : undefined}
+              secondaryContent={
+                theme === option.value ? (
+                  // display:block 让 20px 的 SVG 脱离基线对齐：secondaryContent
+                  // 容器 line-height 20px，inline SVG 的 baseline 布局会把行盒
+                  // 撑到 25px、选中行比其余行高 5px（真机量过 37 vs 32）。
+                  <Checkmark20Regular style={{ display: "block" }} />
+                ) : undefined
+              }
               onClick={() => setTheme(option.value)}
             >
               {option.label}
