@@ -28,6 +28,7 @@ import { useDebouncedValue } from "./features/library/useDebouncedValue";
 import { useMultiSelection, type SelectionMode } from "./features/library/useMultiSelection";
 import {
   addTagsToEmojis,
+  checkForUpdate,
   copyImageToClipboard,
   createGroup,
   createTag,
@@ -164,7 +165,13 @@ export function App() {
     setClipboardCollectShortcut,
     downloadWebGif,
     setCloseToTray,
+    autoCheckUpdates,
+    updateMirrors,
   } = useAppSettings();
+  // Phase 27：启动静默检查更新。设置走 latest-ref（effect 只在挂载时跑一次，
+  // 用户中途改设置不影响本次会话的检查行为，下次启动生效）。
+  const updateCheckSettingsRef = useRef({ autoCheckUpdates, updateMirrors });
+  updateCheckSettingsRef.current = { autoCheckUpdates, updateMirrors };
   const {
     isImporting,
     importImages,
@@ -172,6 +179,32 @@ export function App() {
     importPaths,
     collectFromClipboard,
   } = useLibraryImport(notifyError);
+
+  // Phase 27：启动 3s 后静默检查更新（错开启动时的库加载/缩略图请求高峰）。
+  // 失败静默——网络不可用不该每次启动都打扰；只有发现新版本才弹 info toast。
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const { autoCheckUpdates: enabled, updateMirrors: mirrors } =
+        updateCheckSettingsRef.current;
+      if (!enabled) return;
+      checkForUpdate(mirrors)
+        .then((result) => {
+          if (result.status !== "available") return;
+          dispatchToast(
+            <Toast>
+              <ToastTitle>
+                发现新版本 v{result.latestVersion}，可在 设置→关于 中更新
+              </ToastTitle>
+            </Toast>,
+            { intent: "info", timeout: 7000 },
+          );
+        })
+        .catch(() => {
+          // 启动检查失败静默。
+        });
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [dispatchToast]);
 
   // 当前视图已加载的表情（IndexedEmoji 13 字段）。Phase 17 分页：只持有已加载页，
   // 滚动到底经 loadMore 追加；总数在 viewTotal，不在数组长度里。

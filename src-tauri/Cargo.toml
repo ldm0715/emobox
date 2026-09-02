@@ -3,6 +3,7 @@ name = "emobox"
 version = "0.1.0"
 description = "Windows-first local emoji image search and copy tool"
 authors = ["EmoBox contributors"]
+license = "GPL-3.0-only"
 edition = "2024"
 
 [lib]
@@ -19,6 +20,7 @@ log = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 sha2 = "0.10"
 # 网页 GIF 下载（设置开关控制；仅 http/https，超时 + 大小上限防护）
 ureq = "2"

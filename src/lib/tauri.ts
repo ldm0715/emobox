@@ -6,6 +6,7 @@ import type {
   IndexedImage,
   LibraryGroup,
   ManagedImportSummary,
+  MirrorSpeedResult,
   PasteResult,
   RecentImageRecord,
   SearchOptions,
@@ -15,6 +16,8 @@ import type {
   Tag,
   TrashResult,
   TrayMenuAction,
+  UpdateCheckResult,
+  UpdateDownloadResult,
 } from "../types";
 
 export function importFolder(
@@ -274,4 +277,33 @@ export function showInExplorer(path: string): Promise<void> {
 
 export function pasteToTargetWindow(): Promise<PasteResult> {
   return invoke<PasteResult>("paste_to_target_window");
+}
+
+// ---------- Phase 27: 自动更新（GitHub Releases + 镜像前缀加速） ----------
+
+/** 下载进度事件（emit_to main）：received 已下载字节，total 缺失时进度条走不确定态。 */
+export const UPDATE_DOWNLOAD_PROGRESS_EVENT = "update-download-progress";
+
+/** 检查更新：mirrors 为用户镜像列表（依序尝试），Rust 侧末尾恒加官方直连兜底。 */
+export function checkForUpdate(mirrors: string[]): Promise<UpdateCheckResult> {
+  return invoke<UpdateCheckResult>("check_for_update", { mirrors });
+}
+
+/** 下载安装包到临时目录并做 SHA-256 校验；进度经 UPDATE_DOWNLOAD_PROGRESS_EVENT 推送。 */
+export function startUpdateDownload(mirrors: string[]): Promise<UpdateDownloadResult> {
+  return invoke<UpdateDownloadResult>("start_update_download", { mirrors });
+}
+
+export function cancelUpdateDownload(): Promise<void> {
+  return invoke<void>("cancel_update_download");
+}
+
+/** 启动已下载并通过校验的 NSIS 安装器，随后应用退出。 */
+export function installPendingUpdate(): Promise<void> {
+  return invoke<void>("install_pending_update");
+}
+
+/** 单个镜像测速（经镜像拉取仓库 README 小文件计耗时，Rust 侧只读）。 */
+export function testMirrorSpeed(mirror: string): Promise<MirrorSpeedResult> {
+  return invoke<MirrorSpeedResult>("test_mirror_speed", { mirror });
 }

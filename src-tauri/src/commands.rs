@@ -708,6 +708,62 @@ pub fn tray_menu_action(app: AppHandle, action: crate::tray::TrayMenuAction) -> 
     crate::tray::handle_menu_action(&app, action)
 }
 
+// ---- Phase 27: 自动更新（GitHub Releases + 镜像前缀加速）----
+
+#[tauri::command]
+pub async fn check_for_update(
+    app: AppHandle,
+    mirrors: Option<Vec<String>>,
+) -> Result<crate::updater::UpdateCheckResult, String> {
+    let mirrors = mirrors.unwrap_or_default();
+    let current_version = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(crate::updater::check_update(&mirrors, &current_version))
+    })
+    .await
+    .map_err(|error| format!("检查更新任务意外中止：{error}"))?
+}
+
+#[tauri::command]
+pub async fn start_update_download(
+    app: AppHandle,
+    update_state: State<'_, crate::updater::UpdateState>,
+    mirrors: Option<Vec<String>>,
+) -> Result<crate::updater::UpdateDownloadResult, String> {
+    let mirrors = mirrors.unwrap_or_default();
+    let update_state = update_state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::updater::download_and_stage(&app, &mirrors, &update_state)
+    })
+    .await
+    .map_err(|error| format!("下载更新任务意外中止：{error}"))?
+}
+
+#[tauri::command]
+pub fn cancel_update_download(
+    update_state: State<'_, crate::updater::UpdateState>,
+) -> Result<(), String> {
+    update_state.request_cancel();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn install_pending_update(
+    app: AppHandle,
+    update_state: State<'_, crate::updater::UpdateState>,
+) -> Result<(), String> {
+    crate::updater::install_pending(&app, update_state.inner())
+}
+
+#[tauri::command]
+pub async fn test_mirror_speed(
+    mirror: String,
+) -> Result<crate::updater::MirrorSpeedResult, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(crate::updater::test_mirror(&mirror)))
+        .await
+        .map_err(|error| format!("镜像测速任务意外中止：{error}"))?
+}
+
 #[tauri::command]
 pub fn paste_to_target_window(
     state: State<'_, target_window::TargetWindowState>,

@@ -19,6 +19,7 @@ import {
   DEFAULT_QUICK_SEARCH_SHORTCUT,
 } from "../config/shortcuts";
 import { setCloseToTray, setSelectionSearchEnabled } from "../lib/tauri";
+import { DEFAULT_UPDATE_MIRRORS, isMirrorList } from "../lib/mirrorSources";
 import type { DefaultLibraryView } from "../types";
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -51,6 +52,11 @@ interface PersistedSettings {
   // 「直接退出」。询问弹窗勾「记住」与设置开关拨动都写这一项（弹窗结果与设置项
   // 是同一个状态）。localStorage 事实源，挂载/变更时推送到 Rust 内存镜像。
   closeToTray?: boolean;
+  // Phase 27: 自动检查更新（每次启动主窗口静默查一次 GitHub Releases）。
+  autoCheckUpdates: boolean;
+  // Phase 27: GitHub 加速镜像源列表（前缀代理，顺序 = 尝试顺序；官方直连
+  // 由 Rust 侧恒定兜底，不在此列）。
+  updateMirrors: string[];
 }
 
 interface SettingsContextValue extends PersistedSettings {
@@ -66,6 +72,8 @@ interface SettingsContextValue extends PersistedSettings {
   setDownloadWebGif: (enabled: boolean) => void;
   /** 拨动设置开关或弹窗勾「记住」时写入；写入即视为已决定、不再弹询问窗。 */
   setCloseToTray: (minimizeToTray: boolean) => void;
+  setAutoCheckUpdates: (enabled: boolean) => void;
+  setUpdateMirrors: (mirrors: string[]) => void;
 }
 
 const STORAGE_KEY = "emobox.settings";
@@ -82,6 +90,8 @@ const defaultSettings: PersistedSettings = {
   autoPaste: true,
   selectionSearch: true,
   downloadWebGif: false,
+  autoCheckUpdates: true,
+  updateMirrors: DEFAULT_UPDATE_MIRRORS,
 };
 
 const brand: BrandVariants = {
@@ -182,6 +192,13 @@ function readSettings(): PersistedSettings {
         typeof parsed.downloadWebGif === "boolean" ? parsed.downloadWebGif : defaultSettings.downloadWebGif,
       // 可选三态：键缺失保持 undefined（未选择），不能落成 false（那是「已记住直接退出」）。
       closeToTray: typeof parsed.closeToTray === "boolean" ? parsed.closeToTray : undefined,
+      autoCheckUpdates:
+        typeof parsed.autoCheckUpdates === "boolean"
+          ? parsed.autoCheckUpdates
+          : defaultSettings.autoCheckUpdates,
+      updateMirrors: isMirrorList(parsed.updateMirrors)
+        ? parsed.updateMirrors
+        : defaultSettings.updateMirrors,
     };
   } catch {
     return defaultSettings;
@@ -280,6 +297,14 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setCloseToTray: (closeToTray) => setSettings((current) => ({
         ...current,
         closeToTray,
+      })),
+      setAutoCheckUpdates: (autoCheckUpdates) => setSettings((current) => ({
+        ...current,
+        autoCheckUpdates,
+      })),
+      setUpdateMirrors: (updateMirrors) => setSettings((current) => ({
+        ...current,
+        updateMirrors,
       })),
     }),
     [resolvedTheme, settings],

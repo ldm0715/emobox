@@ -33,7 +33,12 @@ import { openExternalUrl } from "../lib/tauri";
 import { ShortcutEditor } from "../features/search/ShortcutEditor";
 import type { DefaultLibraryView, StorageInfo } from "../types";
 import { ABOUT_DEPENDENCIES } from "./aboutDependencies";
+import { GithubIcon, MirrorSourceCard, UpdateCard } from "./aboutUpdate";
 import { navItemBaseStyle, navItemSelectedStyle } from "./navItemStyles";
+import logoUrl from "../assets/logo.png";
+
+/** GitHub 仓库（关于页仓库 chip 与 LICENSE 链接共用）。 */
+const REPO_URL = "https://github.com/ldm0715/emobox";
 
 type SettingsSection = "general" | "shortcuts" | "storage" | "about";
 
@@ -272,20 +277,19 @@ const useStyles = makeStyles({
       outlineOffset: "2px",
     },
   },
-  aboutHero: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalS,
-  },
-  aboutName: {
-    margin: 0,
-    fontSize: tokens.fontSizeBase600,
+  // 设置弹窗标题栏的品牌行：logo + 名字 + 版本胶囊（Badge 为 tint 胶囊）。
+  brandTitle: {
+    display: "inline-flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalS,
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground1,
   },
-  aboutEnglish: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase300,
+  brandLogo: {
+    width: "22px",
+    height: "22px",
+    display: "block",
+    borderRadius: tokens.borderRadiusSmall,
   },
   // 当前功能清单：双列勾选行，比胶囊堆更克制、扫读更快。
   featureGrid: {
@@ -345,9 +349,13 @@ export function SettingsDialog({
     setDownloadWebGif,
     closeToTray,
     setCloseToTray,
+    autoCheckUpdates,
+    setAutoCheckUpdates,
   } = useAppSettings();
   const [section, setSection] = useState<SettingsSection>("general");
-  const [appVersion, setAppVersion] = useState("0.1.0");
+  // 版本号随 tauri.conf.json 运行时读取（getVersion）；读到之前不渲染版本胶囊，
+  // 不再写死回退值。
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement>(null);
 
   // 切换导航项时右侧内容滚回顶部。
@@ -355,7 +363,7 @@ export function SettingsDialog({
     panelRef.current?.scrollTo(0, 0);
   }, [section]);
 
-  // 版本号随 tauri.conf.json 运行时读取（读取失败保持编译期回退值）。
+  // 版本号随 tauri.conf.json 运行时读取；读取失败保持 null（不渲染胶囊）。
   useEffect(() => {
     let cancelled = false;
     getVersion()
@@ -615,13 +623,58 @@ export function SettingsDialog({
     ];
     return (
       <>
-        <PageHeader title="关于" />
+        <PageHeader title="关于" subtitle="项目信息、更新与开源组件。" />
         <div className={styles.group}>
-          <div className={mergeClasses(styles.card, styles.aboutHero)}>
-            <h3 className={styles.aboutName}>表情匣</h3>
-            <div className={styles.aboutEnglish}>EmoBox · 版本 {appVersion}</div>
-            <div className={styles.settingDescription}>本地优先的表情素材管理工具，无需账号或网络服务。</div>
+          <h3 className={styles.groupTitle}>项目</h3>
+          <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <div className={styles.settingText}>
+              <div className={styles.settingLabel}>仓库</div>
+              <div className={styles.settingDescription}>
+                本地优先的表情素材管理工具，无需账号或网络服务。
+              </div>
+            </div>
+            <button
+              type="button"
+              className={styles.dependencyChip}
+              onClick={() => void handleOpenDependency(REPO_URL, "EmoBox 仓库")}
+            >
+              <GithubIcon />
+              <span>ldm0715/emobox</span>
+            </button>
           </div>
+          <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <div className={styles.settingText}>
+              <div className={styles.settingLabel}>开源协议</div>
+              <div className={styles.settingDescription}>
+                以 GPL-3.0 协议开源：可自由使用、修改与分发，衍生版本须以同协议开源并保留版权声明。
+              </div>
+            </div>
+            <button
+              type="button"
+              className={styles.dependencyChip}
+              onClick={() => void handleOpenDependency(`${REPO_URL}/blob/main/LICENSE`, "GPL-3.0 协议")}
+            >
+              <span>GPL-3.0</span>
+            </button>
+          </div>
+        </div>
+        <div className={styles.group}>
+          <h3 className={styles.groupTitle}>更新</h3>
+          <UpdateCard appVersion={appVersion} onNotifyError={onNotifyError} />
+          <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <div className={styles.settingText}>
+              <LabelInfo
+                label="自动检查更新"
+                detail="每次启动 EmoBox 时静默检查 GitHub Releases 上的新版本，发现新版本会弹提示；可随时在这里手动检查。检查与下载走「镜像源」加速。"
+              />
+            </div>
+            <Switch
+              checked={autoCheckUpdates}
+              onChange={(_, data) => setAutoCheckUpdates(data.checked)}
+              aria-label="自动检查更新"
+            />
+          </div>
+          <MirrorSourceCard onNotifyError={onNotifyError} />
         </div>
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>当前功能</h3>
@@ -650,7 +703,7 @@ export function SettingsDialog({
             ))}
           </div>
         </div>
-        <div className={styles.aboutFooter}>© 2026 表情匣</div>
+        <div className={styles.aboutFooter}>© 2026 EmoBox · GPL-3.0</div>
       </>
     );
   }
@@ -665,7 +718,12 @@ export function SettingsDialog({
               </Tooltip>
             }
           >
-            设置
+            {/* 设置页最顶端品牌行：logo + 名字 + 版本胶囊（版本运行时读取）。 */}
+            <span className={styles.brandTitle}>
+              <img src={logoUrl} alt="" className={styles.brandLogo} />
+              <span>EmoBox</span>
+              {appVersion && <Badge appearance="tint">v{appVersion}</Badge>}
+            </span>
           </DialogTitle>
           <DialogContent className={styles.content}>
             <nav className={styles.navigation} aria-label="设置分区">

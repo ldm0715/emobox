@@ -223,3 +223,37 @@ export type PasteResult =
 // Phase 26: 托盘菜单动作（与 Rust `tray::TrayMenuAction` 的 kebab-case 枚举
 // 一一对应；Rust 侧统一先隐藏托盘菜单再执行）。
 export type TrayMenuAction = "open-main" | "open-search" | "open-settings" | "exit";
+
+// Phase 27: 自动更新（GitHub Releases + 镜像前缀加速）。与 Rust
+// `updater::UpdateCheckResult` 的 tag="status" 序列化一一对应。
+export type UpdateCheckResult =
+  | { status: "upToDate"; currentVersion: string }
+  | {
+      status: "available";
+      currentVersion: string;
+      latestVersion: string;
+      /** 新版本更新说明（markdown，来自发布 latest.json 的 notes）。 */
+      notes: string | null;
+      pubDate: string | null;
+      size: number | null;
+      downloadUrl: string;
+    }
+  | { status: "noRelease"; currentVersion: string }
+  | { status: "error"; message: string };
+
+/** `update-download-progress` 事件载荷（total 来自 Content-Length，缺失为 null）。 */
+export interface UpdateDownloadProgress {
+  received: number;
+  total: number | null;
+}
+
+export type UpdateDownloadResult =
+  | { status: "completed"; version: string; sha256: string }
+  | { status: "cancelled" };
+
+/** 镜像测速结果：ok=false 时 error 说明原因，latencyMs 为 null。 */
+export interface MirrorSpeedResult {
+  ok: boolean;
+  latencyMs: number | null;
+  error: string | null;
+}

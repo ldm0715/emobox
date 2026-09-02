@@ -15,6 +15,7 @@ mod shortcut_registry;
 mod target_window;
 mod thumbnail;
 mod tray;
+mod updater;
 
 use tauri::{Emitter, Manager};
 
@@ -59,6 +60,7 @@ pub fn run() {
             app.manage(target_window::TargetWindowState::new());
             app.manage(selection_capture::SelectionSearchState::new());
             app.manage(close_behavior::CloseBehaviorState::new());
+            app.manage(updater::UpdateState::new());
             tray::setup(app)?;
 
             // 启动一次性回填存量无标签表情的"文件名"标签（纯 DB，幂等，失败不阻塞）。
@@ -158,6 +160,11 @@ pub fn run() {
             commands::exit_application,
             commands::tray_menu_action,
             commands::paste_to_target_window,
+            commands::check_for_update,
+            commands::start_update_download,
+            commands::cancel_update_download,
+            commands::install_pending_update,
+            commands::test_mirror_speed,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
