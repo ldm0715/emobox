@@ -219,3 +219,7 @@ export type PasteResult =
       processName: null;
       message: string;
     };
+
+// Phase 26: 托盘菜单动作（与 Rust `tray::TrayMenuAction` 的 kebab-case 枚举
+// 一一对应；Rust 侧统一先隐藏托盘菜单再执行）。
+export type TrayMenuAction = "open-main" | "open-search" | "open-settings" | "exit";

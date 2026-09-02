@@ -18,6 +18,22 @@ mod tray;
 
 use tauri::{Emitter, Manager};
 
+/// 透明圆角窗口（快捷搜索浮层 / 托盘菜单）的样式三件套：set_shadow + 禁
+/// DWM 非客户区渲染 + OS 级圆角裁剪（区域外像素一律画不出，兼治 WebView2
+/// 底边透明残片）。见 `run` 内 setup 的注释。
+fn apply_rounded_overlay_style(window: &tauri::WebviewWindow) {
+    if let Err(error) = window.set_shadow(false) {
+        log::warn!("关闭窗口 {} 阴影失败：{error}", window.label());
+    }
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        if let Err(error) = platform::windows::dwm::disable_nc_rendering(hwnd.0 as isize) {
+            log::warn!("禁用窗口 {} DWM 非客户区渲染失败：{error}", window.label());
+        }
+        platform::windows::dwm::apply_rounded_region(hwnd.0 as isize);
+    }
+}
+
 pub fn run() {
     let log_level = if cfg!(debug_assertions) {
         log::LevelFilter::Debug
@@ -86,25 +102,14 @@ pub fn run() {
                 log::warn!("启动时清理全局快捷键失败：{error}");
             }
 
-            // 浮层是透明圆角窗口：Windows 10 上 DWM 默认阴影若未清除，会在
-            // 圆角外留下直角色块（tauri#11321）。tauri.conf.json 的 shadow:false
-            // 与 set_shadow(false)（tao 标志位）都存在时序不稳的记录，这里再经
-            // Win32 直接禁用 DWM 非客户区渲染（属性级设置，不触发样式重算/重绘，
-            // 幂等）——三重保险里真正确定性生效的是这一道。
-            if let Some(overlay) = app.get_webview_window(quick_search::WINDOW_LABEL) {
-                if let Err(error) = overlay.set_shadow(false) {
-                    log::warn!("关闭浮层窗口阴影失败：{error}");
-                }
-                #[cfg(windows)]
-                if let Ok(hwnd) = overlay.hwnd() {
-                    if let Err(error) =
-                        platform::windows::dwm::disable_nc_rendering(hwnd.0 as isize)
-                    {
-                        log::warn!("禁用浮层 DWM 非客户区渲染失败：{error}");
-                    }
-                    // OS 级圆角裁剪：区域外像素（DWM 残余阴影 / WebView2 底边
-                    // 透明残片）一律无法绘制。
-                    platform::windows::dwm::apply_rounded_region(hwnd.0 as isize);
+            // 透明圆角窗口（快捷搜索浮层 / 托盘菜单）：Windows 10 上 DWM 默认
+            // 阴影若未清除，会在圆角外留下直角色块（tauri#11321）。tauri.conf.json
+            // 的 shadow:false 与 set_shadow(false)（tao 标志位）都存在时序不稳的
+            // 记录，这里再经 Win32 直接禁用 DWM 非客户区渲染（属性级设置，不触发
+            // 样式重算/重绘，幂等）——三重保险里真正确定性生效的是这一道。
+            for label in [quick_search::WINDOW_LABEL, tray::TRAY_MENU_LABEL] {
+                if let Some(window) = app.get_webview_window(label) {
+                    apply_rounded_overlay_style(&window);
                 }
             }
 
@@ -151,12 +156,19 @@ pub fn run() {
             commands::open_external_url,
             commands::set_close_to_tray,
             commands::exit_application,
+            commands::tray_menu_action,
             commands::paste_to_target_window,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 match window.label() {
                     quick_search::WINDOW_LABEL => {
+                        api.prevent_close();
+                        if let Err(error) = window.hide() {
+                            log::error!("隐藏窗口 {} 失败：{error}", window.label());
+                        }
+                    }
+                    tray::TRAY_MENU_LABEL => {
                         api.prevent_close();
                         if let Err(error) = window.hide() {
                             log::error!("隐藏窗口 {} 失败：{error}", window.label());

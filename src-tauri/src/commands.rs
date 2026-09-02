@@ -704,6 +704,11 @@ pub fn exit_application(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn tray_menu_action(app: AppHandle, action: crate::tray::TrayMenuAction) -> Result<(), String> {
+    crate::tray::handle_menu_action(&app, action)
+}
+
+#[tauri::command]
 pub fn paste_to_target_window(
     state: State<'_, target_window::TargetWindowState>,
 ) -> crate::services::chat_paste_service::PasteResult {

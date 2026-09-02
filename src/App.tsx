@@ -553,6 +553,26 @@ export function App() {
     };
   }, []);
 
+  // Phase 26：托盘菜单「设置」（Rust 先显示主窗口再发事件）。handler 只做
+  // setState、无依赖值，注册一次即可。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    listen("settings-open-requested", () => {
+      setSettingsOpen(true);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((listenError) => {
+      console.error("无法监听托盘打开设置事件", listenError);
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const showShortcutError = useCallback((message: string, registered = false) => {
     setShortcutRegistered(registered);
     setShortcutError(message);

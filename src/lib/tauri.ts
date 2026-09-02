@@ -14,6 +14,7 @@ import type {
   StorageInfo,
   Tag,
   TrashResult,
+  TrayMenuAction,
 } from "../types";
 
 export function importFolder(
@@ -71,6 +72,11 @@ export function setCloseToTray(minimizeToTray: boolean | null): Promise<void> {
 /** 退出整个应用（与托盘「退出」同语义）。 */
 export function exitApplication(): Promise<void> {
   return invoke<void>("exit_application");
+}
+
+/** 托盘菜单项动作（Phase 26）：Rust 侧统一先隐藏托盘菜单再执行。 */
+export function trayMenuAction(action: TrayMenuAction): Promise<void> {
+  return invoke<void>("tray_menu_action", { action });
 }
 
 export function copyImageToClipboard(path: string): Promise<ClipboardCopyOutcome> {

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { QuickSearchWindow } from "./features/search/QuickSearchWindow";
+import { TrayMenuWindow } from "./features/tray-menu/TrayMenuWindow";
 import "./styles/global.css";
 
 const windowLabel = getCurrentWindow().label;
@@ -11,7 +12,17 @@ const windowLabel = getCurrentWindow().label;
 if (windowLabel === "quick-search") {
   document.documentElement.classList.add("quick-search-window");
 }
-const content = windowLabel === "quick-search" ? <QuickSearchWindow /> : <App />;
+if (windowLabel === "tray-menu") {
+  document.documentElement.classList.add("tray-menu-window");
+}
+const content =
+  windowLabel === "quick-search" ? (
+    <QuickSearchWindow />
+  ) : windowLabel === "tray-menu" ? (
+    <TrayMenuWindow />
+  ) : (
+    <App />
+  );
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

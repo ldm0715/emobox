@@ -25,12 +25,15 @@ body {
   user-select: none;
 }
 
-/* 快捷搜索浮层：透明窗口（tauri.conf.json transparent: true）下 html/body
-   也要透明，surface 的圆角外区域才能透出底层窗口。main.tsx 按窗口 label
-   给 <html> 挂 quick-search-window 类；主窗口不受影响。 */
+/* 透明窗口（快捷搜索浮层 / 托盘菜单，tauri.conf.json transparent: true）下
+   html/body 也要透明，surface 的圆角外区域才能透出底层窗口。main.tsx 按窗口
+   label 给 <html> 挂对应类；主窗口不受影响。 */
 html.quick-search-window,
 html.quick-search-window body,
-html.quick-search-window #root {
+html.quick-search-window #root,
+html.tray-menu-window,
+html.tray-menu-window body,
+html.tray-menu-window #root {
   background: transparent;
 }
 
