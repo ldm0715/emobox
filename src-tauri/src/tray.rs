@@ -18,7 +18,7 @@ const SETTINGS_OPEN_REQUESTED_EVENT: &str = "settings-open-requested";
 /// 托盘菜单窗口的逻辑尺寸与间距（px）。逻辑尺寸须与 tauri.conf.json 的
 /// `tray-menu` 窗口一致；弹出时按目标显示器 scale_factor 换算成物理尺寸。
 const TRAY_MENU_LOGICAL_WIDTH: f64 = 248.0;
-const TRAY_MENU_LOGICAL_HEIGHT: f64 = 170.0;
+const TRAY_MENU_LOGICAL_HEIGHT: f64 = 162.0;
 const TRAY_MENU_GAP: f64 = 8.0;
 /// 菜单隐藏后等前台窗口归属尘埃落定的时长（与 Phase 7 粘贴流程的 50ms 同源）。
 const FOREGROUND_SETTLE_MS: u64 = 50;
@@ -110,6 +110,12 @@ pub fn show_tray_menu(app: &AppHandle, icon_rect: Rect) -> Result<(), String> {
     window
         .set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32))
         .map_err(|error| format!("无法定位托盘菜单窗口：{error}"))?;
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        // SetWindowRgn 的圆角裁剪区域不随窗口 resize 自动更新；每次弹出
+        // 前按新尺寸/新 DPI 重算，否则角部裁剪与实际窗口错位。
+        crate::platform::windows::dwm::apply_rounded_region(hwnd.0 as isize);
+    }
     window
         .show()
         .map_err(|error| format!("无法显示托盘菜单窗口：{error}"))?;

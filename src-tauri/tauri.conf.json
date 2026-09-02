@@ -46,7 +46,7 @@
         "label": "tray-menu",
         "title": "托盘菜单",
         "width": 248,
-        "height": 170,
+        "height": 162,
         "resizable": false,
         "fullscreen": false,
         "decorations": false,

@@ -26,18 +26,16 @@ const TOP_ITEMS: MenuItemSpec[] = [
 ];
 
 const useStyles = makeStyles({
-  // 透明窗口里 surface 只占内容实际高度（height auto），窗口底部剩余区域
-  // 保持透明 —— 即使字体度量有出入也不会出现色块死区。
-  root: {
+  // surface 铺满整个窗口（与快捷搜索浮层同款）。WebView2 对透明窗口底边
+  // 有「不合成透明度、露出默认白底」的残片问题（Phase 20 教训），窗口内部
+  // 绝不能留 CSS 透明条带——窗口高度必须与菜单内容高度贴合（tray.rs 的
+  // TRAY_MENU_LOGICAL_* 常量与 tauri.conf.json 同源维护）。
+  surface: {
     width: "100%",
     height: "100%",
     display: "flex",
     flexDirection: "column",
     alignItems: "stretch",
-  },
-  // Surface 阶梯与快捷搜索浮层一致：BG1 + 1px 描边 + XLarge 圆角，无投影
-  // （tauri.conf.json 已关 shadow，CSS 投影没有衬垫空间可画）。
-  surface: {
     backgroundColor: tokens.colorNeutralBackground1,
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke1}`,
     borderRadius: tokens.borderRadiusXLarge,
@@ -100,24 +98,22 @@ export function TrayMenuPanel({ onAction }: TrayMenuPanelProps) {
   };
 
   return (
-    <div className={styles.root}>
-      {/* key 重挂载由 TrayMenuWindow 负责（activationId），appear 播入场动画；
-          child 必须是 DOM 元素（presence 组件约束）。 */}
-      <FadeSnappy visible appear>
-        <section className={styles.surface} role="menu" aria-label="托盘菜单">
-          {TOP_ITEMS.map(renderItem)}
-          <Divider className={styles.divider} />
-          <button
-            type="button"
-            role="menuitem"
-            className={styles.item}
-            onClick={() => onAction("exit")}
-          >
-            <Power20Regular className={styles.itemIcon} />
-            <span>退出</span>
-          </button>
-        </section>
-      </FadeSnappy>
-    </div>
+    // key 重挂载由 TrayMenuWindow 负责（activationId），appear 播入场动画；
+    // child 必须是 DOM 元素（presence 组件约束）。
+    <FadeSnappy visible appear>
+      <section className={styles.surface} role="menu" aria-label="托盘菜单">
+        {TOP_ITEMS.map(renderItem)}
+        <Divider className={styles.divider} />
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.item}
+          onClick={() => onAction("exit")}
+        >
+          <Power20Regular className={styles.itemIcon} />
+          <span>退出</span>
+        </button>
+      </section>
+    </FadeSnappy>
   );
 }

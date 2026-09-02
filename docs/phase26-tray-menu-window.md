@@ -26,7 +26,7 @@ Phase 4 起托盘右键菜单一直是 Tauri `MenuItem` 构建的**原生 Win32 
 
 ### `tauri.conf.json`
 
-新增 `tray-menu` 窗口：`decorations:false`、`transparent:true`、`alwaysOnTop:true`、`skipTaskbar:true`、`visible:false`、`focus:true`、`shadow:false`、`resizable:false`，逻辑尺寸 **248×170**（surface 实际内容高约 161px，窗口略留透明余量防字体度量差）。
+新增 `tray-menu` 窗口：`decorations:false`、`transparent:true`、`alwaysOnTop:true`、`skipTaskbar:true`、`visible:false`、`focus:true`、`shadow:false`、`resizable:false`，逻辑尺寸 **248×162**（贴合菜单内容实际高度，见「surface 铺满窗口」）。
 
 ### `tray.rs`（整体重写）
 
@@ -36,7 +36,7 @@ Phase 4 起托盘右键菜单一直是 Tauri `MenuItem` 构建的**原生 Win32 
   1. 事件携带的 `rect` 是托盘图标矩形（物理像素）。取图标中心，用 `monitor_containing`（遍历 `available_monitors()`）找出图标所在显示器，用它的 `scale_factor()` 把窗口逻辑尺寸换算成物理尺寸（窗口首次显示前 DPI 归属不定，不能依赖 `outer_size()`）；
   2. 位置：**右缘对齐图标右缘、底边悬在图标上方 8px**（任务栏几乎总在底部）；
   3. 再 clamp 到该显示器可视范围内（margin 8px），兜住隐藏图标溢出区、顶部任务栏等边角情况；
-  4. `set_size` → `set_position` → `show` → `set_focus` → `emit_to("tray-menu", "tray-menu-opened")`。
+  4. `set_size` → `set_position` → **重算 OS 圆角区域**（`SetWindowRgn` 的区域不随窗口 resize 自动更新，每次弹出前按新尺寸/新 DPI 重新 `apply_rounded_region`，否则角部裁剪与实际窗口错位）→ `show` → `set_focus` → `emit_to("tray-menu", "tray-menu-opened")`。
 - `TrayMenuAction` 枚举：`#[serde(rename_all = "kebab-case")]`，四个变体与前端 `TrayMenuAction` 联合类型一一对应（`open-main` / `open-search` / `open-settings` / `exit`）。
 - `handle_menu_action`：**统一先 `hide_tray_menu` 再执行动作**（失败仅 warn 不阻断）。两个原因：
   1. alwaysOnTop 弹窗不先藏会阻塞后续窗口聚焦；
@@ -56,7 +56,7 @@ Phase 4 起托盘右键菜单一直是 Tauri `MenuItem` 构建的**原生 Win32 
 ### `src/features/tray-menu/`
 
 - `TrayMenuPanel.tsx`：surface 与快捷搜索浮层同款阶梯——`colorNeutralBackground1` + 1px `colorNeutralStroke1` 描边 + `borderRadiusXLarge`，**无投影**（透明窗口没有衬垫空间画 CSS 阴影）；容器 padding 4px，菜单项 36px 高自定义 `<button role="menuitem">`（20px 图标 + 文案，hover `colorSubtleBackgroundHover`、按下 `colorSubtleBackgroundPressed`）。「退出」前一条 Fluent `Divider`——**flex column 里必须显式 `flexGrow: 0`**（Phase 14 坑），并手动收紧 margin 为 4px（Divider 自带 8px 上下 margin）。
-  - **surface 高度是内容自适应（height auto）**：外层 root 占满窗口但 surface 只包住内容，窗口底部剩余区域保持透明——即使字体度量有出入也不会出现色块死区。
+  - **surface 必须铺满整个窗口（width/height 100%）**：首版把 surface 做成内容自适应高度、窗口留 8px 透明余量，结果底部出现一条白条——WebView2 对透明窗口底边区域**不合成透明度、直接露出默认白底**（Phase 20 的「WebView2 底边透明残片」教训；快捷搜索浮层没暴露是因为它 surface 铺满 100%）。所以透明窗口内部绝不能留 CSS 透明条带，窗口高度要贴合内容。
   - 入场动画：`<FadeSnappy visible appear>` 包裹 surface（容器级动画红线，无 per-item），child 是 DOM 元素。
 - `TrayMenuWindow.tsx`：窗口常驻隐藏不销毁（同浮层）。
   - 失焦自动关闭：`onFocusChanged` blur → `getCurrentWindow().hide()`，带 300ms 激活守卫（show/set_focus 序列的瞬时 blur）+ latest-ref 转发（`hideRef`，与 `QuickSearchWindow.closeRef` 同模式）。无拖拽所以不需要 `overlayDragGuard`。
