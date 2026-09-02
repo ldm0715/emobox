@@ -37,6 +37,9 @@
 - logo 事实源 `static/logo.ico`（256×256 32bpp ARGB）→ 提取 `static/logo.png` → `npx tauri icon` 重新生成 `src-tauri/icons/*` 全套（托盘图标走 `default_window_icon()` 自动跟随）；前端显示用 `src/assets/logo.png`（首次引入 vite 静态图片 import）。
 - 设置弹窗标题栏改为品牌行：logo + "EmoBox" + 版本胶囊（`Badge tint`）。版本 = `getVersion()` 运行时读 tauri.conf.json 的 version，state 初始 `null`、读到才渲染胶囊（**不写死回退值**）。
 - 「表情匣」展示字符串全部改「EmoBox」：tauri.conf.json main 窗口 title、tray tooltip、index.html title、AppToolbar 品牌区、关于页文案。docs/phase*.md 历史文档不改。
+- **设置行图标范式（2026-09 二轮整改）**：全部设置行带 Fluent 20px 左端 `rowIcon`（Win11 设置同款，`colorNeutralForeground2` 弱化色）——三列 `settingRow`（图标|文案|控件，`max-width: 640px` 断点下控件 `gridColumn: 2` 落到文案列下方）与两列 `settingRowStack`（图标 + 纵向内容：素材库路径、快捷键卡）；**「当前功能」「开源依赖」是信息清单卡，不带行图标**（用户指定）。图标语义：主题=Color、托盘=ArrowMinimize、启动页=Home、自动粘贴=ClipboardPaste、选中文字=Highlight、网页 GIF=Gif、快速搜索=Search、剪贴板收藏=Image、打开浮层=SearchSquare、素材库=FolderOpen、导入=ArrowUpload、格式=ImageMultiple、仓库行=Link、协议行=Document、自动检查=Alert（铃铛）、检查更新卡=ArrowSync、镜像源=Globe。新加设置行必须带图标。
+- **关于页文案收敛（同轮）**：原仓库行的说明文字上移为「关于」PageHeader 副标题；仓库、开源协议两行只留标签不带描述（用户指定「这个选项不要文字」）。协议 chip 用 Fluent `ShieldCheckmark20Regular`——GPL 没有官方品牌标，按用户要求统一走 Fluent 图标。
+- `public/favicon.ico`（logo 的 ico 副本）+ index.html `<link rel="icon">`，消除 dev 控制台的 favicon 404。
 
 ## 6. 协议：GPL-3.0-only
 
@@ -45,6 +48,8 @@
 ## 7. 坑与教训
 
 - Rust 原始字符串：测试 JSON 里 `"## 更新内容"` 的 `"##` 会终结 `r##"..."##`——含 markdown 标题的字符串要用 `r###"..."###`。
-- `@fluentui/react-components@9.74.6` 的 `Button` **没有 `loading` prop**（ later 版本才有）——忙碌态用 `icon={<Spinner size="extra-tiny" />}` + `disabled`。
+- `@fluentui/react-components@9.74.6` 的 `Button` **没有 `loading` prop**（later 版本才有）——忙碌态用 `icon={<Spinner size="extra-tiny" />}` + `disabled`。
+- `@fluentui/react-icons` 里**没有 `Bell20Regular`**——Fluent 的铃铛是 `Alert20Regular`；图标名是否存在以 tsc 编译为准（import 不存在的导出会 TS2724）。
+- **tauri-build 2.6 的 `rerun-if-changed` 不监听 `icons/`**（只声明 tauri.conf.json / capabilities / 资源）：换 `icon.ico` 后 build 脚本不重跑，exe 资源里嵌的旧图标被一直复用——任务栏/标题栏纹丝不动，**重启 dev 也没用**（cargo 认为无变化，不重链接）。已在 `build.rs` 显式声明 `cargo:rerun-if-changed=icons/icon.ico` 修复：换图标即触发 build 脚本重跑（重嵌入 .res）+ 依赖 crate 重编译（`generate_context!` 的 `default_window_icon` 同步重新展开）。窗口/任务栏图标是**编译期**嵌入 exe 的两处副本，改前端资源不等于改应用图标。重启后资源管理器/任务栏偶尔仍显旧图，是 Windows shell 图标缓存（按路径缓存，非应用问题）。
 - 下载进度事件按字节量节流（≥256KB）而非每块都发，收尾补发一次保证终值准确。
 - `Mutex<Option<PendingUpdate>>` / `AtomicBool` 都没有 Clone——UpdateState 的 Clone 语义（共享状态拷给 spawn_blocking）要用 `Arc<Inner>` 手工实现。
