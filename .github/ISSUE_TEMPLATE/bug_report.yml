@@ -1,0 +1,56 @@
+name: Bug 报告
+description: EmoBox 没有按预期工作
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量填写以下信息——能稳定复现的问题更容易被修复。
+  - type: input
+    id: version
+    attributes:
+      label: EmoBox 版本
+      description: 见「设置 → 关于」，或安装包文件名中的版本号
+      placeholder: 例如 v0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+        - Windows Server / 其他
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从你做了什么开始，一步步描述到问题出现
+      placeholder: |
+        1. 打开主窗口
+        2. 点击 …
+        3. 出现 …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 截图 / 录屏 / 补充信息
+      description: 有截图或录屏更好；能附上复现用的图片文件链接更佳
+    validations:
+      required: false
