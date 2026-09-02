@@ -128,7 +128,7 @@ export function AppToolbar({
             onClick={onToggleSidebar}
           />
         </Tooltip>
-        {!sidebarCollapsed && <span className={styles.title}>表情匣</span>}
+        {!sidebarCollapsed && <span className={styles.title}>EmoBox</span>}
       </div>
 
       <div className={styles.searchWrap} data-emobox-main-search>

@@ -5,7 +5,7 @@ dist/
 src-tauri/target/
 .DS_Store
 Thumbs.db
-static/
+static/biliemoji-1.2.0
 
 src-tauri/gen/
 .zcode/

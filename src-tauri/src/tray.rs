@@ -34,7 +34,7 @@ pub enum TrayMenuAction {
 }
 
 pub fn setup(app: &mut App) -> tauri::Result<()> {
-    let mut builder = TrayIconBuilder::with_id(TRAY_ID).tooltip("表情匣 EmoBox");
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID).tooltip("EmoBox");
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }

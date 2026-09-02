@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "表情匣",
+        "title": "EmoBox",
         "width": 1100,
         "height": 720,
         "minWidth": 900,
