@@ -682,6 +682,28 @@ pub fn show_in_explorer(_app: AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    open_url_in_browser(&url)
+}
+
+#[tauri::command]
+pub fn set_close_to_tray(
+    state: State<'_, crate::close_behavior::CloseBehaviorState>,
+    minimize_to_tray: Option<bool>,
+) -> Result<(), String> {
+    // None = 未选择（点关闭按钮时前端弹询问窗）；Some(true/false) = 已记住的选择。
+    state.set(minimize_to_tray);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn exit_application(app: AppHandle) -> Result<(), String> {
+    // 与托盘「退出」同语义：整进程退出，隐藏的 quick-search 窗口一并销毁。
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn paste_to_target_window(
     state: State<'_, target_window::TargetWindowState>,
 ) -> crate::services::chat_paste_service::PasteResult {
@@ -738,6 +760,44 @@ fn show_path_in_explorer(path: &Path) -> Result<(), String> {
             .arg(target)
             .spawn()
             .map_err(|error| format!("无法打开路径：{error}"))?;
+        Ok(())
+    }
+}
+
+/// 仅放行 https + 白名单主机：关于页的依赖外链是唯一调用方，
+/// 不把任意 URL 交给系统浏览器。
+fn open_url_in_browser(url: &str) -> Result<(), String> {
+    const ALLOWED_HOSTS: [&str; 1] = ["github.com"];
+    let rest = url
+        .strip_prefix("https://")
+        .ok_or_else(|| format!("仅支持 https 链接：{url}"))?;
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    // 去掉可能存在的 userinfo 与端口，只比对主机名。
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or(authority)
+        .split(':')
+        .next()
+        .unwrap_or(authority);
+    if !ALLOWED_HOSTS.contains(&host) {
+        return Err(format!("不允许打开的主机：{host}"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(url)
+            .spawn()
+            .map_err(|error| format!("无法打开浏览器：{error}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|error| format!("无法打开浏览器：{error}"))?;
         Ok(())
     }
 }

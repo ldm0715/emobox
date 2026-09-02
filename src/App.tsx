@@ -12,6 +12,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "./app/AppShell";
 import { AppToolbar } from "./app/AppToolbar";
+import { CloseActionDialog, type CloseChoice } from "./app/CloseActionDialog";
 import { LibrarySidebar } from "./app/LibrarySidebar";
 import { SettingsDialog } from "./app/SettingsMenu";
 import { useAppSettings } from "./components/ThemeProvider";
@@ -42,6 +43,7 @@ import {
   renameGroup,
   searchEmojis,
   setEmojisFavorite,
+  exitApplication,
   setGroupIcon,
   setGroupPinned,
   showInExplorer,
@@ -161,6 +163,7 @@ export function App() {
     clipboardCollectShortcut,
     setClipboardCollectShortcut,
     downloadWebGif,
+    setCloseToTray,
   } = useAppSettings();
   const {
     isImporting,
@@ -303,6 +306,28 @@ export function App() {
   const [clipboardCollectRegistered, setClipboardCollectRegistered] = useState(false);
   const [clipboardCollectError, setClipboardCollectError] = useState("");
   const lastClipboardCollectErrorToast = useRef("");
+  // Phase 25：Rust 在用户点主窗口关闭按钮且尚未记住选择时发事件，弹询问窗。
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+
+  // 询问窗决策：勾「记住」写回 closeToTray 设置（弹窗结果与设置项是同一状态，
+  // 开关 UI 随之联动），此后不再弹窗；不勾只对本次生效。托盘走前端 hide()
+  // （capability core:window:allow-hide），退出走命令（与托盘「退出」同语义）。
+  const handleCloseDecide = useCallback(
+    (choice: CloseChoice, remember: boolean) => {
+      setCloseDialogOpen(false);
+      if (remember) setCloseToTray(choice === "tray");
+      if (choice === "tray") {
+        getCurrentWindow().hide().catch((hideError) => {
+          notifyError(`无法最小化到系统托盘：${getErrorMessage(hideError)}`);
+        });
+      } else {
+        exitApplication().catch((exitError) => {
+          notifyError(`无法退出应用：${getErrorMessage(exitError)}`);
+        });
+      }
+    },
+    [notifyError, setCloseToTray],
+  );
 
   // Phase 17：refreshLibrary 只拉计数（SQL LIMIT 0 + total），不再全量抓 500 行。
   // 收藏标志改为随每页加载合并（mergeFavoriteFlags）。
@@ -506,6 +531,27 @@ export function App() {
       unlisten?.();
     };
   }, [dispatchToast, notifyError, refreshLibrary, refreshSidebar]);
+
+  // Phase 25：主窗口关闭询问（Rust 在用户点 X 且未记住选择时发出，窗口保持
+  // 可见）。handler 只做 setState、无依赖值，注册一次即可（勿并入上面 deps
+  // 不为空的共享监听 effect）。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    listen("main-close-requested", () => {
+      setCloseDialogOpen(true);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((listenError) => {
+      console.error("无法监听主窗口关闭询问事件", listenError);
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const showShortcutError = useCallback((message: string, registered = false) => {
     setShortcutRegistered(registered);
@@ -1384,7 +1430,7 @@ export function App() {
     const dialogOpen =
       groupDialogOpen || moveToGroupState !== null || tagPickerState !== null || settingsOpen ||
       iconPickerGroup !== null || previewItem !== null || confirmState !== null ||
-      renameGroupState !== null;
+      renameGroupState !== null || closeDialogOpen;
     if (dialogOpen) return;
 
     const el = event.target instanceof HTMLElement ? event.target : null;
@@ -1556,6 +1602,12 @@ export function App() {
         clipboardCollectRegistered={clipboardCollectRegistered}
         clipboardCollectError={clipboardCollectError}
         onUpdateClipboardCollectShortcut={changeClipboardCollectShortcut}
+        onNotifyError={notifyError}
+      />
+      <CloseActionDialog
+        open={closeDialogOpen}
+        onOpenChange={setCloseDialogOpen}
+        onDecide={handleCloseDecide}
       />
       <Toaster toasterId={toasterId} position="top-end" />
 

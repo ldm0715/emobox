@@ -58,6 +58,21 @@ export function openAssetsDirectory(): Promise<void> {
   return invoke<void>("open_assets_directory");
 }
 
+/** 打开外部 https 链接（Rust 侧有 https + 主机白名单校验）。 */
+export function openExternalUrl(url: string): Promise<void> {
+  return invoke<void>("open_external_url", { url });
+}
+
+/** 推送主窗口关闭行为到 Rust 内存镜像（null = 未选择，点关闭时前端弹询问窗）。 */
+export function setCloseToTray(minimizeToTray: boolean | null): Promise<void> {
+  return invoke<void>("set_close_to_tray", { minimizeToTray });
+}
+
+/** 退出整个应用（与托盘「退出」同语义）。 */
+export function exitApplication(): Promise<void> {
+  return invoke<void>("exit_application");
+}
+
 export function copyImageToClipboard(path: string): Promise<ClipboardCopyOutcome> {
   return invoke<ClipboardCopyOutcome>("copy_image_to_clipboard", { path });
 }

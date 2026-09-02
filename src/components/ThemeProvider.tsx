@@ -18,7 +18,7 @@ import {
   DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
   DEFAULT_QUICK_SEARCH_SHORTCUT,
 } from "../config/shortcuts";
-import { setSelectionSearchEnabled } from "../lib/tauri";
+import { setCloseToTray, setSelectionSearchEnabled } from "../lib/tauri";
 import type { DefaultLibraryView } from "../types";
 
 export type ThemePreference = "light" | "dark" | "system";
@@ -46,6 +46,11 @@ interface PersistedSettings {
   // Off = static first-frame import with a hint toast. localStorage is the
   // source of truth; the value is passed per-collect-call to the Rust command.
   downloadWebGif: boolean;
+  // Phase 25: main-window close behavior. 三态：undefined（键不存在）= 未选择，
+  // 点关闭按钮时前端弹询问窗；true = 已记住「最小化到系统托盘」；false = 已记住
+  // 「直接退出」。询问弹窗勾「记住」与设置开关拨动都写这一项（弹窗结果与设置项
+  // 是同一个状态）。localStorage 事实源，挂载/变更时推送到 Rust 内存镜像。
+  closeToTray?: boolean;
 }
 
 interface SettingsContextValue extends PersistedSettings {
@@ -59,6 +64,8 @@ interface SettingsContextValue extends PersistedSettings {
   setAutoPaste: (enabled: boolean) => void;
   setSelectionSearch: (enabled: boolean) => void;
   setDownloadWebGif: (enabled: boolean) => void;
+  /** 拨动设置开关或弹窗勾「记住」时写入；写入即视为已决定、不再弹询问窗。 */
+  setCloseToTray: (minimizeToTray: boolean) => void;
 }
 
 const STORAGE_KEY = "emobox.settings";
@@ -173,6 +180,8 @@ function readSettings(): PersistedSettings {
         typeof parsed.selectionSearch === "boolean" ? parsed.selectionSearch : defaultSettings.selectionSearch,
       downloadWebGif:
         typeof parsed.downloadWebGif === "boolean" ? parsed.downloadWebGif : defaultSettings.downloadWebGif,
+      // 可选三态：键缺失保持 undefined（未选择），不能落成 false（那是「已记住直接退出」）。
+      closeToTray: typeof parsed.closeToTray === "boolean" ? parsed.closeToTray : undefined,
     };
   } catch {
     return defaultSettings;
@@ -230,6 +239,15 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     });
   }, [settings.selectionSearch]);
 
+  // Phase 25：把主窗口关闭行为推送到 Rust（CloseBehaviorState 内存镜像，
+  // on_window_event 据此即时决定 hide / exit / 弹询问窗）。undefined 推 null
+  // = 未选择。幂等；两个窗口都会执行。失败仅 log —— Rust 侧默认 None。
+  useEffect(() => {
+    setCloseToTray(settings.closeToTray ?? null).catch((error) => {
+      console.error("推送关闭行为设置失败", error);
+    });
+  }, [settings.closeToTray]);
+
   const value = useMemo<SettingsContextValue>(
     () => ({
       ...settings,
@@ -258,6 +276,10 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setDownloadWebGif: (downloadWebGif) => setSettings((current) => ({
         ...current,
         downloadWebGif,
+      })),
+      setCloseToTray: (closeToTray) => setSettings((current) => ({
+        ...current,
+        closeToTray,
       })),
     }),
     [resolvedTheme, settings],

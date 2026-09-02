@@ -23,7 +23,6 @@ interface ShortcutEditorProps {
   onApply: (shortcut: string) => Promise<string | null>;
   ariaLabel?: string;
   placeholder?: string;
-  helpText?: string;
 }
 
 const useStyles = makeStyles({
@@ -38,11 +37,6 @@ const useStyles = makeStyles({
   },
   input: {
     minWidth: 0,
-  },
-  help: {
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase300,
-    lineHeight: tokens.lineHeightBase400,
   },
   // 成功态不占大块：带成功图标的紧凑状态行（错误/警告仍用 MessageBar）。
   statusLine: {
@@ -64,7 +58,6 @@ export function ShortcutEditor({
   onApply,
   ariaLabel = "全局快捷键",
   placeholder = "例如 Ctrl+Alt+Space",
-  helpText = "快捷键必须包含 Ctrl、Alt、Shift 或 Win。也可以直接编辑文本后应用。",
 }: ShortcutEditorProps) {
   const styles = useStyles();
   const [draft, setDraft] = useState(shortcut);
@@ -144,8 +137,6 @@ export function ShortcutEditor({
           {saving ? "注册中" : "应用"}
         </Button>
       </div>
-
-      <div className={styles.help}>{helpText}</div>
 
       {conflictsWithWindowsMenu && (
         <FadeSnappy visible appear>

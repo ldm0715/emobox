@@ -1,5 +1,6 @@
 mod clipboard;
 mod clipboard_collect;
+mod close_behavior;
 mod commands;
 mod database;
 mod perceptual_hash;
@@ -15,7 +16,7 @@ mod target_window;
 mod thumbnail;
 mod tray;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub fn run() {
     let log_level = if cfg!(debug_assertions) {
@@ -41,6 +42,7 @@ pub fn run() {
             app.manage(recent_state);
             app.manage(target_window::TargetWindowState::new());
             app.manage(selection_capture::SelectionSearchState::new());
+            app.manage(close_behavior::CloseBehaviorState::new());
             tray::setup(app)?;
 
             // 启动一次性回填存量无标签表情的"文件名"标签（纯 DB，幂等，失败不阻塞）。
@@ -146,15 +148,44 @@ pub fn run() {
             commands::empty_trash,
             commands::list_deleted_emojis,
             commands::show_in_explorer,
+            commands::open_external_url,
+            commands::set_close_to_tray,
+            commands::exit_application,
             commands::paste_to_target_window,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 match window.label() {
-                    quick_search::WINDOW_LABEL | tray::MAIN_WINDOW_LABEL => {
+                    quick_search::WINDOW_LABEL => {
                         api.prevent_close();
                         if let Err(error) = window.hide() {
                             log::error!("隐藏窗口 {} 失败：{error}", window.label());
+                        }
+                    }
+                    tray::MAIN_WINDOW_LABEL => {
+                        // Phase 25：主窗口关闭行为由 CloseBehaviorState 决定
+                        // （None=弹询问窗 / Some(true)=驻留托盘 / Some(false)=退出）。
+                        api.prevent_close();
+                        let app = window.app_handle();
+                        match app.state::<close_behavior::CloseBehaviorState>().get() {
+                            Some(true) => {
+                                if let Err(error) = window.hide() {
+                                    log::error!("隐藏主窗口失败：{error}");
+                                }
+                            }
+                            Some(false) => {
+                                log::info!("用户已记住直接退出，应用关闭");
+                                app.exit(0);
+                            }
+                            // 未做出选择：窗口保持可见，交给前端弹「最小化到托盘 /
+                            // 直接退出」询问窗（Esc 关闭弹窗即取消关闭）。
+                            None => {
+                                if let Err(error) =
+                                    app.emit_to(tray::MAIN_WINDOW_LABEL, "main-close-requested", ())
+                                {
+                                    log::error!("发送主窗口关闭询问事件失败：{error}");
+                                }
+                            }
                         }
                     }
                     _ => {}

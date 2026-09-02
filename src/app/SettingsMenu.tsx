@@ -8,8 +8,6 @@ import {
   DialogTitle,
   Dropdown,
   Input,
-  MessageBar,
-  MessageBarBody,
   Option,
   Switch,
   Tooltip,
@@ -28,10 +26,13 @@ import {
   SearchSquare20Regular,
   Storage24Regular,
 } from "@fluentui/react-icons";
+import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useAppSettings, type ThemePreference } from "../components/ThemeProvider";
+import { openExternalUrl } from "../lib/tauri";
 import { ShortcutEditor } from "../features/search/ShortcutEditor";
 import type { DefaultLibraryView, StorageInfo } from "../types";
+import { ABOUT_DEPENDENCIES } from "./aboutDependencies";
 import { navItemBaseStyle, navItemSelectedStyle } from "./navItemStyles";
 
 type SettingsSection = "general" | "shortcuts" | "storage" | "about";
@@ -49,6 +50,7 @@ interface SettingsDialogProps {
   clipboardCollectRegistered: boolean;
   clipboardCollectError: string;
   onUpdateClipboardCollectShortcut: (shortcut: string) => Promise<string | null>;
+  onNotifyError: (message: string) => void;
 }
 
 const themeLabels: Record<ThemePreference, string> = {
@@ -230,21 +232,45 @@ const useStyles = makeStyles({
       color: tokens.colorNeutralForeground2,
     },
   },
-  inlineBadgeRow: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    columnGap: tokens.spacingHorizontalS,
-    rowGap: tokens.spacingVerticalXS,
-    color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase300,
-    lineHeight: tokens.lineHeightBase400,
-    maxWidth: "480px",
-  },
   formatList: {
     display: "flex",
     flexWrap: "wrap",
     gap: tokens.spacingHorizontalXS,
+  },
+  // 开源依赖 chip：卡片内 flex-wrap 的可点击标签（品牌单色图标 + 名称）。
+  dependencyRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalS,
+  },
+  dependencyChip: {
+    display: "flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalS,
+    padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalM}`,
+    borderRadius: tokens.borderRadiusLarge,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: "transparent",
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase300,
+    cursor: "pointer",
+    "& svg": {
+      width: "20px",
+      height: "20px",
+      display: "block",
+      flexShrink: 0,
+    },
+    ":hover": {
+      color: tokens.colorBrandForeground1,
+      border: `${tokens.strokeWidthThin} solid ${tokens.colorBrandStroke1}`,
+      backgroundColor: tokens.colorSubtleBackgroundHover,
+    },
+    ":focus-visible": {
+      outlineWidth: tokens.strokeWidthThick,
+      outlineStyle: "solid",
+      outlineColor: tokens.colorBrandStroke1,
+      outlineOffset: "2px",
+    },
   },
   aboutHero: {
     display: "flex",
@@ -302,6 +328,7 @@ export function SettingsDialog({
   clipboardCollectRegistered,
   clipboardCollectError,
   onUpdateClipboardCollectShortcut,
+  onNotifyError,
 }: SettingsDialogProps) {
   const styles = useStyles();
   const {
@@ -316,14 +343,38 @@ export function SettingsDialog({
     setSelectionSearch,
     downloadWebGif,
     setDownloadWebGif,
+    closeToTray,
+    setCloseToTray,
   } = useAppSettings();
   const [section, setSection] = useState<SettingsSection>("general");
+  const [appVersion, setAppVersion] = useState("0.1.0");
   const panelRef = useRef<HTMLElement>(null);
 
   // 切换导航项时右侧内容滚回顶部。
   useEffect(() => {
     panelRef.current?.scrollTo(0, 0);
   }, [section]);
+
+  // 版本号随 tauri.conf.json 运行时读取（读取失败保持编译期回退值）。
+  useEffect(() => {
+    let cancelled = false;
+    getVersion()
+      .then((version) => {
+        if (!cancelled && version) setAppVersion(version);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleOpenDependency(url: string, name: string) {
+    try {
+      await openExternalUrl(url);
+    } catch (error) {
+      onNotifyError(`无法打开 ${name} 的 GitHub 页面：${String(error)}`);
+    }
+  }
 
   /** 标题行旁的 Info 图标：把长说明收进 Tooltip，降低默认阅读负担。 */
   function LabelInfo({ label, detail }: { label: string; detail: string }) {
@@ -354,8 +405,7 @@ export function SettingsDialog({
           <h3 className={styles.groupTitle}>外观</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
             <div className={styles.settingText}>
-              <div className={styles.settingLabel}>主题</div>
-              <div className={styles.settingDescription}>顶部主题按钮和这里使用同一份设置。</div>
+              <LabelInfo label="主题" detail="顶部工具栏的主题按钮与这里使用同一份设置。" />
             </div>
             <Dropdown
               className={styles.dropdown}
@@ -373,15 +423,20 @@ export function SettingsDialog({
           <h3 className={styles.groupTitle}>通用</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
             <div className={styles.settingText}>
-              <div className={styles.settingLabel}>关闭窗口时最小化到系统托盘</div>
-              <div className={styles.settingDescription}>主窗口关闭后驻留托盘，通过托盘菜单退出。</div>
+              <LabelInfo
+                label="关闭窗口时最小化到系统托盘"
+                detail="开启后，点击关闭按钮时主窗口驻留系统托盘、从托盘菜单退出；关闭则直接退出应用。未记住选择时，点击关闭按钮会先询问。"
+              />
             </div>
-            <Switch disabled checked aria-label="关闭窗口时最小化到系统托盘" />
+            <Switch
+              checked={closeToTray ?? false}
+              onChange={(_, data) => setCloseToTray(data.checked)}
+              aria-label="关闭窗口时最小化到系统托盘"
+            />
           </div>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
             <div className={styles.settingText}>
               <div className={styles.settingLabel}>默认启动页面</div>
-              <div className={styles.settingDescription}>下次启动时默认打开的资料库视图。</div>
             </div>
             <Dropdown
               className={styles.dropdown}
@@ -399,8 +454,10 @@ export function SettingsDialog({
           <h3 className={styles.groupTitle}>行为</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
             <div className={styles.settingText}>
-              <div className={styles.settingLabel}>自动粘贴到原窗口</div>
-              <div className={styles.settingDescription}>在浮层选中表情后自动粘贴回原窗口；关闭则只复制到剪贴板。</div>
+              <LabelInfo
+                label="自动粘贴到原窗口"
+                detail="在浮层选中表情后自动粘贴回唤起浮层的窗口；关闭后仅复制到剪贴板。"
+              />
             </div>
             <Switch
               checked={autoPaste}
@@ -412,9 +469,8 @@ export function SettingsDialog({
             <div className={styles.settingText}>
               <LabelInfo
                 label="用选中文字自动搜索"
-                detail="选中文字会被剪切作为搜索词，粘贴表情时正好替换原文字；放弃选择可手动 Ctrl+V 找回。文字仅用作搜索、不会保存，读取不到时浮层正常打开；兼容性不佳的应用会以模拟 Ctrl+X 方式读取。"
+                detail="打开浮层时用当前选中文字作为搜索词；选中文字会被剪切，粘贴表情时正好替换原文字，放弃选择可手动 Ctrl+V 找回。文字仅用作搜索、不会保存；读取不到时浮层正常打开，兼容性不佳的应用会以模拟 Ctrl+X 方式读取。"
               />
-              <div className={styles.settingDescription}>打开浮层时用当前选中文字作为搜索词。</div>
             </div>
             <Switch
               checked={selectionSearch}
@@ -426,9 +482,8 @@ export function SettingsDialog({
             <div className={styles.settingText}>
               <LabelInfo
                 label="联网下载网页 GIF"
-                detail="仅请求剪贴板上的 .gif 链接，超时 15 秒、单文件上限 20 MB，不上传任何数据。QQ/Firefox 复制走本地数据，无需联网、不受此开关影响。"
+                detail="浏览器复制的动图只有静态首帧，开启后下载原始 GIF 保留动画。仅请求剪贴板上的 .gif 链接，超时 15 秒、单文件上限 20 MB，不上传任何数据；QQ/Firefox 复制走本地数据，无需联网、不受此开关影响。"
               />
-              <div className={styles.settingDescription}>浏览器复制的动图只有静态首帧；开启后下载原始 GIF 保留动画。</div>
             </div>
             <Switch
               checked={downloadWebGif}
@@ -448,10 +503,10 @@ export function SettingsDialog({
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>快捷键</h3>
           <div className={mergeClasses(styles.card, styles.shortcutItem)}>
-            <div className={styles.settingLabel}>快速搜索</div>
-            <div className={styles.settingDescription}>
-              在任意应用中唤出或隐藏独立搜索浮层。
-            </div>
+            <LabelInfo
+              label="快速搜索"
+              detail="在任意应用中唤出或隐藏独立搜索浮层。快捷键须包含 Ctrl、Alt、Shift 或 Win，可直接键入或点击「录制」。"
+            />
             <ShortcutEditor
               shortcut={quickSearchShortcut}
               registered={shortcutRegistered}
@@ -460,10 +515,10 @@ export function SettingsDialog({
             />
           </div>
           <div className={mergeClasses(styles.card, styles.shortcutItem)}>
-            <div className={styles.settingLabel}>从剪贴板收藏</div>
-            <div className={styles.settingDescription}>
-              按组合键把当前剪贴板图片保存到素材库；仅由你主动触发，不监听剪贴板。
-            </div>
+            <LabelInfo
+              label="从剪贴板收藏"
+              detail="按组合键把当前剪贴板图片保存到素材库；仅由你主动触发，不监听剪贴板。快捷键须包含 Ctrl、Alt、Shift 或 Win，可直接键入或点击「录制」。"
+            />
             <ShortcutEditor
               shortcut={clipboardCollectShortcut}
               registered={clipboardCollectRegistered}
@@ -478,8 +533,7 @@ export function SettingsDialog({
           <h3 className={styles.groupTitle}>快捷操作</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
             <div className={styles.settingText}>
-              <div className={styles.settingLabel}>打开快捷搜索浮层</div>
-              <div className={styles.settingDescription}>通过主窗口按钮打开与全局快捷键相同的独立窗口。</div>
+              <LabelInfo label="打开快捷搜索浮层" detail="与全局快捷键打开同一个独立搜索窗口。" />
             </div>
             <Button
               icon={<SearchSquare20Regular />}
@@ -506,7 +560,6 @@ export function SettingsDialog({
           <h3 className={styles.groupTitle}>素材库位置</h3>
           <div className={mergeClasses(styles.card, styles.settingText)}>
             <div className={styles.settingLabel}>EmoBox 素材库</div>
-            <div className={styles.settingDescription}>主动导入和拖入的图片会复制到这里。</div>
             <div className={styles.pathRow}>
               <Input
                 className={styles.pathInput}
@@ -527,12 +580,14 @@ export function SettingsDialog({
         </div>
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>导入与索引</h3>
-          <div className={mergeClasses(styles.card, styles.settingText)}>
-            <div className={styles.settingLabel}>导入与索引方式</div>
-            <div className={styles.inlineBadgeRow}>
-              <span>导入图片、拖拽或导入文件夹都会复制进素材库；导入文件夹会自动按子文件夹建立同名分组。</span>
-              <Badge appearance="tint">仅本地处理</Badge>
+          <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <div className={styles.settingText}>
+              <LabelInfo
+                label="导入与索引方式"
+                detail="导入图片、拖拽或导入文件夹都会复制进素材库；导入文件夹会自动按子文件夹建立同名分组。只处理你主动导入、拖入或主动从剪贴板收藏的图片，不会读取微信、QQ 的聊天记录、缓存或私密目录。"
+              />
             </div>
+            <Badge appearance="tint">仅本地处理</Badge>
           </div>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
             <div className={styles.settingText}>
@@ -542,11 +597,6 @@ export function SettingsDialog({
               </div>
             </div>
           </div>
-          <MessageBar intent="info">
-            <MessageBarBody>
-              只处理你主动导入、拖入或主动从剪贴板收藏的图片；不会读取微信、QQ 的聊天记录、缓存或私密目录。
-            </MessageBarBody>
-          </MessageBar>
         </div>
       </>
     );
@@ -569,7 +619,7 @@ export function SettingsDialog({
         <div className={styles.group}>
           <div className={mergeClasses(styles.card, styles.aboutHero)}>
             <h3 className={styles.aboutName}>表情匣</h3>
-            <div className={styles.aboutEnglish}>EmoBox · 版本 0.1.0</div>
+            <div className={styles.aboutEnglish}>EmoBox · 版本 {appVersion}</div>
             <div className={styles.settingDescription}>本地优先的表情素材管理工具，无需账号或网络服务。</div>
           </div>
         </div>
@@ -585,8 +635,20 @@ export function SettingsDialog({
           </div>
         </div>
         <div className={styles.group}>
-          <h3 className={styles.groupTitle}>开发计划</h3>
-          <div className={mergeClasses(styles.card, styles.settingDescription)}>云同步与跨设备同步。</div>
+          <h3 className={styles.groupTitle}>开源依赖</h3>
+          <div className={mergeClasses(styles.card, styles.dependencyRow)}>
+            {ABOUT_DEPENDENCIES.map(({ name, url, Icon }) => (
+              <button
+                key={name}
+                type="button"
+                className={styles.dependencyChip}
+                onClick={() => void handleOpenDependency(url, name)}
+              >
+                <Icon />
+                <span>{name}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <div className={styles.aboutFooter}>© 2026 表情匣</div>
       </>
