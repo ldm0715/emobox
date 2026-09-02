@@ -1,6 +1,8 @@
-# 表情匣 (EmoBox)
+# EmoBox
 
-表情匣是一个 Windows 优先的本地表情资产管理工具，用于导入、整理、搜索和快速复制表情图片到剪贴板。基于 Tauri v2、React、TypeScript 和 Fluent UI React v9 构建。
+EmoBox 是一个 Windows 优先的本地表情资产管理工具，用于导入、整理、搜索和快速复制表情图片到剪贴板。基于 Tauri v2、React、TypeScript 和 Fluent UI React v9 构建，以 [GPL-3.0](LICENSE) 协议开源。
+
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 应用有两个顶层窗口：主窗口 `main`（资料库 + 设置）和一个瞬态 `quick-search` 浮层（全局快捷键唤出）。用户原始图片保持原位；EmoBox 只把「导入」的图片复制到自己的受管素材库。
 
@@ -14,7 +16,8 @@
 - **最近使用**：最近 50 条按 `lastUsedAt` 降序，复制即记录。
 - **多排序**：名称、格式、按添加时间、按修改时间（新→旧）。
 - **网格多选**：批量收藏、移入分组、打标签、删除 / 恢复 / 彻底删除。
-- **本地优先**：无云端、无账号、无网络同步；只处理你主动导入 / 收藏的图片。
+- **自动检查更新**：启动时静默检查 GitHub Releases 上的新版本；内置 gh-proxy 风格加速镜像源（可自定义、可测速排序），安装包经 SHA-256 校验后启动安装程序，更新说明以 markdown 展示。
+- **本地优先**：无云端、无账号、无网络同步；只处理你主动导入 / 收藏的图片。唯一的联网行为是「检查更新 / 下载安装包」（请求 GitHub 或你配置的镜像源）与默认关闭的「联网下载网页 GIF」。
 
 ## 导入方式
 
@@ -44,9 +47,9 @@
 - **常规**：外观（主题：跟随系统 / 浅色 / 深色）、通用（默认启动页面）、行为（自动粘贴开关）
 - **快捷键**：录制 / 编辑两个全局快捷键、打开浮层
 - **存储与导入**：素材库位置、导入方式说明、支持格式
-- **关于**：版本与能力清单
+- **关于**：logo + 版本胶囊、仓库与协议（GPL-3.0）、检查更新（markdown 更新说明）、镜像源管理（增删 / 测速 / 恢复默认）、能力清单与开源依赖
 
-主题、侧栏折叠、默认启动页面、全局快捷键、自动粘贴开关持久化到 `localStorage: emobox.settings`，并同步到 Tauri 原生窗口。
+主题、侧栏折叠、默认启动页面、全局快捷键、自动粘贴开关、自动检查更新、镜像源列表持久化到 `localStorage: emobox.settings`，并同步到 Tauri 原生窗口。
 
 ## 环境要求
 
@@ -74,6 +77,21 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 npx vitest run                                 # 前端单测
 ```
+
+## 发布新版本
+
+1. 同步修改三处版本号：`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`package.json`。
+2. 在 `CHANGES.md` **顶部**追加 `## vX.Y.Z（YYYY-MM-DD）` 段落（markdown，会作为应用内更新说明展示）。
+3. 构建并生成更新清单：
+
+   ```powershell
+   npm run tauri build                       # 产出 NSIS 安装包
+   node scripts/make-release-manifest.mjs    # 算 SHA-256 + 从 CHANGES.md 提取说明，写 latest.json
+   ```
+
+4. 在 GitHub 以 tag `vX.Y.Z` 创建 Release，上传 `*-setup.exe` 与 `latest.json`（产物都在 `src-tauri/target/release/bundle/nsis/`）。
+
+应用内更新会按「镜像源列表 → 官方直连」顺序拉取 `releases/latest/download/latest.json` 与安装包，SHA-256 校验通过后启动安装器。
 
 ## 已知限制
 
