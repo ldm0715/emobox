@@ -23,7 +23,9 @@ import { EmojiPreviewDialog } from "./features/library/EmojiPreviewDialog";
 import { GroupDialog } from "./features/library/GroupDialog";
 import { GroupIconPickerDialog } from "./features/library/GroupIconPickerDialog";
 import { MoveToGroupDialog } from "./features/library/MoveToGroupDialog";
+import { RenameEmojiDialog } from "./features/library/RenameEmojiDialog";
 import { TagPickerDialog } from "./features/library/TagPickerDialog";
+import { buildBatchFilenames, normalizeExtension } from "./features/library/batchRename";
 import { useDebouncedValue } from "./features/library/useDebouncedValue";
 import { useMultiSelection, type SelectionMode } from "./features/library/useMultiSelection";
 import {
@@ -41,6 +43,7 @@ import {
   listTags,
   openAssetsDirectory,
   removeTagsFromEmojis,
+  renameEmojis,
   renameGroup,
   searchEmojis,
   setEmojisFavorite,
@@ -63,6 +66,7 @@ import type {
   LibraryView,
   ManagedImportSummary,
   RecentImageRecord,
+  RenameEntry,
   SearchOptions,
   SearchResult,
   SortOption,
@@ -273,6 +277,15 @@ export function App() {
   // 重命名分组弹窗（复用 GroupDialog 的 rename 模式，替代原生 window.prompt）
   const [renameGroupState, setRenameGroupState] = useState<LibraryGroup | null>(null);
   const [renameGroupBusy, setRenameGroupBusy] = useState(false);
+  // 单张重命名弹窗（右键菜单）。name 含扩展名完整名（open 键控快照源）。
+  const [renameEmojiState, setRenameEmojiState] = useState<{
+    id: number;
+    name: string;
+    extension: string;
+  } | null>(null);
+  // 批量模板重命名弹窗（分组视图批量条）。数组顺序 = 当前视图排序（编号顺序）。
+  const [batchRenameState, setBatchRenameState] = useState<IndexedImage[] | null>(null);
+  const [renameEmojiBusy, setRenameEmojiBusy] = useState(false);
   // 待确认操作（ConfirmDialog）
   const [confirmState, setConfirmState] = useState<PendingConfirm | null>(null);
 
@@ -1465,6 +1478,42 @@ export function App() {
     setTagPickerState({ emojiIds: ids, initiallySelectedTagIds: Array.from(inter) });
   }
 
+  // 单张重命名：菜单单项操作（多选时 EmojiItemMenu 已隐藏该项）。读 ref 防御
+  // 拒绝回收站（菜单 trash 模式本就不渲染，这里是第三重守卫）。
+  function handleRenameEmoji(items: IndexedImage[]) {
+    if (items.length !== 1 || currentViewRef.current === "trash") return;
+    setRenameEmojiState({
+      id: items[0].id,
+      name: items[0].name,
+      extension: items[0].extension,
+    });
+  }
+
+  // 批量模板重命名：仅分组视图批量条提供（menuMode === "group" 守卫）。
+  // selectedItems 保序 = 当前视图排序，编号按此顺序分配。
+  function handleBatchRename(items: IndexedImage[]) {
+    if (items.length === 0) return;
+    setBatchRenameState(items);
+  }
+
+  // 重命名成功后的公共收尾：标签列表变了（文件名标签增删）→ 刷新侧栏；
+  // viewReloadTick 重拉第 1 页修正 name 排序位置与 tagIds（新标签 id 前端
+  // 拿不到）；recent 视图数据源在客户端，对 recentItems 的 name 做本地补丁。
+  async function afterRename(idToName: Map<number, string>) {
+    setCurrentEmojis((curr) =>
+      curr.map((e) => (idToName.has(e.id) ? { ...e, name: idToName.get(e.id)! } : e)),
+    );
+    setRecentItems((curr) =>
+      curr.map((r) =>
+        idToName.has(r.item.id)
+          ? { ...r, item: { ...r.item, name: idToName.get(r.item.id)! } }
+          : r,
+      ),
+    );
+    await refreshSidebar();
+    setViewReloadTick((tick) => tick + 1);
+  }
+
   // 点击卡片 Tag → 注入 `*标签` 精确搜索（后端 list_indexed 与 recent 客户端
   // searchSyntax 都支持该语法）。useCallback 保持身份稳定（卡片 memo 前提）。
   const handleTagClick = useCallback((tag: string) => {
@@ -1508,7 +1557,8 @@ export function App() {
     const dialogOpen =
       groupDialogOpen || moveToGroupState !== null || tagPickerState !== null || settingsOpen ||
       iconPickerGroup !== null || previewItem !== null || confirmState !== null ||
-      renameGroupState !== null || closeDialogOpen;
+      renameGroupState !== null || renameEmojiState !== null || batchRenameState !== null ||
+      closeDialogOpen;
     if (dialogOpen) return;
 
     const el = event.target instanceof HTMLElement ? event.target : null;
@@ -1647,6 +1697,8 @@ export function App() {
           onMoveToGroup={handleMoveToGroup}
           onRemoveFromGroup={handleRemoveFromGroup}
           onAddTags={handleAddTags}
+          onRename={handleRenameEmoji}
+          onBatchRename={handleBatchRename}
           onShowInExplorer={handleShowInExplorer}
           onDelete={handleDelete}
           onRestore={handleRestore}
@@ -1799,6 +1851,75 @@ export function App() {
           if (!open) setTagPickerState(null);
         }}
         onConfirm={handleTagPickerConfirm}
+      />
+
+      <RenameEmojiDialog
+        open={renameEmojiState !== null}
+        mode="single"
+        emojiName={renameEmojiState?.name ?? ""}
+        extension={renameEmojiState?.extension ?? ""}
+        busy={renameEmojiBusy}
+        onOpenChange={(open) => {
+          if (!open) setRenameEmojiState(null);
+        }}
+        onSubmit={async (stem) => {
+          if (!renameEmojiState) return;
+          const { id, extension } = renameEmojiState;
+          const ext = normalizeExtension(extension);
+          const filename = ext ? `${stem}.${ext}` : stem;
+          setRenameEmojiBusy(true);
+          try {
+            await renameEmojis([{ emojiId: id, filename }]);
+            await afterRename(new Map([[id, filename]]));
+            dispatchToast(
+              <Toast>
+                <ToastTitle>已重命名为「{filename}」</ToastTitle>
+              </Toast>,
+              { intent: "success" },
+            );
+          } finally {
+            // 失败时错误由 RenameEmojiDialog 的 handleSubmit 捕获并内联显示。
+            setRenameEmojiBusy(false);
+          }
+        }}
+      />
+
+      <RenameEmojiDialog
+        open={batchRenameState !== null}
+        mode="batch"
+        batchCount={batchRenameState?.length ?? 0}
+        busy={renameEmojiBusy}
+        onOpenChange={(open) => {
+          if (!open) setBatchRenameState(null);
+        }}
+        onSubmit={async (template) => {
+          const items = batchRenameState;
+          if (!items || items.length === 0) return;
+          const filenames = buildBatchFilenames(
+            template,
+            items.map((item) => item.extension),
+          );
+          const renames: RenameEntry[] = items.map((item, index) => ({
+            emojiId: item.id,
+            filename: filenames[index],
+          }));
+          setRenameEmojiBusy(true);
+          try {
+            await renameEmojis(renames);
+            await afterRename(
+              new Map(renames.map((entry) => [entry.emojiId, entry.filename])),
+            );
+            dispatchToast(
+              <Toast>
+                <ToastTitle>已重命名 {renames.length} 个表情</ToastTitle>
+              </Toast>,
+              { intent: "success" },
+            );
+          } finally {
+            // 失败时错误由 RenameEmojiDialog 的 handleSubmit 捕获并内联显示。
+            setRenameEmojiBusy(false);
+          }
+        }}
       />
     </>
   );

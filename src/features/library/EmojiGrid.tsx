@@ -71,6 +71,8 @@ interface EmojiGridProps {
   onMoveToGroup: (items: IndexedImage[]) => void;
   onRemoveFromGroup?: (items: IndexedImage[]) => void;
   onAddTags?: (items: IndexedImage[]) => void;
+  /** 单张重命名（菜单单项操作，多选时隐藏）。 */
+  onRename?: (items: IndexedImage[]) => void;
   onShowInExplorer: (items: IndexedImage[]) => void;
   onDelete: (items: IndexedImage[]) => void;
   onRestore?: (items: IndexedImage[]) => void;
@@ -120,6 +122,7 @@ export function EmojiGrid({
   onMoveToGroup,
   onRemoveFromGroup,
   onAddTags,
+  onRename,
   onShowInExplorer,
   onDelete,
   onRestore,
@@ -264,6 +267,7 @@ export function EmojiGrid({
           onMoveToGroup={() => onMoveToGroup(targetItems)}
           onRemoveFromGroup={onRemoveFromGroup ? () => onRemoveFromGroup(targetItems) : undefined}
           onAddTags={onAddTags ? () => onAddTags(targetItems) : () => {}}
+          onRename={onRename ? () => onRename(targetItems) : undefined}
           onShowInExplorer={() => onShowInExplorer(targetItems)}
           onDelete={() => onDelete(targetItems)}
           onRestore={onRestore ? () => onRestore(targetItems) : undefined}

@@ -585,6 +585,34 @@ pub fn set_emojis_favorite(
     Ok(())
 }
 
+/// `rename_emojis` 的单条条目（前端 camelCase）。
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameEntry {
+    pub emoji_id: i64,
+    /// 新显示文件名（含扩展名的完整名，如 `鲸鱼.png`）。显示名与磁盘文件
+    /// （sha256.ext）解耦，只写 SQLite。文件名标签同步见仓库层。
+    pub filename: String,
+}
+
+/// 批量重命名显示名。单张重命名传一条即可（同一命令服务两种入口）。
+/// 同步命令：纯 SQLite 写入（事务内），无需 spawn_blocking。
+#[tauri::command]
+pub fn rename_emojis(
+    app: AppHandle,
+    database_state: State<'_, database::DatabaseState>,
+    renames: Vec<RenameEntry>,
+) -> Result<(), String> {
+    let mut connection = database_state.connect()?;
+    let pairs: Vec<(i64, String)> = renames
+        .into_iter()
+        .map(|entry| (entry.emoji_id, entry.filename))
+        .collect();
+    EmojiRepository::rename_emojis(&mut connection, &pairs)?;
+    quick_search::notify_library_changed(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn search_emojis(
     database_state: State<'_, database::DatabaseState>,

@@ -190,6 +190,13 @@ export interface TrashResult {
   failures: TrashFailure[];
 }
 
+/** `rename_emojis` 的单条条目：emoji id + 新显示文件名（含扩展名完整名，
+ * 如 `鲸鱼.png`）。显示名与磁盘文件（sha256.ext）解耦，只写 SQLite。 */
+export interface RenameEntry {
+  emojiId: number;
+  filename: string;
+}
+
 // Phase 7: auto-paste result. `kind` is lowercase to match the Rust
 // `serde(rename_all = "lowercase")` enum. The frontend dispatches on
 // `kind` and shows a single toast.

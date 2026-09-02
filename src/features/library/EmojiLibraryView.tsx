@@ -65,6 +65,10 @@ interface EmojiLibraryViewProps {
   onMoveToGroup: (items: IndexedImage[]) => void;
   onRemoveFromGroup?: (items: IndexedImage[]) => void;
   onAddTags?: (items: IndexedImage[]) => void;
+  /** 单张重命名（右键菜单单项操作）。 */
+  onRename?: (items: IndexedImage[]) => void;
+  /** 批量模板重命名（仅分组视图批量条提供）。 */
+  onBatchRename?: (items: IndexedImage[]) => void;
   onShowInExplorer: (items: IndexedImage[]) => void;
   onDelete: (items: IndexedImage[]) => void;
   onRestore?: (items: IndexedImage[]) => void;
@@ -210,6 +214,8 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     onMoveToGroup,
     onRemoveFromGroup,
     onAddTags,
+    onRename,
+    onBatchRename,
     onShowInExplorer,
     onDelete,
     onRestore,
@@ -362,6 +368,7 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
                 onMoveToGroup={onMoveToGroup}
                 onRemoveFromGroup={onRemoveFromGroup}
                 onAddTags={onAddTags}
+                onRename={onRename}
                 onShowInExplorer={onShowInExplorer}
                 onDelete={onDelete}
                 onRestore={onRestore}
@@ -390,6 +397,11 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
               {menuMode === "group" && onRemoveFromGroup && (
                 <Button size="small" onClick={() => onRemoveFromGroup(selectedItems)}>
                   从当前分组移除
+                </Button>
+              )}
+              {menuMode === "group" && onBatchRename && (
+                <Button size="small" onClick={() => onBatchRename(selectedItems)}>
+                  批量重命名
                 </Button>
               )}
               {menuMode !== "trash" && onAddTags && (

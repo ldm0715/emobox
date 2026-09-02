@@ -8,6 +8,7 @@ import {
   Delete20Regular,
   FolderOpen20Regular,
   FolderArrowRight20Regular,
+  Rename20Regular,
   Star20Filled,
   Star20Regular,
   ArrowUpload20Regular,
@@ -19,13 +20,14 @@ export type EmojiItemMenuMode = "default" | "trash" | "group";
 interface EmojiItemMenuProps {
   mode?: EmojiItemMenuMode;
   favorite: boolean;
-  /** true = 菜单操作的是多选选区；复制/查看文件位置是单项操作，多选时隐藏。 */
+  /** true = 菜单操作的是多选选区；复制/重命名/查看文件位置是单项操作，多选时隐藏。 */
   multi?: boolean;
   onToggleFavorite: () => void;
   onCopy: () => void;
   onMoveToGroup: () => void;
   onRemoveFromGroup?: () => void;
   onAddTags: () => void;
+  onRename?: () => void;
   onShowInExplorer: () => void;
   onDelete: () => void;
   onRestore?: () => void;
@@ -41,6 +43,7 @@ export function EmojiItemMenu({
   onMoveToGroup,
   onRemoveFromGroup,
   onAddTags,
+  onRename,
   onShowInExplorer,
   onDelete,
   onRestore,
@@ -93,6 +96,11 @@ export function EmojiItemMenu({
           <MenuItem icon={<Tag20Regular />} onClick={onAddTags}>
             管理标签
           </MenuItem>
+          {!multi && onRename && (
+            <MenuItem icon={<Rename20Regular />} onClick={onRename}>
+              重命名
+            </MenuItem>
+          )}
           {!multi && (
             <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
               查看文件位置
@@ -126,6 +134,11 @@ export function EmojiItemMenu({
         <MenuItem icon={<Tag20Regular />} onClick={onAddTags}>
           管理标签
         </MenuItem>
+        {!multi && onRename && (
+          <MenuItem icon={<Rename20Regular />} onClick={onRename}>
+            重命名
+          </MenuItem>
+        )}
         {!multi && (
           <MenuItem icon={<FolderOpen20Regular />} onClick={onShowInExplorer}>
             查看文件位置

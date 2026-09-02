@@ -148,6 +148,7 @@ pub fn run() {
             commands::add_tags_to_emojis,
             commands::remove_tags_from_emojis,
             commands::set_emojis_favorite,
+            commands::rename_emojis,
             commands::search_emojis,
             commands::soft_delete_to_trash,
             commands::restore_from_trash,

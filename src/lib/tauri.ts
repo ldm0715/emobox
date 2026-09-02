@@ -9,6 +9,7 @@ import type {
   MirrorSpeedResult,
   PasteResult,
   RecentImageRecord,
+  RenameEntry,
   SearchOptions,
   SearchResult,
   ShortcutRegistrationStatus,
@@ -240,6 +241,12 @@ export function setEmojisFavorite(
   isFavorite: boolean,
 ): Promise<void> {
   return invoke<void>("set_emojis_favorite", { ids, isFavorite });
+}
+
+/** 批量重命名显示名（单张传一条）。只写 SQLite，不动磁盘文件；
+ * 文件名标签同步在 Rust 侧完成。 */
+export function renameEmojis(renames: RenameEntry[]): Promise<void> {
+  return invoke<void>("rename_emojis", { renames });
 }
 
 export function searchEmojis(options: SearchOptions): Promise<SearchResult> {

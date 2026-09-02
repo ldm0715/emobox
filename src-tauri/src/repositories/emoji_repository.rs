@@ -1281,6 +1281,126 @@ impl EmojiRepository {
         Ok(())
     }
 
+    /// 校验显示文件名（含扩展名的完整名）。显示名虽不落盘，但用户预期它就是
+    /// 文件名，按 Windows 约束校验：空名 / `\ / : * ? " < > |` / ASCII 控制
+    /// 字符 / 超过 255 字符 → Err（中文消息）。前端 `validateRenameStem`
+    /// （batchRename.ts）镜像同一套规则，本方法作兜底。
+    pub fn validate_display_filename(filename: &str) -> Result<(), String> {
+        const MAX_FILENAME_LEN: usize = 255;
+        let trimmed = filename.trim();
+        if trimmed.is_empty() {
+            return Err("名称不能为空。".to_string());
+        }
+        if trimmed.chars().count() > MAX_FILENAME_LEN {
+            return Err(format!("名称不能超过 {MAX_FILENAME_LEN} 个字符。"));
+        }
+        for ch in trimmed.chars() {
+            if matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                return Err(format!("名称不能包含字符「{ch}」。"));
+            }
+            if (ch as u32) < 0x20 {
+                return Err("名称不能包含控制字符。".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// 批量重命名显示名（`original_filename`，含扩展名完整名）。**单事务**：
+    /// 任一条目非法或失败 → 整体回滚。
+    ///
+    /// 显示名与磁盘文件（sha256.ext）完全解耦，本方法只写 SQLite、绝不触碰
+    /// 文件系统。同时同步"文件名标签"（导入时自动打的完整文件名标签）：
+    /// 给表情打上新名标签、移除旧名标签关联；旧标签无人引用（含软删行的
+    /// 关联在内——软删不触发 CASCADE，恢复后标签须仍在）则物理删除标签行，
+    /// 防止孤儿标签污染 TagPickerDialog。clipboard 来源本无旧名标签，只补
+    /// 新名标签。新旧名 NOCASE 相同时跳过标签同步（防先删后加的中间态把
+    /// 仍在用的标签行误删），`original_filename` 照常更新（大小写变化生效）。
+    ///
+    /// 软删 / 不存在的 id 静默跳过。`updated_at` 在事务内一并刷新。
+    pub fn rename_emojis(
+        connection: &mut Connection,
+        renames: &[(i64, String)],
+    ) -> Result<(), String> {
+        if renames.is_empty() {
+            return Ok(());
+        }
+        for (_, filename) in renames {
+            Self::validate_display_filename(filename)?;
+        }
+        let now = unix_time_millis();
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("无法开始重命名事务：{error}"))?;
+        for (emoji_id, filename) in renames {
+            let filename = filename.trim();
+            let old_filename: Option<String> = transaction
+                .query_row(
+                    "SELECT original_filename FROM emojis WHERE id = ?1 AND is_deleted = 0",
+                    [emoji_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| format!("无法读取表情 {emoji_id}：{error}"))?;
+            let Some(old_filename) = old_filename else {
+                continue; // 软删 / 不存在 → 静默跳过
+            };
+
+            transaction
+                .execute(
+                    "UPDATE emojis SET original_filename = ?1, updated_at = ?2
+                     WHERE id = ?3 AND is_deleted = 0",
+                    params![filename, now, emoji_id],
+                )
+                .map_err(|error| format!("无法重命名表情 {emoji_id}：{error}"))?;
+
+            if old_filename.trim().eq_ignore_ascii_case(filename) {
+                continue; // 同名（仅大小写差异）→ 不动标签
+            }
+            // 先加新名标签，再移除旧名标签。
+            let new_tag_id = find_or_insert_tag(&transaction, filename, now)?;
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO emoji_tags (emoji_id, tag_id, added_at)
+                     VALUES (?1, ?2, ?3)",
+                    params![emoji_id, new_tag_id, now],
+                )
+                .map_err(|error| format!("无法为表情 {emoji_id} 打新名标签：{error}"))?;
+            let old_tag_id: Option<i64> = transaction
+                .query_row(
+                    "SELECT id FROM tags WHERE name = ?1 COLLATE NOCASE",
+                    [&old_filename],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| format!("无法查询旧名标签：{error}"))?;
+            if let Some(old_tag_id) = old_tag_id {
+                transaction
+                    .execute(
+                        "DELETE FROM emoji_tags WHERE emoji_id = ?1 AND tag_id = ?2",
+                        params![emoji_id, old_tag_id],
+                    )
+                    .map_err(|error| format!("无法移除旧名标签：{error}"))?;
+                // 引用计数不过滤 is_deleted：软删行保留关联，恢复后标签须仍在。
+                let remaining: i64 = transaction
+                    .query_row(
+                        "SELECT COUNT(*) FROM emoji_tags WHERE tag_id = ?1",
+                        [old_tag_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| format!("无法统计标签引用：{error}"))?;
+                if remaining == 0 {
+                    transaction
+                        .execute("DELETE FROM tags WHERE id = ?1", [old_tag_id])
+                        .map_err(|error| format!("无法清理无引用标签：{error}"))?;
+                }
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("无法提交重命名：{error}"))?;
+        Ok(())
+    }
+
     /// 给已有 IndexedEmoji 列表填充 group_ids / tag_ids（2 次 SQL，避免 N+1）。
     pub fn fill_relations(
         connection: &Connection,
@@ -1456,6 +1576,30 @@ fn unix_time_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis().min(i64::MAX as u128) as i64)
         .unwrap_or_default()
+}
+
+/// 按名查标签 id，不存在则插入。NOCASE 精确匹配（与 `TagRepository::
+/// find_or_create_id` 同语义，但不自开事务——供 `rename_emojis` 的外层事务
+/// 内联调用；rusqlite 事务不可嵌套，不能复用会自开事务的方法）。
+fn find_or_insert_tag(connection: &Connection, name: &str, now: i64) -> Result<i64, String> {
+    let existing: Option<i64> = connection
+        .query_row(
+            "SELECT id FROM tags WHERE name = ?1 COLLATE NOCASE",
+            [name],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("无法查询标签：{error}"))?;
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+    connection
+        .execute(
+            "INSERT INTO tags (name, created_at) VALUES (?1, ?2)",
+            params![name, now],
+        )
+        .map_err(|error| format!("无法新建标签 {name}：{error}"))?;
+    Ok(connection.last_insert_rowid())
 }
 
 #[cfg(test)]
@@ -2412,5 +2556,261 @@ mod tests {
             )
             .expect("read hash");
         assert_eq!(from_db(stored), 0xabcd, "不得覆盖已有感知哈希");
+    }
+
+    #[test]
+    fn rename_emojis_updates_filename_and_updated_at() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let id = insert_indexed_emoji(&mut connection, "old.png", None, &[], None);
+        connection
+            .execute("UPDATE emojis SET updated_at = 100 WHERE id = ?1", [id])
+            .expect("set updated_at");
+
+        EmojiRepository::rename_emojis(&mut connection, &[(id, "鲸鱼.png".to_string())])
+            .expect("rename");
+
+        let (name, updated_at): (String, i64) = connection
+            .query_row(
+                "SELECT original_filename, updated_at FROM emojis WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read emoji");
+        assert_eq!(name, "鲸鱼.png");
+        assert!(updated_at > 100, "updated_at 应被刷新");
+    }
+
+    #[test]
+    fn rename_emojis_syncs_filename_tags() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        // 导入自动打的是完整文件名标签（含扩展名）。
+        let id = insert_indexed_emoji(&mut connection, "old.png", None, &["old.png"], None);
+
+        EmojiRepository::rename_emojis(&mut connection, &[(id, "new.png".to_string())])
+            .expect("rename");
+
+        let tag_names: Vec<String> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT t.name FROM tags t
+                     JOIN emoji_tags et ON et.tag_id = t.id
+                     WHERE et.emoji_id = ?1",
+                )
+                .expect("prepare tags");
+            let rows = statement
+                .query_map([id], |row| row.get(0))
+                .expect("query tags");
+            rows.collect::<Result<Vec<_>, _>>().expect("parse tags")
+        };
+        assert_eq!(
+            tag_names,
+            vec!["new.png".to_string()],
+            "旧名标签移除、新名标签打上"
+        );
+        let old_tag_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM tags WHERE name = 'old.png'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count old tag");
+        assert_eq!(old_tag_count, 0, "无人引用的旧标签行应被物理删除");
+    }
+
+    #[test]
+    fn rename_emojis_keeps_tag_referenced_by_other_emoji() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        // 两张图共享文件名标签 a.png（如各自导入时的文件名恰好同名）。
+        // b 的显示名不同（source_path 唯一索引要求路径不同），但挂了同一标签。
+        let id_a = insert_indexed_emoji(&mut connection, "a.png", None, &["a.png"], None);
+        let _id_b = insert_indexed_emoji(&mut connection, "b.png", None, &["a.png"], None);
+
+        EmojiRepository::rename_emojis(&mut connection, &[(id_a, "renamed.png".to_string())])
+            .expect("rename");
+
+        let (refs, tag_exists): (i64, i64) = connection
+            .query_row(
+                "SELECT
+                   (SELECT COUNT(*) FROM emoji_tags WHERE tag_id =
+                      (SELECT id FROM tags WHERE name = 'a.png')),
+                   (SELECT COUNT(*) FROM tags WHERE name = 'a.png')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("count refs");
+        assert_eq!(refs, 1, "另一表情仍引用时关联必须保留（只剩 b 的）");
+        assert_eq!(tag_exists, 1, "另一表情仍引用时标签行必须保留");
+    }
+
+    #[test]
+    fn rename_emojis_reuses_tag_nocase() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let _id_a = insert_indexed_emoji(&mut connection, "a.png", None, &["new.png"], None);
+        let id_b = insert_indexed_emoji(&mut connection, "b.png", None, &["old.png"], None);
+
+        EmojiRepository::rename_emojis(&mut connection, &[(id_b, "NEW.png".to_string())])
+            .expect("rename");
+
+        let tag_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM tags WHERE name = 'new.png' COLLATE NOCASE",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count tags");
+        assert_eq!(tag_count, 1, "NOCASE 命中既有标签应复用，不建重复行");
+    }
+
+    #[test]
+    fn rename_emojis_adds_tag_when_no_old_tag() {
+        // clipboard 来源导入时不打文件名标签——重命名只补新名标签，不报错。
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let id = insert_indexed_emoji(&mut connection, "no-tag.png", None, &[], None);
+
+        EmojiRepository::rename_emojis(&mut connection, &[(id, "鲸鱼.png".to_string())])
+            .expect("rename");
+
+        let tag_names: Vec<String> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT t.name FROM tags t
+                     JOIN emoji_tags et ON et.tag_id = t.id
+                     WHERE et.emoji_id = ?1",
+                )
+                .expect("prepare tags");
+            let rows = statement
+                .query_map([id], |row| row.get(0))
+                .expect("query tags");
+            rows.collect::<Result<Vec<_>, _>>().expect("parse tags")
+        };
+        assert_eq!(tag_names, vec!["鲸鱼.png".to_string()]);
+    }
+
+    #[test]
+    fn rename_emojis_same_name_skips_tag_churn() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let id = insert_indexed_emoji(&mut connection, "same.png", None, &["same.png"], None);
+
+        // 同名（仅大小写变化）→ 标签关联保留，original_filename 照常更新。
+        EmojiRepository::rename_emojis(&mut connection, &[(id, "Same.png".to_string())])
+            .expect("rename");
+
+        let name: String = connection
+            .query_row(
+                "SELECT original_filename FROM emojis WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("read emoji");
+        let tag_names: Vec<String> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT t.name FROM tags t
+                     JOIN emoji_tags et ON et.tag_id = t.id
+                     WHERE et.emoji_id = ?1",
+                )
+                .expect("prepare tags");
+            let rows = statement
+                .query_map([id], |row| row.get(0))
+                .expect("query tags");
+            rows.collect::<Result<Vec<_>, _>>().expect("parse tags")
+        };
+        assert_eq!(name, "Same.png", "大小写变化应生效");
+        assert_eq!(
+            tag_names,
+            vec!["same.png".to_string()],
+            "同名重命名不得丢失标签关联"
+        );
+    }
+
+    #[test]
+    fn rename_emojis_ignores_soft_deleted_rows() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let id = insert_indexed_emoji(&mut connection, "gone.png", None, &["gone.png"], None);
+        connection
+            .execute("UPDATE emojis SET is_deleted = 1 WHERE id = ?1", [id])
+            .expect("soft delete");
+
+        EmojiRepository::rename_emojis(&mut connection, &[(id, "new.png".to_string())])
+            .expect("rename");
+
+        let name: String = connection
+            .query_row(
+                "SELECT original_filename FROM emojis WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("read emoji");
+        assert_eq!(name, "gone.png", "软删行应被跳过");
+    }
+
+    #[test]
+    fn rename_emojis_rejects_invalid_filenames() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let id = insert_indexed_emoji(&mut connection, "ok.png", None, &[], None);
+
+        let invalid = [
+            "",
+            "   ",
+            "a/b.png",
+            "a\\b.png",
+            "a:b.png",
+            "a*b.png",
+            "a?b.png",
+            "a\"b.png",
+            "a<b.png",
+            "a>b.png",
+            "a|b.png",
+            "a\u{1}b.png",
+        ];
+        for filename in invalid {
+            let result =
+                EmojiRepository::rename_emojis(&mut connection, &[(id, filename.to_string())]);
+            assert!(result.is_err(), "「{filename}」应被拒绝");
+        }
+        let name: String = connection
+            .query_row(
+                "SELECT original_filename FROM emojis WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("read emoji");
+        assert_eq!(name, "ok.png", "非法名不应落库");
+
+        let empty = EmojiRepository::rename_emojis(&mut connection, &[]);
+        assert!(empty.is_ok(), "空列表直接 Ok");
+    }
+
+    #[test]
+    fn rename_emojis_atomic_rollback_on_invalid_entry() {
+        let mut connection = Connection::open_in_memory().expect("open sqlite");
+        run_migrations(&mut connection).expect("run migrations");
+        let id_a = insert_indexed_emoji(&mut connection, "a.png", None, &["a.png"], None);
+        let id_b = insert_indexed_emoji(&mut connection, "b.png", None, &["b.png"], None);
+
+        let result = EmojiRepository::rename_emojis(
+            &mut connection,
+            &[
+                (id_a, "first.png".to_string()),
+                (id_b, "bad/name.png".to_string()),
+            ],
+        );
+        assert!(result.is_err(), "任一非法条目应整体失败");
+        let name_a: String = connection
+            .query_row(
+                "SELECT original_filename FROM emojis WHERE id = ?1",
+                [id_a],
+                |row| row.get(0),
+            )
+            .expect("read a");
+        assert_eq!(name_a, "a.png", "前一条合法改名也必须回滚");
     }
 }
