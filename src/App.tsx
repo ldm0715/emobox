@@ -732,16 +732,36 @@ export function App() {
     );
   }, [dispatchToast, groupNameForToast, importPaths, prepareAfterImport]);
 
+  // 回收站收紧（2026-09）：回收站只允许 恢复 / 彻底删除，导入属越权——视图绑定的
+  // 三条导入入口（导入图片 / 导入文件夹 / 拖放）在 trash 视图一律拒绝。全局快捷键
+  // Ctrl+Alt+S 与视图无关，保持可用。
+  const notifyTrashImportBlocked = useCallback(() => {
+    dispatchToast(
+      <Toast>
+        <ToastTitle>回收站视图不支持导入图片</ToastTitle>
+      </Toast>,
+      { intent: "info" },
+    );
+  }, [dispatchToast]);
+
   const handleImportImages = useCallback(async () => {
+    if (currentViewRef.current === "trash") {
+      notifyTrashImportBlocked();
+      return;
+    }
     // 发起时捕获目标分组（分组视图内发起 → 导入的图自动归入，Phase 22）。
     const targetGroupId = getCurrentGroupId();
     const summary = await importImages(targetGroupId ?? undefined);
     if (!summary) return;
     await prepareAfterImport(targetGroupId);
     showManagedImportResult(summary, undefined, targetGroupId);
-  }, [getCurrentGroupId, importImages, prepareAfterImport, showManagedImportResult]);
+  }, [getCurrentGroupId, importImages, notifyTrashImportBlocked, prepareAfterImport, showManagedImportResult]);
 
   const handleImportFolder = useCallback(async () => {
+    if (currentViewRef.current === "trash") {
+      notifyTrashImportBlocked();
+      return;
+    }
     const targetGroupId = getCurrentGroupId();
     const summary = await importFolder(false, targetGroupId ?? undefined);
     if (!summary) return;
@@ -771,15 +791,19 @@ export function App() {
       </Toast>,
       { intent },
     );
-  }, [dispatchToast, getCurrentGroupId, groupNameForToast, importFolder, prepareAfterImport]);
+  }, [dispatchToast, getCurrentGroupId, groupNameForToast, importFolder, notifyTrashImportBlocked, prepareAfterImport]);
 
   const handleDroppedPaths = useCallback(async (paths: string[]) => {
+    if (currentViewRef.current === "trash") {
+      notifyTrashImportBlocked();
+      return;
+    }
     const targetGroupId = getCurrentGroupId();
     const summary = await importPaths(paths, false, targetGroupId ?? undefined);
     if (!summary) return;
     await prepareAfterImport(targetGroupId);
     showManagedImportResult(summary, undefined, targetGroupId);
-  }, [getCurrentGroupId, importPaths, prepareAfterImport, showManagedImportResult]);
+  }, [getCurrentGroupId, importPaths, notifyTrashImportBlocked, prepareAfterImport, showManagedImportResult]);
 
   const handleCollectFromClipboard = useCallback(async () => {
     const targetGroupId = getCurrentGroupId();
@@ -842,7 +866,8 @@ export function App() {
 
     getCurrentWindow().onDragDropEvent(({ payload }) => {
       if (payload.type === "enter") {
-        setDragActive(true);
+        // 回收站视图拒绝导入：不显示放置提示（drop 会被 handleDroppedPaths 拒绝）。
+        if (currentViewRef.current !== "trash") setDragActive(true);
       } else if (payload.type === "leave") {
         setDragActive(false);
       } else if (payload.type === "drop") {
@@ -1471,7 +1496,8 @@ export function App() {
           <AppToolbar
             query={searchQuery}
             importing={isImporting}
-            showImport
+            // 回收站视图隐藏「导入」按钮（与网格卡片在回收站隐藏复制/星标同范式）。
+            showImport={currentView !== "trash"}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onQueryChange={setSearchQuery}

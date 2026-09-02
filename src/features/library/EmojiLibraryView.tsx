@@ -6,7 +6,7 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import { Fade, FadeSnappy, Slide } from "@fluentui/react-motion-components-preview";
-import { ArrowDownload20Regular, Search20Regular, Star24Regular, History24Regular } from "@fluentui/react-icons";
+import { ArrowDownload20Regular, Delete24Regular, Search20Regular, Star24Regular, History24Regular } from "@fluentui/react-icons";
 import { useEffect, useMemo, useRef } from "react";
 import type {
   GridDensity,
@@ -243,6 +243,20 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
             <h2 className={styles.centeredTitle}>没有找到“{query}”相关的表情</h2>
             <p className={styles.centeredDescription}>可以尝试更短的文件名关键词。</p>
             <Button onClick={onClearSearch}>清除搜索</Button>
+          </div>
+        </div>
+      );
+    }
+
+    // 回收站收紧（2026-09）：导入对回收站属越权，专属空状态不带任何导入按钮；
+    // 放在 allItemCount === 0 之前——整库为空时停在回收站也应看到回收站空状态。
+    if (view === "trash") {
+      return (
+        <div className={styles.centered}>
+          <div className={styles.centeredContent}>
+            <Delete24Regular className={styles.centeredIcon} />
+            <h2 className={styles.centeredTitle}>回收站是空的</h2>
+            <p className={styles.centeredDescription}>删除的表情会先移到这里，可随时恢复或彻底删除。</p>
           </div>
         </div>
       );
