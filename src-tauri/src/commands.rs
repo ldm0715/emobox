@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
-    clipboard, clipboard_collect, database, quick_search,
+    clipboard, clipboard_collect, database, ocr, quick_search,
     repositories::{
         emoji_repository::{EmojiRepository, ListOptions, SearchPage},
         group_repository::{GroupRepository, GroupRow},
@@ -127,6 +127,13 @@ pub async fn import_folder(
     .await
     .map_err(|error| format!("文件夹导入任务意外中止：{error}"))?;
     quick_search::notify_library_changed(&app);
+    if let Ok(summary) = &result {
+        schedule_ocr_for_new_emojis(
+            &app,
+            database_state.inner(),
+            summary.items.iter().map(|item| item.id).collect(),
+        );
+    }
     result
 }
 
@@ -155,6 +162,13 @@ pub async fn import_managed_paths(
     .await
     .map_err(|error| format!("图片导入任务意外中止：{error}"))?;
     quick_search::notify_library_changed(&app);
+    if let Ok(summary) = &result {
+        schedule_ocr_for_new_emojis(
+            &app,
+            database_state.inner(),
+            summary.items.iter().map(|item| item.id).collect(),
+        );
+    }
     result
 }
 
@@ -395,7 +409,107 @@ pub async fn collect_image_from_clipboard(
         }
         _ => {}
     }
+    // OCR 打标签只针对本次**新导入**的行（Duplicate 没有新行；存量行的
+    // 补识别由设置页的回填负责）。
+    if let clipboard_collect::ClipboardCollectOutcome::Imported { summary, .. } = &outcome {
+        schedule_ocr_for_new_emojis(
+            &app,
+            database_state.inner(),
+            summary.items.iter().map(|item| item.id).collect(),
+        );
+    }
     Ok(outcome)
+}
+
+// ---- Phase 32: OCR 识图自动打标签 ----
+
+/// 导入成功后把新导入的 emoji id 派发给后台 OCR（引擎关闭 / 无新行时不做）。
+/// 阻塞识别在 `spawn_blocking` 里进行，导入命令立即返回；标签落地后经
+/// `ocr-tags-updated` 事件让主窗口刷新。
+fn schedule_ocr_for_new_emojis(
+    app: &AppHandle,
+    database_state: &database::DatabaseState,
+    emoji_ids: Vec<i64>,
+) {
+    if emoji_ids.is_empty() {
+        return;
+    }
+    // 同步读取快照，不把 State 借用带进后台任务。
+    let config = app.state::<ocr::OcrState>().snapshot();
+    if config.engine == ocr::OcrEngineKind::Off {
+        return;
+    }
+    let database_path = database_state.database_path().to_path_buf();
+    let app_handle = app.clone();
+    // Fire-and-forget：批处理是长阻塞任务（网络 + 睡眠节流），用独立线程，
+    // 不占 async runtime 的 blocking 池；失败已在内部记日志。
+    std::thread::spawn(move || {
+        ocr::process_emoji_ids(
+            &app_handle,
+            &database_path,
+            emoji_ids,
+            ocr::OcrPhase::Import,
+            config,
+        );
+    });
+}
+
+#[tauri::command]
+pub fn set_ocr_config(
+    state: State<'_, ocr::OcrState>,
+    engine: String,
+    ai_studio_api_url: String,
+    ai_studio_token: String,
+) -> Result<(), String> {
+    // localStorage 是事实源，这里只更新内存镜像；未知值按关闭处理（不该发生）。
+    let engine = ocr::OcrEngineKind::from_str(&engine).unwrap_or_else(|| {
+        log::warn!("未知的 OCR 引擎值：{engine}，按关闭处理");
+        ocr::OcrEngineKind::Off
+    });
+    state.set(engine, ai_studio_api_url, ai_studio_token);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_ocr_capabilities() -> Result<ocr::OcrCapabilities, String> {
+    // 引擎可用性探测要跑 WinRT，别占用主线程。
+    tauri::async_runtime::spawn_blocking(ocr::capabilities)
+        .await
+        .map_err(|error| format!("读取 OCR 能力任务意外中止：{error}"))
+}
+
+#[tauri::command]
+pub async fn backfill_ocr_tags(
+    app: AppHandle,
+    database_state: State<'_, database::DatabaseState>,
+) -> Result<u32, String> {
+    let config = app.state::<ocr::OcrState>().snapshot();
+    if config.engine == ocr::OcrEngineKind::Off {
+        return Err("请先在设置中选择 OCR 引擎".to_string());
+    }
+    let db_state = database_state.inner().clone();
+    let database_path = db_state.database_path().to_path_buf();
+    let emoji_ids =
+        tauri::async_runtime::spawn_blocking(move || ocr::list_pending_emoji_ids(&database_path))
+            .await
+            .map_err(|error| format!("存量识别任务意外中止：{error}"))??;
+    let total = emoji_ids.len() as u32;
+    if total == 0 {
+        return Ok(0);
+    }
+    let database_path = db_state.database_path().to_path_buf();
+    let app_handle = app.clone();
+    // 与导入路径一致：长阻塞批处理放独立线程，命令立即返回 total。
+    std::thread::spawn(move || {
+        ocr::process_emoji_ids(
+            &app_handle,
+            &database_path,
+            emoji_ids,
+            ocr::OcrPhase::Backfill,
+            config,
+        );
+    });
+    Ok(total)
 }
 
 // ---- 第六阶段 commands ----
@@ -856,7 +970,8 @@ fn show_path_in_explorer(path: &Path) -> Result<(), String> {
 /// 仅放行 https + 白名单主机：关于页的依赖外链是唯一调用方，
 /// 不把任意 URL 交给系统浏览器。
 fn open_url_in_browser(url: &str) -> Result<(), String> {
-    const ALLOWED_HOSTS: [&str; 1] = ["github.com"];
+    // Phase 32 起设置页「打开 AI Studio 控制台」也是调用方。
+    const ALLOWED_HOSTS: [&str; 2] = ["github.com", "aistudio.baidu.com"];
     let rest = url
         .strip_prefix("https://")
         .ok_or_else(|| format!("仅支持 https 链接：{url}"))?;

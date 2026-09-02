@@ -7,6 +7,8 @@ import type {
   LibraryGroup,
   ManagedImportSummary,
   MirrorSpeedResult,
+  OcrCapabilities,
+  OcrEngineKind,
   PasteResult,
   RecentImageRecord,
   RenameEntry,
@@ -313,4 +315,28 @@ export function installPendingUpdate(): Promise<void> {
 /** 单个镜像测速（经镜像拉取仓库 README 小文件计耗时，Rust 侧只读）。 */
 export function testMirrorSpeed(mirror: string): Promise<MirrorSpeedResult> {
   return invoke<MirrorSpeedResult>("test_mirror_speed", { mirror });
+}
+
+// ---------- Phase 32: OCR 识图自动打标签 ----------
+
+/** 主窗口事件：一批 OCR 识别有进展（每 10 张 + 批末），主窗口据此刷新标签。 */
+export const OCR_TAGS_UPDATED_EVENT = "ocr-tags-updated";
+
+/** 把 OCR 设置推送到 Rust 内存镜像（localStorage 是事实源，Rust 只做镜像，两个窗口都推、幂等）。 */
+export function setOcrConfig(config: {
+  engine: OcrEngineKind;
+  aiStudioApiUrl: string;
+  aiStudioToken: string;
+}): Promise<void> {
+  return invoke<void>("set_ocr_config", config);
+}
+
+/** Windows OCR 可用性与语言列表（WinRT 探测在后台线程跑）。 */
+export function getOcrCapabilities(): Promise<OcrCapabilities> {
+  return invoke<OcrCapabilities>("get_ocr_capabilities");
+}
+
+/** 触发存量回填，返回本次待识别数量；识别在后台进行，进度经 OCR_TAGS_UPDATED_EVENT 推送。 */
+export function backfillOcrTags(): Promise<number> {
+  return invoke<number>("backfill_ocr_tags");
 }

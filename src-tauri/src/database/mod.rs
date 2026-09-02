@@ -34,6 +34,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("../../migrations/0006_add_group_pinned.sql"),
     ),
     (7, include_str!("../../migrations/0007_add_group_icon.sql")),
+    (8, include_str!("../../migrations/0008_add_ocr_text.sql")),
 ];
 
 #[derive(Clone)]
@@ -244,7 +245,7 @@ mod tests {
                 row.get(0)
             })
             .expect("count migrations");
-        assert_eq!(migration_count, 7);
+        assert_eq!(migration_count, 8);
 
         let columns = connection
             .prepare("PRAGMA table_info(emojis)")
@@ -277,6 +278,7 @@ mod tests {
             "trash_thumbnail_path",
             "perceptual_hash",
             "updated_at",
+            "ocr_text",
         ] {
             assert!(columns.iter().any(|column| column == required));
         }

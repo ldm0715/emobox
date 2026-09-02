@@ -22,6 +22,7 @@ import {
 } from "@fluentui/react-components";
 import {
   Alert20Regular,
+  ArrowClockwise20Regular,
   ArrowMinimize20Regular,
   ArrowUpload20Regular,
   ClipboardPaste20Regular,
@@ -33,6 +34,7 @@ import {
   Image20Regular,
   ImageMultiple20Regular,
   Link20Regular,
+  ScanText20Regular,
   Search20Regular,
   ShieldCheckmark20Regular,
   Apps24Regular,
@@ -48,10 +50,19 @@ import {
 import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useAppSettings, type ThemePreference } from "../components/ThemeProvider";
-import { checkForUpdate, getErrorMessage, openExternalUrl } from "../lib/tauri";
+import {
+  backfillOcrTags,
+  checkForUpdate,
+  getErrorMessage,
+  getOcrCapabilities,
+  openExternalUrl,
+} from "../lib/tauri";
 import { ShortcutEditor } from "../features/search/ShortcutEditor";
 import type {
   DefaultLibraryView,
+  OcrCapabilities,
+  OcrEngineKind,
+  OcrTagsUpdatedPayload,
   StorageInfo,
   UpdateCheckResult,
 } from "../types";
@@ -81,6 +92,8 @@ interface SettingsDialogProps {
   onNotifyError: (message: string) => void;
   /** 手动检查发现新版本时回调（App 层据此打开更新弹窗）。 */
   onUpdateAvailable: (result: UpdateCheckResult & { status: "available" }) => void;
+  /** OCR 存量回填进度（App 层从 ocr-tags-updated 事件聚合；null = 本会话没跑过）。 */
+  ocrBackfill: OcrTagsUpdatedPayload | null;
 }
 
 const themeLabels: Record<ThemePreference, string> = {
@@ -96,6 +109,15 @@ const viewLabels: Record<DefaultLibraryView, string> = {
   trash: "回收站",
   ungrouped: "未分组",
 };
+
+const ocrEngineLabels: Record<OcrEngineKind, string> = {
+  off: "关闭",
+  windows: "系统 OCR（本地）",
+  aiStudio: "AI Studio PaddleOCR（云端）",
+};
+
+/** AI Studio 控制台入口（openExternalUrl 主机白名单内的唯一百度域名）。 */
+const AI_STUDIO_CONSOLE_URL = "https://aistudio.baidu.com/paddleocr/task";
 
 interface SettingsNavItem {
   id: SettingsSection;
@@ -298,6 +320,20 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: tokens.spacingHorizontalXS,
   },
+  // Phase 32：AI Studio API URL / Token 两个输入框的纵排容器与全宽输入。
+  ocrFields: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalS,
+    marginTop: tokens.spacingVerticalS,
+  },
+  ocrInput: {
+    width: "100%",
+    input: {
+      fontFamily: tokens.fontFamilyMonospace,
+      fontSize: tokens.fontSizeBase200,
+    },
+  },
   // 开源依赖 chip：卡片内 flex-wrap 的可点击标签（品牌单色图标 + 名称）。
   dependencyRow: {
     display: "flex",
@@ -390,6 +426,7 @@ export function SettingsDialog({
   onUpdateClipboardCollectShortcut,
   onNotifyError,
   onUpdateAvailable,
+  ocrBackfill,
 }: SettingsDialogProps) {
   const styles = useStyles();
   const {
@@ -409,6 +446,12 @@ export function SettingsDialog({
     autoCheckUpdates,
     setAutoCheckUpdates,
     updateMirrors,
+    ocrEngine,
+    setOcrEngine,
+    aiStudioOcrApiUrl,
+    setAiStudioOcrApiUrl,
+    aiStudioOcrToken,
+    setAiStudioOcrToken,
   } = useAppSettings();
   // 「检查更新」的就地反馈 toaster（top-end，与主窗口一致）。
   const toasterId = "settings-update-toaster";
@@ -420,6 +463,11 @@ export function SettingsDialog({
   // 「检查更新」按钮检查中态。发现新版本 → onUpdateAvailable 交给 App 层弹窗；
   // 已是最新 / 没有发布 / 出错 → toast 反馈（弹窗只在有新版本时出现）。
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  // Phase 32：Windows OCR 可用性（进入「存储与导入」页时懒检测一次）。
+  const [ocrCaps, setOcrCaps] = useState<OcrCapabilities | null>(null);
+  // 存量回填触发中的短暂状态（await backfillOcrTags 期间）；批处理进度
+  // 由 App 层经 ocrBackfill 事件 state 传入。
+  const [backfillStarting, setBackfillStarting] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
 
   // 切换导航项时右侧内容滚回顶部。
@@ -439,6 +487,44 @@ export function SettingsDialog({
       cancelled = true;
     };
   }, []);
+
+  // Windows OCR 可用性探测要跑 WinRT（Rust 侧 spawn_blocking），只在
+  // 首次进入「存储与导入」时做一次，失败静默（显示"检测中"不阻塞）。
+  useEffect(() => {
+    if (section !== "storage" || ocrCaps) return;
+    let cancelled = false;
+    getOcrCapabilities()
+      .then((capabilities) => {
+        if (!cancelled) setOcrCaps(capabilities);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [section, ocrCaps]);
+
+  const backfillRunning = ocrBackfill !== null && !ocrBackfill.finished;
+
+  // 存量回填：命令立即返回待识别总数，识别在后台进行、进度经
+  // ocr-tags-updated 事件推进（App 层转成 ocrBackfill state 传回这里）。
+  async function handleBackfillOcr() {
+    setBackfillStarting(true);
+    try {
+      const total = await backfillOcrTags();
+      if (total === 0) {
+        dispatchToast(
+          <Toast>
+            <ToastTitle>所有表情都已识别过，没有待处理的条目</ToastTitle>
+          </Toast>,
+          { intent: "info" },
+        );
+      }
+    } catch (error) {
+      onNotifyError(`触发存量识别失败：${getErrorMessage(error)}`);
+    } finally {
+      setBackfillStarting(false);
+    }
+  }
 
   // 「检查更新」按钮：发现新版本交给 App 层弹窗；其余结果就地 toast 反馈
   // （弹窗只在有新版本时出现，检查职责在这里完成）。
@@ -718,6 +804,110 @@ export function SettingsDialog({
                 {formats.map((format) => <Badge key={format} appearance="outline">{format}</Badge>)}
               </div>
             </div>
+          </div>
+        </div>
+        <div className={styles.group}>
+          <h3 className={styles.groupTitle}>文字识别（OCR）</h3>
+          <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><ScanText20Regular /></span>
+            <div className={styles.settingText}>
+              <LabelInfo
+                label="识别引擎"
+                detail="导入完成后在后台识别图片中的文字并自动追加为标签（文件名标签保留不变，搜索时两路都能命中）。「系统 OCR」完全本地离线，零额度成本，中文识别依赖系统语言包；「AI Studio PaddleOCR」是百度云端识别，对表情包文字更准，但图片会上传到百度服务器，且按张消耗每日免费额度。"
+              />
+            </div>
+            <Dropdown
+              className={styles.dropdown}
+              value={ocrEngineLabels[ocrEngine]}
+              selectedOptions={[ocrEngine]}
+              onOptionSelect={(_, data) => setOcrEngine(data.optionValue as OcrEngineKind)}
+            >
+              <Option value="windows">系统 OCR（本地）</Option>
+              <Option value="aiStudio">AI Studio PaddleOCR（云端）</Option>
+              <Option value="off">关闭</Option>
+            </Dropdown>
+          </div>
+          {ocrEngine === "windows" && (
+            <div className={mergeClasses(styles.card, styles.settingRow)}>
+              <span className={styles.rowIcon}><ShieldCheckmark20Regular /></span>
+              <div className={styles.settingText}>
+                <div className={styles.settingLabel}>本地识别状态</div>
+                <div className={styles.settingDescription}>
+                  {ocrCaps === null
+                    ? "正在检测系统 OCR 可用性…"
+                    : ocrCaps.windowsOcrAvailable
+                      ? `可用，识别走本地引擎，图片不出本机。系统可用语言：${ocrCaps.windowsLanguages.join("、") || "系统默认"}。`
+                      : "未检测到可用的识别语言：请在 Windows 设置 → 时间和语言 → 语言中为中文安装「文字识别」可选功能。缺语言包时识别失败会静默跳过，不影响导入。"}
+                </div>
+              </div>
+              <Badge appearance="tint">{ocrCaps?.windowsOcrAvailable ? "仅本地处理" : "不可用"}</Badge>
+            </div>
+          )}
+          {ocrEngine === "aiStudio" && (
+            <div className={mergeClasses(styles.card, styles.settingRowStack)}>
+              <span className={styles.rowIcon}><Link20Regular /></span>
+              <div className={styles.settingText}>
+                <LabelInfo
+                  label="AI Studio 接口"
+                  detail="在 aistudio.baidu.com/paddleocr/task 创建个人 API URL（创建时选择模型，如 PP-OCRv5/v6）并生成 Access Token，分别粘贴到下面。识别请求会把图片上传到百度服务器；每日免费额度与并发限制以 AI Studio 页面说明为准。"
+                />
+                <div className={styles.ocrFields}>
+                  <Input
+                    className={styles.ocrInput}
+                    placeholder="API URL（https://aistudio.baidu.com/…）"
+                    value={aiStudioOcrApiUrl}
+                    onChange={(_, data) => setAiStudioOcrApiUrl(data.value)}
+                    aria-label="AI Studio API URL"
+                  />
+                  <Input
+                    className={styles.ocrInput}
+                    type="password"
+                    placeholder="Access Token"
+                    value={aiStudioOcrToken}
+                    onChange={(_, data) => setAiStudioOcrToken(data.value)}
+                    aria-label="AI Studio Access Token"
+                  />
+                </div>
+                <div className={styles.pathRow}>
+                  <Button
+                    icon={<Link20Regular />}
+                    onClick={() => {
+                      openExternalUrl(AI_STUDIO_CONSOLE_URL).catch((error) =>
+                        onNotifyError(`打开 AI Studio 失败：${getErrorMessage(error)}`),
+                      );
+                    }}
+                  >
+                    打开 AI Studio 控制台
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+          <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><ArrowClockwise20Regular /></span>
+            <div className={styles.settingText}>
+              <LabelInfo
+                label="存量回填"
+                detail="为导入时还未识别过的存量表情补跑 OCR 并追加标签（识别过但无文字的条目自动跳过）。使用云端引擎会按张消耗免费额度；识别在后台进行，完成后标签自动出现在对应表情上。"
+              />
+              {backfillRunning && ocrBackfill && (
+                <div className={styles.settingDescription}>
+                  正在识别 {ocrBackfill.processed}/{ocrBackfill.total} 张…
+                </div>
+              )}
+              {!backfillRunning && ocrBackfill?.finished && (
+                <div className={styles.settingDescription}>
+                  上次完成：已处理 {ocrBackfill.processed}/{ocrBackfill.total} 张。
+                </div>
+              )}
+            </div>
+            <Button
+              icon={backfillStarting ? <Spinner size="tiny" /> : <ArrowClockwise20Regular />}
+              disabled={ocrEngine === "off" || backfillStarting || backfillRunning}
+              onClick={() => void handleBackfillOcr()}
+            >
+              为现有表情补跑识别
+            </Button>
           </div>
         </div>
       </>

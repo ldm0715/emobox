@@ -143,6 +143,25 @@ export interface StorageInfo {
   supportedFormats: string[];
 }
 
+// ---------- Phase 32: OCR 识图自动打标签 ----------
+
+/** OCR 引擎。windows = 系统内置 OCR（本地离线，默认）；aiStudio = 百度 AI Studio PaddleOCR（云端，需 API URL + Access Token）。 */
+export type OcrEngineKind = "off" | "windows" | "aiStudio";
+
+/** Windows OCR 可用性（设置页展示；未装含「文字识别」的语言包时 available 为 false）。 */
+export interface OcrCapabilities {
+  windowsOcrAvailable: boolean;
+  windowsLanguages: string[];
+}
+
+/** `ocr-tags-updated` 事件载荷：一批 OCR 识别的进度（每 10 张 + 批末推送）。 */
+export interface OcrTagsUpdatedPayload {
+  phase: "import" | "backfill";
+  processed: number;
+  total: number;
+  finished: boolean;
+}
+
 // 第六阶段新增
 
 export type SearchView =

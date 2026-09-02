@@ -3,6 +3,7 @@ mod clipboard_collect;
 mod close_behavior;
 mod commands;
 mod database;
+mod ocr;
 mod perceptual_hash;
 mod platform;
 mod quick_search;
@@ -67,6 +68,7 @@ pub fn run() {
         .manage(selection_capture::SelectionSearchState::new())
         .manage(close_behavior::CloseBehaviorState::new())
         .manage(updater::UpdateState::new())
+        .manage(ocr::OcrState::new())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -144,6 +146,9 @@ pub fn run() {
             commands::hide_quick_search,
             commands::set_selection_search_enabled,
             commands::collect_image_from_clipboard,
+            commands::set_ocr_config,
+            commands::get_ocr_capabilities,
+            commands::backfill_ocr_tags,
             commands::list_groups,
             commands::create_group,
             commands::rename_group,

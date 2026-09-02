@@ -18,9 +18,9 @@ import {
   DEFAULT_CLIPBOARD_COLLECT_SHORTCUT,
   DEFAULT_QUICK_SEARCH_SHORTCUT,
 } from "../config/shortcuts";
-import { setCloseToTray, setSelectionSearchEnabled } from "../lib/tauri";
+import { setCloseToTray, setOcrConfig, setSelectionSearchEnabled } from "../lib/tauri";
 import { DEFAULT_UPDATE_MIRRORS, isMirrorList } from "../lib/mirrorSources";
-import type { DefaultLibraryView } from "../types";
+import type { DefaultLibraryView, OcrEngineKind } from "../types";
 
 export type ThemePreference = "light" | "dark" | "system";
 type ResolvedTheme = "light" | "dark";
@@ -57,6 +57,13 @@ interface PersistedSettings {
   // Phase 27: GitHub 加速镜像源列表（前缀代理，顺序 = 尝试顺序；官方直连
   // 由 Rust 侧恒定兜底，不在此列）。
   updateMirrors: string[];
+  // Phase 32: OCR 识图自动打标签。windows = 系统内置 OCR（本地离线，默认）；
+  // aiStudio = 百度 AI Studio PaddleOCR（云端同步 API，图片会上传百度服务器，
+  // 需要在 AI Studio task 页创建的个人 API URL + Access Token）。localStorage
+  // 事实源，挂载/变更时推送到 Rust OcrState 内存镜像。
+  ocrEngine: OcrEngineKind;
+  aiStudioOcrApiUrl: string;
+  aiStudioOcrToken: string;
 }
 
 interface SettingsContextValue extends PersistedSettings {
@@ -74,6 +81,9 @@ interface SettingsContextValue extends PersistedSettings {
   setCloseToTray: (minimizeToTray: boolean) => void;
   setAutoCheckUpdates: (enabled: boolean) => void;
   setUpdateMirrors: (mirrors: string[]) => void;
+  setOcrEngine: (engine: OcrEngineKind) => void;
+  setAiStudioOcrApiUrl: (url: string) => void;
+  setAiStudioOcrToken: (token: string) => void;
 }
 
 const STORAGE_KEY = "emobox.settings";
@@ -92,6 +102,9 @@ const defaultSettings: PersistedSettings = {
   downloadWebGif: false,
   autoCheckUpdates: true,
   updateMirrors: DEFAULT_UPDATE_MIRRORS,
+  ocrEngine: "windows",
+  aiStudioOcrApiUrl: "",
+  aiStudioOcrToken: "",
 };
 
 const brand: BrandVariants = {
@@ -169,6 +182,14 @@ function isShortcut(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isOcrEngine(value: unknown): value is OcrEngineKind {
+  return value === "off" || value === "windows" || value === "aiStudio";
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
 function readSettings(): PersistedSettings {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<PersistedSettings>;
@@ -199,6 +220,9 @@ function readSettings(): PersistedSettings {
       updateMirrors: isMirrorList(parsed.updateMirrors)
         ? parsed.updateMirrors
         : defaultSettings.updateMirrors,
+      ocrEngine: isOcrEngine(parsed.ocrEngine) ? parsed.ocrEngine : defaultSettings.ocrEngine,
+      aiStudioOcrApiUrl: asString(parsed.aiStudioOcrApiUrl) ?? defaultSettings.aiStudioOcrApiUrl,
+      aiStudioOcrToken: asString(parsed.aiStudioOcrToken) ?? defaultSettings.aiStudioOcrToken,
     };
   } catch {
     return defaultSettings;
@@ -265,6 +289,19 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     });
   }, [settings.closeToTray]);
 
+  // Phase 32：把 OCR 引擎与 AI Studio 凭据推送到 Rust（OcrState 内存镜像，
+  // 导入命令在后台识别时读取）。幂等；两个窗口都会执行。失败仅 log ——
+  // Rust 侧默认与这里一致（windows，凭据为空）。
+  useEffect(() => {
+    setOcrConfig({
+      engine: settings.ocrEngine,
+      aiStudioApiUrl: settings.aiStudioOcrApiUrl,
+      aiStudioToken: settings.aiStudioOcrToken,
+    }).catch((error) => {
+      console.error("推送 OCR 设置失败", error);
+    });
+  }, [settings.ocrEngine, settings.aiStudioOcrApiUrl, settings.aiStudioOcrToken]);
+
   const value = useMemo<SettingsContextValue>(
     () => ({
       ...settings,
@@ -305,6 +342,18 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setUpdateMirrors: (updateMirrors) => setSettings((current) => ({
         ...current,
         updateMirrors,
+      })),
+      setOcrEngine: (ocrEngine) => setSettings((current) => ({
+        ...current,
+        ocrEngine,
+      })),
+      setAiStudioOcrApiUrl: (aiStudioOcrApiUrl) => setSettings((current) => ({
+        ...current,
+        aiStudioOcrApiUrl,
+      })),
+      setAiStudioOcrToken: (aiStudioOcrToken) => setSettings((current) => ({
+        ...current,
+        aiStudioOcrToken,
       })),
     }),
     [resolvedTheme, settings],

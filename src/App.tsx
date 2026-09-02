@@ -42,6 +42,7 @@ import {
   listDeletedEmojis,
   listGroups,
   listTags,
+  OCR_TAGS_UPDATED_EVENT,
   openAssetsDirectory,
   removeTagsFromEmojis,
   renameEmojis,
@@ -66,6 +67,7 @@ import type {
   LibraryGroup,
   LibraryView,
   ManagedImportSummary,
+  OcrTagsUpdatedPayload,
   RecentImageRecord,
   RenameEntry,
   SearchOptions,
@@ -249,6 +251,9 @@ export function App() {
   // Phase 22：分组视图内导入后留在原视图，需要手动触发视图 effect 重拉第 1 页
   // （currentView 等 deps 未变）。landingKey 不变 → 不重播入场动画。
   const [viewReloadTick, setViewReloadTick] = useState(0);
+  // Phase 32：OCR 存量回填进度（ocr-tags-updated 事件 phase=backfill 时更新；
+  // null = 本会话没触发过回填）。传给设置弹窗展示「正在识别 N/M」。
+  const [ocrBackfill, setOcrBackfill] = useState<OcrTagsUpdatedPayload | null>(null);
   // loadMore 防重入（哨兵可能连续触发）。
   const loadingMoreRef = useRef(false);
   // 下一页 offset 游标：按「服务端返回的行数」前进（而非本地 currentEmojis 长度）。
@@ -623,6 +628,59 @@ export function App() {
       unlisten?.();
     };
   }, []);
+
+  // Phase 32：OCR 识别批次进度（Rust 后台每 10 张 + 批末推送）。import 批次
+  // → 新标签落地，刷新侧栏标签并重拉当前视图第 1 页（同 key 重拉不重播入场
+  // 动画）；backfill 批次 → 更新设置弹窗的回填进度，完成时 toast。
+  // refreshSidebar / notifyError / dispatchToast 是稳定引用，随 deps 重注册
+  // 监听与既有共享监听 effect 同模式。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    listen<OcrTagsUpdatedPayload>(OCR_TAGS_UPDATED_EVENT, (event) => {
+      const payload = event.payload;
+      if (payload.phase === "backfill") {
+        setOcrBackfill(payload);
+        if (payload.finished) {
+          void refreshSidebar();
+          setViewReloadTick((tick) => tick + 1);
+          if (payload.processed <= 0) {
+            notifyError("存量识别未能完成，请检查 OCR 设置或查看应用日志");
+          } else if (payload.processed < payload.total) {
+            dispatchToast(
+              <Toast>
+                <ToastTitle>
+                  存量识别部分完成（{payload.processed}/{payload.total}），可稍后重试
+                </ToastTitle>
+              </Toast>,
+              { intent: "warning" },
+            );
+          } else {
+            dispatchToast(
+              <Toast>
+                <ToastTitle>存量识别完成：已处理 {payload.processed} 张</ToastTitle>
+              </Toast>,
+              { intent: "success" },
+            );
+          }
+        }
+        return;
+      }
+      // import 批次：新导入表情的 OCR 标签落地。
+      void refreshSidebar();
+      setViewReloadTick((tick) => tick + 1);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((listenError) => {
+      console.error("无法监听 OCR 进度事件", listenError);
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [dispatchToast, notifyError, refreshSidebar]);
 
   const showShortcutError = useCallback((message: string, registered = false) => {
     setShortcutRegistered(registered);
@@ -1739,6 +1797,7 @@ export function App() {
         clipboardCollectError={clipboardCollectError}
         onUpdateClipboardCollectShortcut={changeClipboardCollectShortcut}
         onNotifyError={notifyError}
+        ocrBackfill={ocrBackfill}
         onUpdateAvailable={(result) => {
           setUpdateAvailable(result);
           // 打开更新弹窗前先收起设置弹窗（两个 alert 弹窗互斥，背板互相遮挡）。

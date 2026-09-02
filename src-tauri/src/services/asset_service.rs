@@ -155,23 +155,37 @@ impl AssetService {
     /// 保证相同输入产生字节级一致的 PNG。这是剪贴板收藏去重语义（D3）的前提。
     /// 压缩级别取 Fast：受管副本已缩到 ≤512px，磁盘膨胀有界；确定性不受影响。
     pub fn encode_image_as_png(image: &DynamicImage, path: &Path) -> Result<String, String> {
-        let rgba = image.to_rgba8();
-        let (width, height) = rgba.dimensions();
-        let bytes = rgba.into_raw();
-
+        let bytes = Self::encode_png_bytes(image)?;
         let file = File::create(path)
             .map_err(|error| format!("无法创建临时素材 {}：{error}", path.display()))?;
         let mut writer = BufWriter::new(file);
-        let encoder =
-            PngEncoder::new_with_quality(&mut writer, CompressionType::Fast, FilterType::Adaptive);
-        encoder
-            .write_image(&bytes, width, height, ExtendedColorType::Rgba8)
-            .map_err(|error| format!("无法编码 PNG {}：{error}", path.display()))?;
+        writer
+            .write_all(&bytes)
+            .map_err(|error| format!("无法写入临时素材 {}：{error}", path.display()))?;
         writer
             .flush()
             .map_err(|error| format!("无法刷新临时素材 {}：{error}", path.display()))?;
 
         hash_file(path)
+    }
+
+    /// 将内存中的 `DynamicImage` 编码为确定性 PNG 字节（不落盘）。
+    ///
+    /// 与 `encode_image_as_png` 共用同一份编码管线——这里是全仓库唯一的 PNG
+    /// 编码点，OCR（Phase 32）等需要"内存图片 → PNG 字节"的调用方一律走它，
+    /// 不要另起编码器。
+    pub fn encode_png_bytes(image: &DynamicImage) -> Result<Vec<u8>, String> {
+        let rgba = image.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let bytes = rgba.into_raw();
+
+        let mut encoded = Vec::new();
+        let encoder =
+            PngEncoder::new_with_quality(&mut encoded, CompressionType::Fast, FilterType::Adaptive);
+        encoder
+            .write_image(&bytes, width, height, ExtendedColorType::Rgba8)
+            .map_err(|error| format!("无法编码 PNG：{error}"))?;
+        Ok(encoded)
     }
 
     /// 按扩展名用**显式编码器**重编码缩放后的静态图，返回存储字节的 SHA-256。
