@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & publish release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # tag（vX.Y.Z）必须与 tauri.conf.json 的 version 一致——
+      # make-release-manifest.mjs 生成的下载 URL 依赖版本号，错位会导致应用内更新 404
+      - name: Verify tag matches tauri.conf.json version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $tagVersion = $env:TAG_NAME -replace '^v', ''
+          if ($tagVersion -ne $conf.version) {
+            throw "tag $($env:TAG_NAME) does not match tauri.conf.json version $($conf.version); bump the version and CHANGES.md first"
+          }
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 只出 NSIS 安装包（tauri.conf.json 的 targets: "all" 在 Windows 会连带 WiX/MSI）
+      # beforeBuildCommand 会自动跑 tsc --noEmit + vite build
+      - name: Build NSIS installer
+        run: npm run tauri build -- --bundles nsis
+
+      # 算 setup.exe 的 SHA-256/size、从 CHANGES.md 提取版本段落作 notes、
+      # 写出带 releases/download/v{version}/… 下载直链的 latest.json
+      - name: Generate update manifest (latest.json)
+        run: node scripts/make-release-manifest.mjs
+
+      # 便携版 zip（单个 emobox.exe）+ 各产物 sidecar .sha256（sha256sum 兼容格式）
+      - name: Package portable zip and checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $version = $conf.version
+          $nsisDir = "src-tauri/target/release/bundle/nsis"
+
+          $setup = Get-ChildItem -Path $nsisDir -Filter "*-setup.exe" |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $setup) { throw "NSIS installer not found in $nsisDir" }
+
+          $zipName = "EmoBox_${version}_x64.zip"
+          Compress-Archive -Path "src-tauri/target/release/emobox.exe" -DestinationPath $zipName -Force
+
+          $artifacts = @($setup.FullName, $zipName, (Join-Path $nsisDir "latest.json"))
+          foreach ($file in $artifacts) {
+            if (-not (Test-Path -LiteralPath $file)) { throw "missing artifact: $file" }
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+            $name = Split-Path $file -Leaf
+            # LF 结尾，保证 sha256sum -c 兼容
+            [System.IO.File]::WriteAllText("$file.sha256", "$hash  $name`n")
+          }
+          Write-Host "packaged: $($setup.Name), $zipName, latest.json (+ .sha256 sidecars)"
+
+      # Release 正文 = CHANGES.md 里该版本段落（脚本已提取进 latest.json 的 notes）
+      - name: Write release notes from latest.json
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $manifest = Get-Content src-tauri/target/release/bundle/nsis/latest.json -Raw | ConvertFrom-Json
+          $body = $manifest.notes
+          if ([string]::IsNullOrWhiteSpace($body)) { $body = "Release $env:TAG_NAME" }
+          Set-Content -Path release-notes.md -Value $body -Encoding utf8NoBOM
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          fail_on_unmatched_files: true
+          files: |
+            src-tauri/target/release/bundle/nsis/EmoBox_*-setup.exe
+            src-tauri/target/release/bundle/nsis/EmoBox_*-setup.exe.sha256
+            src-tauri/target/release/bundle/nsis/latest.json
+            src-tauri/target/release/bundle/nsis/latest.json.sha256
+            EmoBox_*_x64.zip
+            EmoBox_*_x64.zip.sha256

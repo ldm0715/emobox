@@ -80,18 +80,20 @@ npx vitest run                                 # 前端单测
 
 ## 发布新版本
 
+发布由 GitHub Actions 自动完成（`.github/workflows/release.yml`）：推送 `v*` 格式的 tag（如 `v0.1.0`）即自动构建并创建 Release。
+
 1. 同步修改三处版本号：`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`package.json`。
-2. 在 `CHANGES.md` **顶部**追加 `## vX.Y.Z（YYYY-MM-DD）` 段落（markdown，会作为应用内更新说明展示）。
-3. 构建并生成更新清单：
+2. 在 `CHANGES.md` **顶部**追加 `## vX.Y.Z（YYYY-MM-DD）` 段落（markdown，会作为应用内更新说明与 GitHub Release 正文展示）。
+3. 提交后打 tag 并推送：
 
    ```powershell
-   npm run tauri build                       # 产出 NSIS 安装包
-   node scripts/make-release-manifest.mjs    # 算 SHA-256 + 从 CHANGES.md 提取说明，写 latest.json
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
 
-4. 在 GitHub 以 tag `vX.Y.Z` 创建 Release，上传 `*-setup.exe` 与 `latest.json`（产物都在 `src-tauri/target/release/bundle/nsis/`）。
+4. Actions 构建完成后，Release 会附带：NSIS 安装包 `EmoBox_X.Y.Z_x64-setup.exe`、便携版 `EmoBox_X.Y.Z_x64.zip`、更新清单 `latest.json`，以及各产物的 `.sha256` 校验文件。
 
-应用内更新会按「镜像源列表 → 官方直连」顺序拉取 `releases/latest/download/latest.json` 与安装包，SHA-256 校验通过后启动安装器。
+tag 必须与 `src-tauri/tauri.conf.json` 的 `version` 一致（workflow 会校验），否则构建直接失败。应用内更新会按「镜像源列表 → 官方直连」顺序拉取 `releases/latest/download/latest.json` 与安装包，SHA-256 校验通过后启动安装器。
 
 ## 已知限制
 
