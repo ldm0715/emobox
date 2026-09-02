@@ -16,6 +16,21 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
+  Alert20Regular,
+  ArrowMinimize20Regular,
+  ArrowSync20Regular,
+  ArrowUpload20Regular,
+  ClipboardPaste20Regular,
+  Color20Regular,
+  Document20Regular,
+  Gif20Regular,
+  Highlight20Regular,
+  Home20Regular,
+  Image20Regular,
+  ImageMultiple20Regular,
+  Link20Regular,
+  Search20Regular,
+  ShieldCheckmark20Regular,
   Apps24Regular,
   CheckmarkCircle16Regular,
   Dismiss20Regular,
@@ -176,14 +191,39 @@ const useStyles = makeStyles({
   },
   settingRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gridTemplateColumns: "auto minmax(0, 1fr) auto",
     alignItems: "center",
-    columnGap: tokens.spacingHorizontalXL,
-    // 内容区较窄时控件换到文案下方，左对齐、不溢出。
+    columnGap: tokens.spacingHorizontalL,
+    // 内容区较窄时控件换到文案下方（跟文案同列、不顶到图标下方），左对齐、不溢出。
     "@media (max-width: 640px)": {
-      gridTemplateColumns: "minmax(0, 1fr)",
+      gridTemplateColumns: "auto minmax(0, 1fr)",
       rowGap: tokens.spacingVerticalS,
       justifyItems: "start",
+      "& > *:nth-child(3)": {
+        gridColumn: 2,
+      },
+    },
+  },
+  // 图标 + 纵向内容（无右置控件）的两列行：素材库路径、快捷键卡、功能/依赖清单。
+  settingRowStack: {
+    display: "grid",
+    gridTemplateColumns: "auto minmax(0, 1fr)",
+    alignItems: "start",
+    columnGap: tokens.spacingHorizontalL,
+  },
+  // 设置行左端的 Fluent 20px 图标（Win11 设置同范式，弱化色）。
+  rowIcon: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "20px",
+    alignSelf: "center",
+    color: tokens.colorNeutralForeground2,
+    "& svg": {
+      width: "20px",
+      height: "20px",
+      display: "block",
+      flexShrink: 0,
     },
   },
   settingText: {
@@ -412,6 +452,7 @@ export function SettingsDialog({
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>外观</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><Color20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo label="主题" detail="顶部工具栏的主题按钮与这里使用同一份设置。" />
             </div>
@@ -430,6 +471,7 @@ export function SettingsDialog({
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>通用</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><ArrowMinimize20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo
                 label="关闭窗口时最小化到系统托盘"
@@ -443,6 +485,7 @@ export function SettingsDialog({
             />
           </div>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><Home20Regular /></span>
             <div className={styles.settingText}>
               <div className={styles.settingLabel}>默认启动页面</div>
             </div>
@@ -461,6 +504,7 @@ export function SettingsDialog({
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>行为</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><ClipboardPaste20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo
                 label="自动粘贴到原窗口"
@@ -474,6 +518,7 @@ export function SettingsDialog({
             />
           </div>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><Highlight20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo
                 label="用选中文字自动搜索"
@@ -487,6 +532,7 @@ export function SettingsDialog({
             />
           </div>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><Gif20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo
                 label="联网下载网页 GIF"
@@ -510,36 +556,43 @@ export function SettingsDialog({
         <PageHeader title="全局快捷键" subtitle="在任意应用中唤起 EmoBox 的组合键。" />
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>快捷键</h3>
-          <div className={mergeClasses(styles.card, styles.shortcutItem)}>
-            <LabelInfo
-              label="快速搜索"
-              detail="在任意应用中唤出或隐藏独立搜索浮层。快捷键须包含 Ctrl、Alt、Shift 或 Win，可直接键入或点击「录制」。"
-            />
-            <ShortcutEditor
-              shortcut={quickSearchShortcut}
-              registered={shortcutRegistered}
-              registrationError={shortcutError}
-              onApply={onUpdateQuickSearchShortcut}
-            />
+          <div className={mergeClasses(styles.card, styles.settingRowStack)}>
+            <span className={styles.rowIcon}><Search20Regular /></span>
+            <div className={styles.shortcutItem}>
+              <LabelInfo
+                label="快速搜索"
+                detail="在任意应用中唤出或隐藏独立搜索浮层。快捷键须包含 Ctrl、Alt、Shift 或 Win，可直接键入或点击「录制」。"
+              />
+              <ShortcutEditor
+                shortcut={quickSearchShortcut}
+                registered={shortcutRegistered}
+                registrationError={shortcutError}
+                onApply={onUpdateQuickSearchShortcut}
+              />
+            </div>
           </div>
-          <div className={mergeClasses(styles.card, styles.shortcutItem)}>
-            <LabelInfo
-              label="从剪贴板收藏"
-              detail="按组合键把当前剪贴板图片保存到素材库；仅由你主动触发，不监听剪贴板。快捷键须包含 Ctrl、Alt、Shift 或 Win，可直接键入或点击「录制」。"
-            />
-            <ShortcutEditor
-              shortcut={clipboardCollectShortcut}
-              registered={clipboardCollectRegistered}
-              registrationError={clipboardCollectError}
-              onApply={onUpdateClipboardCollectShortcut}
-              ariaLabel="从剪贴板收藏全局快捷键"
-              placeholder="例如 Ctrl+Alt+S"
-            />
+          <div className={mergeClasses(styles.card, styles.settingRowStack)}>
+            <span className={styles.rowIcon}><Image20Regular /></span>
+            <div className={styles.shortcutItem}>
+              <LabelInfo
+                label="从剪贴板收藏"
+                detail="按组合键把当前剪贴板图片保存到素材库；仅由你主动触发，不监听剪贴板。快捷键须包含 Ctrl、Alt、Shift 或 Win，可直接键入或点击「录制」。"
+              />
+              <ShortcutEditor
+                shortcut={clipboardCollectShortcut}
+                registered={clipboardCollectRegistered}
+                registrationError={clipboardCollectError}
+                onApply={onUpdateClipboardCollectShortcut}
+                ariaLabel="从剪贴板收藏全局快捷键"
+                placeholder="例如 Ctrl+Alt+S"
+              />
+            </div>
           </div>
         </div>
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>快捷操作</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><SearchSquare20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo label="打开快捷搜索浮层" detail="与全局快捷键打开同一个独立搜索窗口。" />
             </div>
@@ -566,29 +619,33 @@ export function SettingsDialog({
         <PageHeader title="存储与导入" subtitle="素材库位置、导入行为与隐私边界。" />
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>素材库位置</h3>
-          <div className={mergeClasses(styles.card, styles.settingText)}>
-            <div className={styles.settingLabel}>EmoBox 素材库</div>
-            <div className={styles.pathRow}>
-              <Input
-                className={styles.pathInput}
-                readOnly
-                value={libraryPath}
-                aria-label="素材库路径"
-                title={libraryPath}
-              />
-              <Button
-                icon={<FolderOpen20Regular />}
-                disabled={!storageInfo}
-                onClick={onOpenAssetsDirectory}
-              >
-                在资源管理器中打开
-              </Button>
+          <div className={mergeClasses(styles.card, styles.settingRowStack)}>
+            <span className={styles.rowIcon}><FolderOpen20Regular /></span>
+            <div className={styles.settingText}>
+              <div className={styles.settingLabel}>EmoBox 素材库</div>
+              <div className={styles.pathRow}>
+                <Input
+                  className={styles.pathInput}
+                  readOnly
+                  value={libraryPath}
+                  aria-label="素材库路径"
+                  title={libraryPath}
+                />
+                <Button
+                  icon={<FolderOpen20Regular />}
+                  disabled={!storageInfo}
+                  onClick={onOpenAssetsDirectory}
+                >
+                  在资源管理器中打开
+                </Button>
+              </div>
             </div>
           </div>
         </div>
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>导入与索引</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><ArrowUpload20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo
                 label="导入与索引方式"
@@ -598,6 +655,7 @@ export function SettingsDialog({
             <Badge appearance="tint">仅本地处理</Badge>
           </div>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><ImageMultiple20Regular /></span>
             <div className={styles.settingText}>
               <div className={styles.settingLabel}>支持格式</div>
               <div className={styles.formatList}>
@@ -623,15 +681,16 @@ export function SettingsDialog({
     ];
     return (
       <>
-        <PageHeader title="关于" subtitle="项目信息、更新与开源组件。" />
+        <PageHeader
+          title="关于"
+          subtitle="本地优先的表情素材管理工具，无需账号或网络服务。"
+        />
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>项目</h3>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><Link20Regular /></span>
             <div className={styles.settingText}>
               <div className={styles.settingLabel}>仓库</div>
-              <div className={styles.settingDescription}>
-                本地优先的表情素材管理工具，无需账号或网络服务。
-              </div>
             </div>
             <button
               type="button"
@@ -643,17 +702,16 @@ export function SettingsDialog({
             </button>
           </div>
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><Document20Regular /></span>
             <div className={styles.settingText}>
               <div className={styles.settingLabel}>开源协议</div>
-              <div className={styles.settingDescription}>
-                以 GPL-3.0 协议开源：可自由使用、修改与分发，衍生版本须以同协议开源并保留版权声明。
-              </div>
             </div>
             <button
               type="button"
               className={styles.dependencyChip}
               onClick={() => void handleOpenDependency(`${REPO_URL}/blob/main/LICENSE`, "GPL-3.0 协议")}
             >
+              <ShieldCheckmark20Regular />
               <span>GPL-3.0</span>
             </button>
           </div>
@@ -662,6 +720,7 @@ export function SettingsDialog({
           <h3 className={styles.groupTitle}>更新</h3>
           <UpdateCard appVersion={appVersion} onNotifyError={onNotifyError} />
           <div className={mergeClasses(styles.card, styles.settingRow)}>
+            <span className={styles.rowIcon}><Alert20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo
                 label="自动检查更新"

@@ -15,12 +15,14 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
+  ArrowSync20Regular,
   CheckmarkCircle16Regular,
   ChevronDown16Regular,
   ChevronUp16Regular,
   Delete16Regular,
   Dismiss16Regular,
   ErrorCircle16Regular,
+  Globe20Regular,
   Info16Regular,
 } from "@fluentui/react-icons";
 import { Collapse } from "@fluentui/react-motion-components-preview";
@@ -58,9 +60,32 @@ const useStyles = makeStyles({
   },
   row: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gridTemplateColumns: "auto minmax(0, 1fr) auto",
     alignItems: "center",
-    columnGap: tokens.spacingHorizontalXL,
+    columnGap: tokens.spacingHorizontalL,
+    "@media (max-width: 640px)": {
+      gridTemplateColumns: "auto minmax(0, 1fr)",
+      rowGap: tokens.spacingVerticalS,
+      justifyItems: "start",
+      "& > *:nth-child(3)": {
+        gridColumn: 2,
+      },
+    },
+  },
+  // 设置行左端的 Fluent 20px 图标（与 SettingsMenu 的 rowIcon 同范式）。
+  rowIcon: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "20px",
+    alignSelf: "center",
+    color: tokens.colorNeutralForeground2,
+    "& svg": {
+      width: "20px",
+      height: "20px",
+      display: "block",
+      flexShrink: 0,
+    },
   },
   text: {
     minWidth: 0,
@@ -389,6 +414,7 @@ export function UpdateCard({ appVersion, onNotifyError }: UpdateCardProps) {
 
   return (
     <div className={mergeClasses(styles.card, styles.row)}>
+      <span className={styles.rowIcon}><ArrowSync20Regular /></span>
       <div className={styles.text}>
         <RowLabel
           label="检查更新"
@@ -569,6 +595,7 @@ export function MirrorSourceCard({ onNotifyError }: MirrorSourceCardProps) {
   return (
     <>
       <div className={mergeClasses(styles.card, styles.row)}>
+        <span className={styles.rowIcon}><Globe20Regular /></span>
         <div className={styles.text}>
           <RowLabel
             label="镜像源"
