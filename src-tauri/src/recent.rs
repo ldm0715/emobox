@@ -7,7 +7,6 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
 
 use crate::scanner;
 
@@ -32,12 +31,10 @@ pub struct RecentImagesState {
 }
 
 impl RecentImagesState {
-    pub fn load(app: &AppHandle) -> Result<Self, String> {
-        let storage_path = app
-            .path()
-            .app_data_dir()
-            .map_err(|error| format!("无法定位应用数据目录：{error}"))?
-            .join(RECENT_IMAGES_FILE_NAME);
+    /// 按 app_data_dir 路径加载（run() 在 Builder 链上提前 manage 用——
+    /// 此时拿不到 AppHandle，且必须先于窗口创建，避免 setup 完成前命令报 state not managed）。
+    pub fn load_at(app_data_directory: &Path) -> Result<Self, String> {
+        let storage_path = app_data_directory.join(RECENT_IMAGES_FILE_NAME);
         let records = load_records(&storage_path);
 
         Ok(Self {

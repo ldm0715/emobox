@@ -7,7 +7,6 @@ import {
   DialogSurface,
   DialogTitle,
   Input,
-  ProgressBar,
   Spinner,
   Tooltip,
   makeStyles,
@@ -15,43 +14,25 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
-  ArrowSync20Regular,
-  CheckmarkCircle16Regular,
-  ChevronDown16Regular,
-  ChevronUp16Regular,
   Delete16Regular,
   Dismiss16Regular,
-  ErrorCircle16Regular,
   Globe20Regular,
   Info16Regular,
 } from "@fluentui/react-icons";
-import { Collapse } from "@fluentui/react-motion-components-preview";
-import { listen } from "@tauri-apps/api/event";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { useAppSettings } from "../components/ThemeProvider";
-import {
-  UPDATE_DOWNLOAD_PROGRESS_EVENT,
-  cancelUpdateDownload,
-  checkForUpdate,
-  getErrorMessage,
-  installPendingUpdate,
-  startUpdateDownload,
-  testMirrorSpeed,
-} from "../lib/tauri";
+import { getErrorMessage, testMirrorSpeed } from "../lib/tauri";
 import {
   DEFAULT_UPDATE_MIRRORS,
   mirrorHost,
   normalizeMirror,
 } from "../lib/mirrorSources";
-import type {
-  MirrorSpeedResult,
-  UpdateCheckResult,
-  UpdateDownloadProgress,
-} from "../types";
+import type { MirrorSpeedResult } from "../types";
+import { LatencyTag } from "./mirrorLatency";
 
-const useStyles = makeStyles({
+// 供 UpdateAvailableDialog（启动更新弹窗）复用：releaseNotes 排版与
+// progressRow/progressCaption 下载进度段落，两处渲染保持一致。
+export const useStyles = makeStyles({
   card: {
     backgroundColor: tokens.colorNeutralBackground1,
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
@@ -107,42 +88,9 @@ const useStyles = makeStyles({
     lineHeight: tokens.lineHeightBase400,
     maxWidth: "480px",
   },
-  statusRow: {
-    display: "flex",
-    alignItems: "center",
-    columnGap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
-    rowGap: tokens.spacingVerticalSNudge,
-    color: tokens.colorNeutralForeground2,
-    fontSize: tokens.fontSizeBase300,
-  },
-  statusOk: {
-    color: tokens.colorPaletteGreenForeground1,
-    display: "inline-flex",
-    alignItems: "center",
-    columnGap: tokens.spacingHorizontalSNudge,
-  },
-  statusError: {
-    color: tokens.colorPaletteRedForeground1,
-    display: "inline-flex",
-    alignItems: "center",
-    columnGap: tokens.spacingHorizontalSNudge,
-  },
-  actionsRow: {
-    display: "flex",
-    alignItems: "center",
-    columnGap: tokens.spacingHorizontalS,
-    flexWrap: "wrap",
-    rowGap: tokens.spacingVerticalS,
-  },
-  notesToggle: {
-    color: tokens.colorNeutralForeground2,
-    fontSize: tokens.fontSizeBase300,
-  },
+  // 更新说明 markdown 排版（只管排版，外框/滚动由弹窗的 notesCard 提供）。
+  // UpdateAvailableDialog（启动更新弹窗）经 useStyles() 复用同一样式。
   releaseNotes: {
-    marginTop: tokens.spacingVerticalS,
-    paddingTop: tokens.spacingVerticalS,
-    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     color: tokens.colorNeutralForeground2,
     fontSize: tokens.fontSizeBase300,
     lineHeight: tokens.lineHeightBase400,
@@ -268,10 +216,11 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     fontSize: tokens.fontSizeBase300,
   },
-  mirrorPin: {
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
-    flexShrink: 0,
+  // 行内测速状态列（LatencyTag）：固定最小宽度，未测速→测速完成切换时不跳行。
+  mirrorStatus: {
+    display: "flex",
+    justifyContent: "flex-end",
+    minWidth: "104px",
   },
   mirrorEmpty: {
     color: tokens.colorNeutralForeground3,
@@ -298,7 +247,8 @@ const useStyles = makeStyles({
   },
 });
 
-function formatBytes(bytes: number | null | undefined): string | null {
+/** 字节数格式化（安装包大小 / 下载进度用）。UpdateAvailableDialog 共用。 */
+export function formatBytes(bytes: number | null | undefined): string | null {
   if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return null;
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB"];
@@ -337,240 +287,9 @@ export function GithubIcon() {
   );
 }
 
-// ---------- 检查更新卡片 ----------
-
-interface UpdateCardProps {
-  appVersion: string | null;
-  onNotifyError: (message: string) => void;
-}
-
-export function UpdateCard({ appVersion, onNotifyError }: UpdateCardProps) {
-  const styles = useStyles();
-  const { updateMirrors } = useAppSettings();
-  const [checking, setChecking] = useState(false);
-  const [result, setResult] = useState<UpdateCheckResult | null>(null);
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [progress, setProgress] = useState<UpdateDownloadProgress | null>(null);
-  const [installConfirmOpen, setInstallConfirmOpen] = useState(false);
-
-  // 下载进度事件（Rust emit_to main）。handler 只 setState，注册一次即可。
-  useEffect(() => {
-    const promise = listen<UpdateDownloadProgress>(
-      UPDATE_DOWNLOAD_PROGRESS_EVENT,
-      (event) => {
-        setProgress(event.payload);
-      },
-    );
-    return () => {
-      void promise.then((unlisten) => unlisten());
-    };
-  }, []);
-
-  async function handleCheck() {
-    setChecking(true);
-    setNotesOpen(false);
-    try {
-      setResult(await checkForUpdate(updateMirrors));
-    } catch (error) {
-      onNotifyError(`检查更新失败：${getErrorMessage(error)}`);
-    } finally {
-      setChecking(false);
-    }
-  }
-
-  async function handleDownload() {
-    setDownloading(true);
-    setProgress(null);
-    try {
-      const outcome = await startUpdateDownload(updateMirrors);
-      if (outcome.status === "completed") {
-        setInstallConfirmOpen(true);
-      }
-      // cancelled：回到「发现新版本」状态即可。
-    } catch (error) {
-      onNotifyError(`下载更新失败：${getErrorMessage(error)}`);
-    } finally {
-      setDownloading(false);
-      setProgress(null);
-    }
-  }
-
-  async function handleInstall() {
-    setInstallConfirmOpen(false);
-    try {
-      // 成功路径：Rust 启动安装器后 app.exit(0)，本 promise 大概率等不到返回。
-      await installPendingUpdate();
-    } catch (error) {
-      onNotifyError(`启动安装程序失败：${getErrorMessage(error)}`);
-    }
-  }
-
-  const available = result?.status === "available" ? result : null;
-  const percent =
-    progress?.total && progress.total > 0
-      ? Math.min(100, Math.round((progress.received / progress.total) * 100))
-      : null;
-
-  return (
-    <div className={mergeClasses(styles.card, styles.row)}>
-      <span className={styles.rowIcon}><ArrowSync20Regular /></span>
-      <div className={styles.text}>
-        <RowLabel
-          label="检查更新"
-          detail="检查 GitHub Releases 上的新版本；检查与下载按「镜像源」列表加速，全部失败时回退官方直连。安装包下载后先做 SHA-256 校验再启动安装器。"
-        />
-        {result == null && (
-          <div className={styles.description}>
-            {appVersion
-              ? `当前版本 v${appVersion}，没有检查过更新。`
-              : "没有检查过更新。"}
-          </div>
-        )}
-        {result?.status === "upToDate" && (
-          <div className={mergeClasses(styles.statusRow, styles.statusOk)}>
-            <CheckmarkCircle16Regular />
-            <span>已是最新版本（v{result.currentVersion}）</span>
-          </div>
-        )}
-        {result?.status === "noRelease" && (
-          <div className={styles.description}>
-            仓库还没有发布任何版本，发布后即可在此检查更新。
-          </div>
-        )}
-        {result?.status === "error" && (
-          <div className={mergeClasses(styles.statusRow, styles.statusError)}>
-            <ErrorCircle16Regular />
-            <span>{result.message}</span>
-          </div>
-        )}
-        {available && !downloading && (
-          <>
-            <div className={styles.statusRow}>
-              <span>
-                发现新版本 <strong>v{available.latestVersion}</strong>
-                {available.currentVersion && `（当前 v${available.currentVersion}）`}
-                {formatBytes(available.size) && ` · ${formatBytes(available.size)}`}
-              </span>
-              {available.notes && (
-                <button
-                  type="button"
-                  className={mergeClasses(
-                    styles.statusRow,
-                    styles.notesToggle,
-                  )}
-                  onClick={() => setNotesOpen((open) => !open)}
-                >
-                  {notesOpen ? <ChevronUp16Regular /> : <ChevronDown16Regular />}
-                  <span>{notesOpen ? "收起更新内容" : "查看更新内容"}</span>
-                </button>
-              )}
-            </div>
-            <Collapse visible={Boolean(available.notes) && notesOpen} unmountOnExit>
-              <div className={styles.releaseNotes}>
-                <Markdown remarkPlugins={[remarkGfm]}>{available.notes ?? ""}</Markdown>
-              </div>
-            </Collapse>
-          </>
-        )}
-        {downloading && (
-          <div className={styles.progressRow}>
-            <ProgressBar
-              value={
-                progress?.total && progress.total > 0
-                  ? progress.received / progress.total
-                  : undefined
-              }
-            />
-            <div className={styles.progressCaption}>
-              <span>
-                {percent != null ? `正在下载 ${percent}%` : "正在下载…"}
-              </span>
-              <span>
-                {formatBytes(progress?.received) ?? "0 B"}
-                {progress?.total ? ` / ${formatBytes(progress.total)}` : ""}
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
-      <div className={styles.actionsRow}>
-        {available && !downloading && (
-          <Button appearance="primary" onClick={() => void handleDownload()}>
-            下载并安装
-          </Button>
-        )}
-        {downloading && (
-          <Button
-            appearance="secondary"
-            icon={<Dismiss16Regular />}
-            onClick={() => void cancelUpdateDownload()}
-          >
-            取消
-          </Button>
-        )}
-        {!downloading && (
-          <Button
-            appearance={available ? "secondary" : "primary"}
-            disabled={checking}
-            icon={checking ? <Spinner size="extra-tiny" /> : undefined}
-            onClick={() => void handleCheck()}
-          >
-            检查更新
-          </Button>
-        )}
-      </div>
-      <ConfirmInstallDialog
-        open={installConfirmOpen}
-        onOpenChange={setInstallConfirmOpen}
-        onConfirm={() => void handleInstall()}
-      />
-    </div>
-  );
-}
-
-/** 下载完成后的安装确认（ConfirmDialog 模式：alert 弹窗，确认即退出应用）。 */
-function ConfirmInstallDialog({
-  open,
-  onOpenChange,
-  onConfirm,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={(_, data) => onOpenChange(data.open)} modalType="alert">
-      <DialogSurface style={{ width: "min(440px, calc(100vw - 48px))" }}>
-        <DialogBody>
-          <DialogTitle>安装更新</DialogTitle>
-          <DialogContent>
-            <div style={{ whiteSpace: "pre-line", color: tokens.colorNeutralForeground2 }}>
-              安装包已下载并通过 SHA-256 校验。
-              {"\n"}将启动安装程序并退出 EmoBox，安装完成后请重新打开。
-            </div>
-          </DialogContent>
-          <DialogActions>
-            <Button appearance="subtle" onClick={() => onOpenChange(false)}>
-              稍后再说
-            </Button>
-            <Button appearance="primary" onClick={onConfirm}>
-              立即安装
-            </Button>
-          </DialogActions>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
-  );
-}
-
 // ---------- 镜像源卡片 + 管理面板 ----------
 
-interface MirrorSourceCardProps {
-  onNotifyError: (message: string) => void;
-}
-
-export function MirrorSourceCard({ onNotifyError }: MirrorSourceCardProps) {
+export function MirrorSourceCard() {
   const styles = useStyles();
   const { updateMirrors } = useAppSettings();
   const [panelOpen, setPanelOpen] = useState(false);
@@ -581,16 +300,23 @@ export function MirrorSourceCard({ onNotifyError }: MirrorSourceCardProps) {
     .map((mirror) => latencies[mirror])
     .filter((result): result is MirrorSpeedResult => result?.ok === true && result.latencyMs != null);
   const testedCount = updateMirrors.filter((mirror) => latencies[mirror] != null).length;
+  const failedCount = testedCount - okLatencies.length;
+  const untestedCount = updateMirrors.length - testedCount;
   const best = okLatencies.reduce<number | null>(
     (min, result) => (min == null || (result.latencyMs ?? 0) < min ? result.latencyMs : min),
     null,
   );
-  const summary =
-    testedCount === 0
-      ? `${updateMirrors.length} 个镜像 · 未测速`
-      : best != null
-        ? `${updateMirrors.length} 个镜像 · ${testedCount} 个可用 · 最快 ${best} ms`
-        : `${updateMirrors.length} 个镜像 · 0 个可用`;
+  // 摘要区分 可用 / 失败 / 未测——此前把「已测数」当「可用数」展示。
+  const summaryParts = [`${updateMirrors.length} 个镜像`];
+  if (testedCount === 0) {
+    summaryParts.push("未测速");
+  } else {
+    summaryParts.push(`可用 ${okLatencies.length}`);
+    if (failedCount > 0) summaryParts.push(`失败 ${failedCount}`);
+    if (untestedCount > 0) summaryParts.push(`未测 ${untestedCount}`);
+    if (best != null) summaryParts.push(`最快 ${best} ms`);
+  }
+  const summary = summaryParts.join(" · ");
 
   return (
     <>
@@ -610,7 +336,6 @@ export function MirrorSourceCard({ onNotifyError }: MirrorSourceCardProps) {
         onOpenChange={setPanelOpen}
         latencies={latencies}
         setLatencies={setLatencies}
-        onNotifyError={onNotifyError}
       />
     </>
   );
@@ -621,7 +346,6 @@ interface MirrorSourcePanelProps {
   onOpenChange: (open: boolean) => void;
   latencies: Record<string, MirrorSpeedResult>;
   setLatencies: Dispatch<SetStateAction<Record<string, MirrorSpeedResult>>>;
-  onNotifyError: (message: string) => void;
 }
 
 function MirrorSourcePanel({
@@ -629,7 +353,6 @@ function MirrorSourcePanel({
   onOpenChange,
   latencies,
   setLatencies,
-  onNotifyError,
 }: MirrorSourcePanelProps) {
   const styles = useStyles();
   const { updateMirrors, setUpdateMirrors } = useAppSettings();
@@ -681,7 +404,11 @@ function MirrorSourcePanel({
       const result = await testMirrorSpeed(mirror);
       setLatencies((current) => ({ ...current, [mirror]: result }));
     } catch (error) {
-      onNotifyError(`镜像测速失败：${getErrorMessage(error)}`);
+      // 失败行内可见（「不可用」标签 + title 提示原因），与更新弹窗同语义。
+      setLatencies((current) => ({
+        ...current,
+        [mirror]: { ok: false, latencyMs: null, error: getErrorMessage(error) },
+      }));
     } finally {
       setTestingOne(null);
     }
@@ -690,20 +417,22 @@ function MirrorSourcePanel({
   async function handleTestAll() {
     setTestingAll(true);
     try {
-      // 串行逐个测，避免并发抢带宽影响延迟读数。
+      // 串行逐个测，避免并发抢带宽影响延迟读数；每个测完立即落地显示。
       const collected: Record<string, MirrorSpeedResult> = {};
       for (const mirror of updateMirrors) {
+        let result: MirrorSpeedResult;
         try {
-          collected[mirror] = await testMirrorSpeed(mirror);
+          result = await testMirrorSpeed(mirror);
         } catch (error) {
-          collected[mirror] = {
+          result = {
             ok: false,
             latencyMs: null,
             error: getErrorMessage(error),
           };
         }
+        collected[mirror] = result;
+        setLatencies((current) => ({ ...current, [mirror]: result }));
       }
-      setLatencies((current) => ({ ...current, ...collected }));
       // 测速后按延迟升序重排并持久化——列表顺序即检查/下载的尝试优先级。
       const latencyOf = (mirror: string) => {
         const result = collected[mirror];
@@ -754,18 +483,8 @@ function MirrorSourcePanel({
                     <span className={styles.mirrorHost} title={mirror}>
                       {mirrorHost(mirror)}
                     </span>
-                    <span className={styles.mirrorPin}>
-                      {busy ? (
-                        <Spinner size="extra-tiny" />
-                      ) : result == null ? (
-                        "未测速"
-                      ) : result.ok ? (
-                        `${result.latencyMs} ms`
-                      ) : (
-                        <Tooltip content={result.error ?? "测速失败"} relationship="description">
-                          <span>失败</span>
-                        </Tooltip>
-                      )}
+                    <span className={styles.mirrorStatus}>
+                      <LatencyTag result={result} busy={busy} />
                     </span>
                     <Button
                       size="small"

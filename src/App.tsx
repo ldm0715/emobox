@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "./app/AppShell";
 import { AppToolbar } from "./app/AppToolbar";
 import { CloseActionDialog, type CloseChoice } from "./app/CloseActionDialog";
+import { UpdateAvailableDialog } from "./app/UpdateAvailableDialog";
 import { LibrarySidebar } from "./app/LibrarySidebar";
 import { SettingsDialog } from "./app/SettingsMenu";
 import { useAppSettings } from "./components/ThemeProvider";
@@ -71,6 +72,7 @@ import type {
   SearchResult,
   SortOption,
   StorageInfo,
+  UpdateCheckResult,
   Tag,
 } from "./types";
 
@@ -184,8 +186,17 @@ export function App() {
     collectFromClipboard,
   } = useLibraryImport(notifyError);
 
+  // 启动静默检查出的新版本（status === "available"）。null = 没有可用更新。
+  // 弹窗展示后置回 null（结果已进弹窗快照）；「稍后/关闭」只关弹窗不改
+  // autoCheckUpdates，本次会话不再重弹（启动检查只跑一次）。
+  const [updateAvailable, setUpdateAvailable] = useState<UpdateCheckResult | null>(
+    null,
+  );
+  // 更新弹窗打开态：启动发现新版本自动置 true；设置→关于「检查更新」按钮也打开它。
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+
   // Phase 27：启动 3s 后静默检查更新（错开启动时的库加载/缩略图请求高峰）。
-  // 失败静默——网络不可用不该每次启动都打扰；只有发现新版本才弹 info toast。
+  // 失败静默——网络不可用不该每次启动都打扰；发现新版本改弹窗（不再用 toast）。
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const { autoCheckUpdates: enabled, updateMirrors: mirrors } =
@@ -194,21 +205,15 @@ export function App() {
       checkForUpdate(mirrors)
         .then((result) => {
           if (result.status !== "available") return;
-          dispatchToast(
-            <Toast>
-              <ToastTitle>
-                发现新版本 v{result.latestVersion}，可在 设置→关于 中更新
-              </ToastTitle>
-            </Toast>,
-            { intent: "info", timeout: 7000 },
-          );
+          setUpdateAvailable(result);
+          setUpdateDialogOpen(true);
         })
         .catch(() => {
           // 启动检查失败静默。
         });
     }, 3000);
     return () => window.clearTimeout(timer);
-  }, [dispatchToast]);
+  }, []);
 
   // 当前视图已加载的表情（IndexedEmoji 13 字段）。Phase 17 分页：只持有已加载页，
   // 滚动到底经 loadMore 追加；总数在 viewTotal，不在数组长度里。
@@ -1734,11 +1739,29 @@ export function App() {
         clipboardCollectError={clipboardCollectError}
         onUpdateClipboardCollectShortcut={changeClipboardCollectShortcut}
         onNotifyError={notifyError}
+        onUpdateAvailable={(result) => {
+          setUpdateAvailable(result);
+          // 打开更新弹窗前先收起设置弹窗（两个 alert 弹窗互斥，背板互相遮挡）。
+          setSettingsOpen(false);
+          setUpdateDialogOpen(true);
+        }}
       />
       <CloseActionDialog
         open={closeDialogOpen}
         onOpenChange={setCloseDialogOpen}
         onDecide={handleCloseDecide}
+      />
+      {/* 应用内更新唯一界面：启动发现新版本自动弹出；设置→关于「检查更新」也打开它。
+          常挂载 + open 控制。open 只由 updateDialogOpen 驱动（updateAvailable 仅是
+          数据）；设置弹窗打开时强制让位，否则 alert 背板盖住设置弹窗挡掉一切点击。 */}
+      <UpdateAvailableDialog
+        open={updateDialogOpen && !settingsOpen}
+        result={updateAvailable}
+        onOpenChange={(next) => {
+          setUpdateDialogOpen(next);
+          if (!next) setUpdateAvailable(null);
+        }}
+        onNotifyError={notifyError}
       />
       <Toaster toasterId={toasterId} position="top-end" />
 

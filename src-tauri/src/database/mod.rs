@@ -5,7 +5,6 @@ use std::{
 };
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
-use tauri::{AppHandle, Manager};
 
 use crate::{recent::RecentImageRecord, repositories::emoji_repository::EmojiRepository};
 
@@ -45,15 +44,9 @@ pub struct DatabaseState {
 }
 
 impl DatabaseState {
-    pub fn initialize(app: &AppHandle) -> Result<Self, String> {
-        let app_data_directory = app
-            .path()
-            .app_data_dir()
-            .map_err(|error| format!("无法定位应用数据目录：{error}"))?;
-        Self::initialize_at(&app_data_directory)
-    }
-
-    fn initialize_at(app_data_directory: &Path) -> Result<Self, String> {
+    // pub：run() 在 Builder 链上（窗口创建之前）调它提前 manage，
+    // 避免 setup 完成前前端命令提取 State 失败（state not managed）。
+    pub fn initialize_at(app_data_directory: &Path) -> Result<Self, String> {
         let assets_directory = app_data_directory.join(ASSETS_DIRECTORY_NAME);
         let emojis_directory = assets_directory.join(EMOJIS_DIRECTORY_NAME);
         let thumbnails_directory = assets_directory.join(THUMBNAILS_DIRECTORY_NAME);

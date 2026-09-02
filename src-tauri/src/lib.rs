@@ -16,6 +16,7 @@ mod target_window;
 mod thumbnail;
 mod tray;
 mod updater;
+mod updater_serde_contract;
 
 use tauri::{Emitter, Manager};
 
@@ -44,23 +45,33 @@ pub fn run() {
 
     let shortcut_registry = shortcut_registry::ShortcutRegistry::initialize();
 
+    // 数据目录与 Tauri 的 app_data_dir() 同源（dirs::data_dir().join(identifier)，
+    // identifier 来自 tauri.conf.json）。必须在 Builder 链上初始化并 manage：
+    // tauri 的 config 窗口在用户 setup 闭包之前创建并开始加载前端，而 setup 里
+    // 的建库/迁移/回填是同步重活——前端命令抢在 setup 完成前提取 State 会报
+    // "state not managed for field `databaseState`"（每次启动必现的竞态）。
+    // Builder 链上的 state 随 build() 入 StateManager，先于任何窗口创建。
+    let app_data_directory = dirs::data_dir()
+        .expect("无法定位应用数据目录（%APPDATA%），EmoBox 无法启动")
+        .join("com.emobox.app");
+    let database_state = database::DatabaseState::initialize_at(&app_data_directory)
+        .expect("本地数据层初始化失败，EmoBox 无法启动");
+    let recent_state = recent::RecentImagesState::load_at(&app_data_directory)
+        .expect("最近使用记录加载失败，EmoBox 无法启动");
+
     tauri::Builder::default()
         .manage(shortcut_registry)
+        .manage(database_state)
+        .manage(recent_state)
+        .manage(target_window::TargetWindowState::new())
+        .manage(selection_capture::SelectionSearchState::new())
+        .manage(close_behavior::CloseBehaviorState::new())
+        .manage(updater::UpdateState::new())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_log::Builder::new().level(log_level).build())
         .setup(|app| {
-            let database_state =
-                database::DatabaseState::initialize(app.handle()).map_err(std::io::Error::other)?;
-            app.manage(database_state);
-            let recent_state =
-                recent::RecentImagesState::load(app.handle()).map_err(std::io::Error::other)?;
-            app.manage(recent_state);
-            app.manage(target_window::TargetWindowState::new());
-            app.manage(selection_capture::SelectionSearchState::new());
-            app.manage(close_behavior::CloseBehaviorState::new());
-            app.manage(updater::UpdateState::new());
             tray::setup(app)?;
 
             // 启动一次性回填存量无标签表情的"文件名"标签（纯 DB，幂等，失败不阻塞）。

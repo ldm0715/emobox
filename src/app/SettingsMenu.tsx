@@ -9,16 +9,20 @@ import {
   Dropdown,
   Input,
   Option,
+  Spinner,
   Switch,
+  Toast,
+  ToastTitle,
+  Toaster,
   Tooltip,
   mergeClasses,
   makeStyles,
   tokens,
+  useToastController,
 } from "@fluentui/react-components";
 import {
   Alert20Regular,
   ArrowMinimize20Regular,
-  ArrowSync20Regular,
   ArrowUpload20Regular,
   ClipboardPaste20Regular,
   Color20Regular,
@@ -44,11 +48,15 @@ import {
 import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useAppSettings, type ThemePreference } from "../components/ThemeProvider";
-import { openExternalUrl } from "../lib/tauri";
+import { checkForUpdate, getErrorMessage, openExternalUrl } from "../lib/tauri";
 import { ShortcutEditor } from "../features/search/ShortcutEditor";
-import type { DefaultLibraryView, StorageInfo } from "../types";
+import type {
+  DefaultLibraryView,
+  StorageInfo,
+  UpdateCheckResult,
+} from "../types";
 import { ABOUT_DEPENDENCIES } from "./aboutDependencies";
-import { GithubIcon, MirrorSourceCard, UpdateCard } from "./aboutUpdate";
+import { GithubIcon, MirrorSourceCard } from "./aboutUpdate";
 import { navItemBaseStyle, navItemSelectedStyle } from "./navItemStyles";
 import logoUrl from "../assets/logo.png";
 
@@ -71,6 +79,8 @@ interface SettingsDialogProps {
   clipboardCollectError: string;
   onUpdateClipboardCollectShortcut: (shortcut: string) => Promise<string | null>;
   onNotifyError: (message: string) => void;
+  /** 手动检查发现新版本时回调（App 层据此打开更新弹窗）。 */
+  onUpdateAvailable: (result: UpdateCheckResult & { status: "available" }) => void;
 }
 
 const themeLabels: Record<ThemePreference, string> = {
@@ -254,6 +264,12 @@ const useStyles = makeStyles({
   dropdown: {
     minWidth: "180px",
   },
+  // 「自动检查更新」行右端：Switch + 检查更新按钮并排（三列 settingRow 的控件列）。
+  updateSwitchActions: {
+    display: "flex",
+    alignItems: "center",
+    columnGap: tokens.spacingHorizontalS,
+  },
   shortcutItem: {
     display: "flex",
     flexDirection: "column",
@@ -373,6 +389,7 @@ export function SettingsDialog({
   clipboardCollectError,
   onUpdateClipboardCollectShortcut,
   onNotifyError,
+  onUpdateAvailable,
 }: SettingsDialogProps) {
   const styles = useStyles();
   const {
@@ -391,11 +408,18 @@ export function SettingsDialog({
     setCloseToTray,
     autoCheckUpdates,
     setAutoCheckUpdates,
+    updateMirrors,
   } = useAppSettings();
+  // 「检查更新」的就地反馈 toaster（top-end，与主窗口一致）。
+  const toasterId = "settings-update-toaster";
+  const { dispatchToast } = useToastController(toasterId);
   const [section, setSection] = useState<SettingsSection>("general");
   // 版本号随 tauri.conf.json 运行时读取（getVersion）；读到之前不渲染版本胶囊，
   // 不再写死回退值。
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  // 「检查更新」按钮检查中态。发现新版本 → onUpdateAvailable 交给 App 层弹窗；
+  // 已是最新 / 没有发布 / 出错 → toast 反馈（弹窗只在有新版本时出现）。
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
 
   // 切换导航项时右侧内容滚回顶部。
@@ -415,6 +439,38 @@ export function SettingsDialog({
       cancelled = true;
     };
   }, []);
+
+  // 「检查更新」按钮：发现新版本交给 App 层弹窗；其余结果就地 toast 反馈
+  // （弹窗只在有新版本时出现，检查职责在这里完成）。
+  async function handleCheckUpdate() {
+    setCheckingUpdate(true);
+    try {
+      const result = await checkForUpdate(updateMirrors);
+      if (result.status === "available") {
+        onUpdateAvailable(result);
+      } else if (result.status === "upToDate") {
+        dispatchToast(
+          <Toast>
+            <ToastTitle>已是最新版本（v{result.currentVersion}）</ToastTitle>
+          </Toast>,
+          { intent: "success" },
+        );
+      } else if (result.status === "noRelease") {
+        dispatchToast(
+          <Toast>
+            <ToastTitle>仓库还没有发布任何版本</ToastTitle>
+          </Toast>,
+          { intent: "info" },
+        );
+      } else {
+        onNotifyError(result.message);
+      }
+    } catch (error) {
+      onNotifyError(`检查更新失败：${getErrorMessage(error)}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
 
   async function handleOpenDependency(url: string, name: string) {
     try {
@@ -718,22 +774,33 @@ export function SettingsDialog({
         </div>
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>更新</h3>
-          <UpdateCard appVersion={appVersion} onNotifyError={onNotifyError} />
+          {/* Phase 30：UpdateCard 卡片已删除。「检查更新」在这里做检查：
+              发现新版本 → onUpdateAvailable 交给 App 层弹更新弹窗；
+              已是最新 / 没有发布 / 出错 → toast 反馈（弹窗只在有新版本时出现）。 */}
           <div className={mergeClasses(styles.card, styles.settingRow)}>
             <span className={styles.rowIcon}><Alert20Regular /></span>
             <div className={styles.settingText}>
               <LabelInfo
                 label="自动检查更新"
-                detail="每次启动 EmoBox 时静默检查 GitHub Releases 上的新版本，发现新版本会弹提示；可随时在这里手动检查。检查与下载走「镜像源」加速。"
+                detail="每次启动 EmoBox 时静默检查 GitHub Releases 上的新版本，发现新版本会弹窗提示；可随时点「检查更新」手动检查。检查与下载走「镜像源」加速。"
               />
             </div>
-            <Switch
-              checked={autoCheckUpdates}
-              onChange={(_, data) => setAutoCheckUpdates(data.checked)}
-              aria-label="自动检查更新"
-            />
+            <div className={styles.updateSwitchActions}>
+              <Switch
+                checked={autoCheckUpdates}
+                onChange={(_, data) => setAutoCheckUpdates(data.checked)}
+                aria-label="自动检查更新"
+              />
+              <Button
+                disabled={checkingUpdate}
+                icon={checkingUpdate ? <Spinner size="extra-tiny" /> : undefined}
+                onClick={() => void handleCheckUpdate()}
+              >
+                检查更新
+              </Button>
+            </div>
           </div>
-          <MirrorSourceCard onNotifyError={onNotifyError} />
+          <MirrorSourceCard />
         </div>
         <div className={styles.group}>
           <h3 className={styles.groupTitle}>当前功能</h3>
@@ -767,47 +834,53 @@ export function SettingsDialog({
     );
   }
   return (
-    <Dialog open={open} onOpenChange={(_, data) => onOpenChange(data.open)}>
-      <DialogSurface className={styles.surface}>
-        <DialogBody className={styles.body}>
-          <DialogTitle
-            action={
-              <Tooltip content="关闭设置" relationship="label">
-                <Button appearance="subtle" aria-label="关闭设置" icon={<Dismiss20Regular />} onClick={() => onOpenChange(false)} />
-              </Tooltip>
-            }
-          >
-            {/* 设置页最顶端品牌行：logo + 名字 + 版本胶囊（版本运行时读取）。 */}
-            <span className={styles.brandTitle}>
-              <img src={logoUrl} alt="" className={styles.brandLogo} />
-              <span>EmoBox</span>
-              {appVersion && <Badge appearance="tint">v{appVersion}</Badge>}
-            </span>
-          </DialogTitle>
-          <DialogContent className={styles.content}>
-            <nav className={styles.navigation} aria-label="设置分区">
-              {settingsNavItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={mergeClasses(styles.navItem, section === item.id && styles.navItemSelected)}
-                  aria-current={section === item.id ? "page" : undefined}
-                  onClick={() => setSection(item.id)}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </nav>
-            <section className={styles.panel} ref={panelRef}>
-              {section === "general" && renderGeneral()}
-              {section === "shortcuts" && renderShortcuts()}
-              {section === "storage" && renderStorage()}
-              {section === "about" && renderAbout()}
-            </section>
-          </DialogContent>
-        </DialogBody>
-      </DialogSurface>
-    </Dialog>
+    // Toaster 必须是 Dialog 的兄弟节点：Fluent Dialog 遇到两个 children 会把
+    // 第一个（DialogSurface）当 trigger 无条件渲染、只卸载第二个——设置界面
+    // 将从此常驻无法关闭。
+    <>
+      <Dialog open={open} onOpenChange={(_, data) => onOpenChange(data.open)}>
+        <DialogSurface className={styles.surface}>
+          <DialogBody className={styles.body}>
+            <DialogTitle
+              action={
+                <Tooltip content="关闭设置" relationship="label">
+                  <Button appearance="subtle" aria-label="关闭设置" icon={<Dismiss20Regular />} onClick={() => onOpenChange(false)} />
+                </Tooltip>
+              }
+            >
+              {/* 设置页最顶端品牌行：logo + 名字 + 版本胶囊（版本运行时读取）。 */}
+              <span className={styles.brandTitle}>
+                <img src={logoUrl} alt="" className={styles.brandLogo} />
+                <span>EmoBox</span>
+                {appVersion && <Badge appearance="tint">v{appVersion}</Badge>}
+              </span>
+            </DialogTitle>
+            <DialogContent className={styles.content}>
+              <nav className={styles.navigation} aria-label="设置分区">
+                {settingsNavItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={mergeClasses(styles.navItem, section === item.id && styles.navItemSelected)}
+                    aria-current={section === item.id ? "page" : undefined}
+                    onClick={() => setSection(item.id)}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </nav>
+              <section className={styles.panel} ref={panelRef}>
+                {section === "general" && renderGeneral()}
+                {section === "shortcuts" && renderShortcuts()}
+                {section === "storage" && renderStorage()}
+                {section === "about" && renderAbout()}
+              </section>
+            </DialogContent>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      <Toaster toasterId={toasterId} position="top-end" />
+    </>
   );
 }

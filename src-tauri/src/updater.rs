@@ -132,7 +132,14 @@ fn is_newer_version(candidate: &str, current: &str) -> bool {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase", tag = "status")]
+// rename_all 只作用于 variant 名；variant 内部字段必须用 rename_all_fields
+// （serde 1.0.186+），否则序列化成 snake_case、前端读 camelCase 全是 undefined
+// （「发现新版本 vundefined」真机事故）。
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum UpdateCheckResult {
     UpToDate {
         current_version: String,
@@ -256,6 +263,32 @@ pub struct PendingUpdate {
 struct UpdateStateInner {
     pending: Mutex<Option<PendingUpdate>>,
     cancel: AtomicBool,
+    download_in_flight: AtomicBool,
+}
+
+/// 下载单飞 guard：`try_begin_download` 成功时返回，Drop 清除在途标志——
+/// 完成 / 取消 / 失败 / panic 任何返回路径都保证槽位被释放。
+struct DownloadGuard<'a> {
+    state: &'a UpdateState,
+}
+
+impl Drop for DownloadGuard<'_> {
+    fn drop(&mut self) {
+        self.state
+            .inner
+            .download_in_flight
+            .store(false, Ordering::SeqCst);
+    }
+}
+
+/// 尝试占用下载槽位（CAS false→true）；已有下载在途时返回 None。
+fn try_begin_download(state: &UpdateState) -> Option<DownloadGuard<'_>> {
+    state
+        .inner
+        .download_in_flight
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .ok()
+        .map(|_| DownloadGuard { state })
 }
 
 impl UpdateState {
@@ -292,7 +325,11 @@ impl UpdateState {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase", tag = "status")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "status"
+)]
 pub enum UpdateDownloadResult {
     Completed { version: String, sha256: String },
     Cancelled,
@@ -417,6 +454,11 @@ pub fn download_and_stage(
     mirrors: &[String],
     state: &UpdateState,
 ) -> Result<UpdateDownloadResult, String> {
+    // 单飞：同时只允许一个下载在途（关闭弹窗重开、重复点击都可能并发触发，
+    // 两个下载会互相覆盖临时文件与进度事件）。
+    let Some(_guard) = try_begin_download(state) else {
+        return Err("已有更新下载正在进行，请等待其完成或取消。".to_string());
+    };
     let manifest = fetch_manifest(mirrors)?;
     let asset = manifest
         .platform_asset()
@@ -588,6 +630,20 @@ mod tests {
         assert!(!is_newer_version("0.1.0", "0.1.0"));
         assert!(!is_newer_version("v0.1.0", "0.1.0"));
         assert!(!is_newer_version("0.1.0", "0.2.0"));
+    }
+
+    #[test]
+    fn download_single_flight_guard_blocks_concurrent_start() {
+        let state = UpdateState::new();
+        {
+            let _guard = try_begin_download(&state);
+            assert!(
+                try_begin_download(&state).is_none(),
+                "下载在途时第二次占用应被拒绝"
+            );
+        }
+        // guard 离开作用域（Drop）后槽位释放，可再次开始。
+        assert!(try_begin_download(&state).is_some());
     }
 
     #[test]

@@ -44,6 +44,20 @@
 
 ## 6. 协议：GPL-3.0-only
 
+## 7. 后续修订（Phase 31，2026-09-03）
+
+以 `docs/phase31-update-ui-fixes-and-redesign.md` 为准：
+
+- 第 3 节的「检查更新卡片 + 查看更新内容 Collapse」已随 UpdateCard 整体
+  删除——markdown 更新说明改在「发现新版本」弹窗内的限高滚动卡片渲染
+  （react-markdown 默认不渲染原始 HTML 的防注入结论不变）。
+- 镜像面板与更新弹窗的测速显示统一为三档 `LatencyTag`
+  （`src/app/mirrorLatency.tsx` 共享：<300ms 良好 / 300–800ms 一般 /
+  ≥800ms 较慢 / 失败不可用；失败原因走原生 title——listbox 内不用
+  Fluent Tooltip）；摘要行区分 可用/失败/未测；「全部测速」逐个落地结果。
+- 更新弹窗默认下载源 = 检查更新所用镜像列表的首选源；「镜像列表顺序」
+  选项 = 整表按序 + 直连兜底。
+
 全部依赖为 MIT/Apache-2.0/BSD/CC0 等宽松协议，GPL-3.0 无兼容问题。采用 SPDX `GPL-3.0-only`（LICENSE 全文 + package.json + Cargo.toml）；关于页有协议 chip 跳 GitHub 上的 LICENSE。注意事项：今后若引入依赖必须检查其协议与 GPL-3.0 兼容。
 
 ## 7. 坑与教训
