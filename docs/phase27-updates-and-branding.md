@@ -27,6 +27,7 @@
 - `CHANGES.md` 是唯一事实源：每版本一段 `## vX.Y.Z（YYYY-MM-DD）`，顶部追加。
 - `scripts/make-release-manifest.mjs`：读 tauri.conf.json version → 找 `target/release/bundle/nsis/*-setup.exe` → 算 SHA-256/size → **从 CHANGES.md 提取对应段落**写进 latest.json 的 `notes`（段落缺失告警留空；`--notes-file` 可覆盖）。
 - 前端检查到新版本后，「检查更新」卡片出「查看更新内容」chevron，`Collapse`（unmountOnExit）+ `react-markdown` + `remark-gfm` 渲染（**react-markdown 默认不渲染原始 HTML**，镜像劫持也得过 markdown 白名单这一关）。
+- **校验和展示（2026-09 调整）**：Release 资产**不再生成 `.sha256` sidecar 文件**（应用内更新只消费 latest.json 里的哈希，sidecar 纯冗余；latest.json 的 sidecar 更是无人消费），改为 release.yml 在 Release 正文（CHANGES.md 段落）末尾追加「校验和（SHA-256）」markdown 表格（setup.exe + 便携 zip，含大小），供手动下载者核对——README 下载安装节同步指向该表格。
 
 ## 4. 启动检查
 

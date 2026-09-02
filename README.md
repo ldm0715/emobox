@@ -48,7 +48,7 @@
 
 **系统要求**：Windows 10 / 11（x64）。
 
-每个附件都附带同名 `.sha256` 校验文件，可用以下命令核对完整性：
+每个安装包的 SHA-256 校验和发布在 Release 说明末尾的「校验和」表格中，可用以下命令核对：
 
 ```powershell
 certutil -hashfile EmoBox_x.y.z_x64-setup.exe SHA256
@@ -128,8 +128,19 @@ cargo test  --manifest-path src-tauri/Cargo.toml
 - 功能建议先用 [功能建议模板](.github/ISSUE_TEMPLATE/feature_request.yml) 讨论
 - 提交前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)：开发环境、验收标准、提交与发布规范
 
-## 📄 许可证
+## 📄 许可证与依赖
 
-[GPL-3.0](LICENSE) © EmoBox contributors
+EmoBox 以 [GPL-3.0](LICENSE) 协议开源，© EmoBox contributors。
 
-基于 [Tauri](https://tauri.app)、[React](https://react.dev)、[Fluent UI](https://react.fluentui.dev)、[SQLite](https://sqlite.org) 等优秀开源项目构建，感谢这些社区。
+本项目基于以下开源项目构建，感谢这些社区：
+
+| 项目 | 说明 |
+|---|---|
+| [Tauri](https://github.com/tauri-apps/tauri) | 跨平台桌面应用框架（Rust 后端 + 系统 WebView） |
+| [Rust](https://github.com/rust-lang/rust) | 后端语言与核心库生态（rusqlite、tokio、ureq、image 等） |
+| [React](https://github.com/facebook/react) | 前端 UI 框架 |
+| [Fluent UI](https://github.com/microsoft/fluentui) | Microsoft Fluent 2 设计系统的 React 组件库 |
+| [Vite](https://github.com/vitejs/vite) | 前端构建工具 |
+| [TypeScript](https://github.com/microsoft/TypeScript) | 前端语言 |
+
+完整依赖清单见 [package.json](package.json)（前端）与 [src-tauri/Cargo.toml](src-tauri/Cargo.toml)（Rust）。

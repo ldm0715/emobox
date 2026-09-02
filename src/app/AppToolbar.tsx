@@ -62,14 +62,6 @@ const useStyles = makeStyles({
   sidebarToggle: {
     marginLeft: tokens.spacingHorizontalXS,
   },
-  title: {
-    overflow: "hidden",
-    color: tokens.colorNeutralForeground1,
-    fontSize: tokens.fontSizeBase400,
-    fontWeight: tokens.fontWeightSemibold,
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
   searchWrap: {
     minWidth: 0,
     width: "100%",
@@ -128,7 +120,6 @@ export function AppToolbar({
             onClick={onToggleSidebar}
           />
         </Tooltip>
-        {!sidebarCollapsed && <span className={styles.title}>EmoBox</span>}
       </div>
 
       <div className={styles.searchWrap} data-emobox-main-search>

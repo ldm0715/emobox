@@ -63,8 +63,9 @@ jobs:
       - name: Generate update manifest (latest.json)
         run: node scripts/make-release-manifest.mjs
 
-      # 便携版 zip（单个 emobox.exe）+ 各产物 sidecar .sha256（sha256sum 兼容格式）
-      - name: Package portable zip and checksums
+      # 便携版 zip（单个 emobox.exe）。校验和表格在下一步追加——
+      # 本步骤只负责打包，避免与 release-notes.md 的写入顺序耦合
+      - name: Package portable zip
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -78,16 +79,7 @@ jobs:
 
           $zipName = "EmoBox_${version}_x64.zip"
           Compress-Archive -Path "src-tauri/target/release/emobox.exe" -DestinationPath $zipName -Force
-
-          $artifacts = @($setup.FullName, $zipName, (Join-Path $nsisDir "latest.json"))
-          foreach ($file in $artifacts) {
-            if (-not (Test-Path -LiteralPath $file)) { throw "missing artifact: $file" }
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
-            $name = Split-Path $file -Leaf
-            # LF 结尾，保证 sha256sum -c 兼容
-            [System.IO.File]::WriteAllText("$file.sha256", "$hash  $name`n")
-          }
-          Write-Host "packaged: $($setup.Name), $zipName, latest.json (+ .sha256 sidecars)"
+          Write-Host "packaged: $($setup.Name), $zipName"
 
       # Release 正文 = CHANGES.md 里该版本段落（脚本已提取进 latest.json 的 notes）
       - name: Write release notes from latest.json
@@ -101,6 +93,29 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($body)) { $body = "Release $env:TAG_NAME" }
           Set-Content -Path release-notes.md -Value $body -Encoding utf8NoBOM
 
+      # 校验和以表格追加到 Release 正文（不产生 .sha256 sidecar 文件——
+      # 应用内更新只读 latest.json 里的哈希，手动下载者在正文核对）
+      - name: Append checksums to release notes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $nsisDir = "src-tauri/target/release/bundle/nsis"
+          $setup = Get-ChildItem -Path $nsisDir -Filter "*-setup.exe" |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $setup) { throw "NSIS installer not found in $nsisDir" }
+          $zip = Get-ChildItem -Path "EmoBox_*_x64.zip" | Select-Object -First 1
+          if (-not $zip) { throw "portable zip not found" }
+
+          $rows = foreach ($file in @($setup.FullName, $zip.FullName)) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+            $name = Split-Path $file -Leaf
+            $sizeMb = [math]::Round((Get-Item -LiteralPath $file).Length / 1MB, 1)
+            "| ``$name`` | ``$hash`` | $sizeMb MB |"
+          }
+          $checksums = @("", "## 校验和（SHA-256）", "", "| 文件 | SHA-256 | 大小 |", "|---|---|---|") + $rows
+          Add-Content -Path release-notes.md -Value ($checksums -join "`n") -Encoding utf8NoBOM
+          Write-Host "checksums appended to release notes"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -109,8 +124,5 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             src-tauri/target/release/bundle/nsis/EmoBox_*-setup.exe
-            src-tauri/target/release/bundle/nsis/EmoBox_*-setup.exe.sha256
             src-tauri/target/release/bundle/nsis/latest.json
-            src-tauri/target/release/bundle/nsis/latest.json.sha256
             EmoBox_*_x64.zip
-            EmoBox_*_x64.zip.sha256

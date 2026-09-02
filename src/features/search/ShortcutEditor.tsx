@@ -28,6 +28,9 @@ interface ShortcutEditorProps {
 const useStyles = makeStyles({
   root: {
     display: "grid",
+    // MessageBar 单行模式 nowrap，auto 轨道会被长错误文案的 min-content 撑开、
+    // 令其 reflow 多行检测失效并溢出容器；钉死轨道宽度让 reflow 正常切多行。
+    gridTemplateColumns: "minmax(0, 1fr)",
     gap: tokens.spacingVerticalM,
   },
   controls: {
