@@ -105,18 +105,47 @@ UpdateAvailableDialog 原本就实现了延迟三档（注释写着「更新弹�
 
 下载进度段落（`progressRow`/`progressCaption`）与安装确认弹窗不变。
 
-## 7. 默认下载源 = 检查更新的镜像首选源（用户指定）
+## 7. 默认下载源 = 检查成功命中的源（用户指定）
 
 原默认是 `selectedMirror = null`，下拉显示「默认顺序（官方直连兜底）」——
-被用户感知为「默认的下载源是空的」。现语义：
+被用户感知为「默认的下载源是空的」。
 
-- **弹窗 open 快照时 `setSelectedMirror(updateMirrors[0] ?? null)`**——默认
-  写检查更新所用镜像列表的首选源，下拉框直接显示镜像名。
+- **第一版**：open 快照时 `setSelectedMirror(updateMirrors[0])`——盲选列表
+  第一项。
+- **修订（用户反馈「默认选中检查有新版本的那个源」）**：后端把检查命中的
+  来源报告给前端——`candidate_urls` 重构出带来源的 `candidate_sources`
+  （`Vec<(Option<String>, String)>`，`None` = 直连兜底；`candidate_urls`
+  保留为只取 URL 的薄包装，下载路径不受影响），`fetch_manifest_via` 成功
+  时同时返回命中镜像，`UpdateCheckResult::Available` 新增
+  `checked_via: Option<String>`（serde `checkedVia`，直连 = null）。
+  前端 open 快照时
+  `setSelectedMirror(checkedVia && options.includes(checkedVia) ? checkedVia : updateMirrors[0] ?? null)`
+  ——它才是「此刻已被证明可用」的源；列表里找不到（用户刚改过镜像）回退
+  首选。契约由 `updater_serde_contract.rs` 锁死。
 - 「镜像列表顺序（与检查更新一致）」选项（value="default"）保留：选中即
   回到 `selectedMirror = null` = 整表按序尝试 + Rust 直连兜底。
 - 「全部测速」完成后仍自动改选延迟最低的可用源。
 - 副作用说明：选中单一镜像时下载只尝试该镜像 + 直连兜底（不再逐个尝试
   其余镜像）；要整表尝试就选「镜像列表顺序」项。
+
+### 修订 2：触发框显示选中文案（用户反馈「选中了但框里是空的」）
+
+Fluent Dropdown 的触发框文案 = `baseState.value || placeholder`，而 `value`
+由**已注册 Option** 的 text 推导——listbox 折叠（未聚焦/未展开）时 Option
+不挂载、option collection 为空，所以受控 `selectedOptions` 在首次展开下拉
+前触发框**永远显示空**。Fluent 的 Selection 契约注释也写明：受控
+`selectedOptions` 时 `value` prop MUST also be controlled。
+
+修复：
+
+- `Dropdown` 同时受控 `value={selectedDisplay}`（镜像名 / 官方直连 /
+  镜像列表顺序三种文案，与对应 Option 的 text 一致）。
+- 顺带把「官方直连」从「镜像列表顺序」哨兵项拆成**独立选项**
+  （value=`DIRECT_MIRROR`="github.com/"，选中 = 只走直连）——原实现里直连
+  兜底项复用 value="default"，若「全部测速」选中最快的是直连，
+  `selectedMirror` 会匹配不到任何 Option。现在检查走直连时默认选
+  「官方直连（恒定兜底）」项；测速 best=直连也能正确回显与选中。
+- 「镜像列表顺序」哨兵行不参与测速、不显示延迟标签。
 
 ## 8. 下载并发保护（前端 + Rust 双层）
 
@@ -140,7 +169,7 @@ mirrorLatency / 单飞 / 默认源语义。
 ## 验证
 
 `cargo fmt --check` / `cargo check` / `cargo clippy -- -D warnings` /
-`cargo test`（191 过 3 ignored）/ `npm run build`（tsc + vite）/
+`cargo test`（229 项：226 过 3 ignored）/ `npm run build`（tsc + vite）/
 `npx vitest run`（63 过）全绿。真机（dev，v0.1.0）：启动静默检查弹更新窗 →
 全部测速三档标签正常（491ms 一般 / 923ms 较慢 / 不可用）→ 选源 → 下载
 4.7MB 约 5s 完成 → SHA-256 校验通过弹「安装更新」确认 → 「稍后再说」/

@@ -15,14 +15,17 @@ mod probe {
             pub_date: None,
             size: Some(123),
             download_url: "u".to_string(),
+            checked_via: Some("https://gh-proxy.com/".to_string()),
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"status\":\"available\""));
         assert!(json.contains("\"currentVersion\""));
         assert!(json.contains("\"latestVersion\""));
         assert!(json.contains("\"downloadUrl\""));
+        assert!(json.contains("\"checkedVia\":\"https://gh-proxy.com/\""));
         assert!(!json.contains("current_version"));
         assert!(!json.contains("latest_version"));
+        assert!(!json.contains("checked_via"));
     }
 
     #[test]

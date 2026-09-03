@@ -47,6 +47,9 @@ const DIRECT_MIRROR = "github.com/";
 /** 「按镜像列表顺序尝试」选项文案：与检查更新同一条源链路。 */
 const LIST_ORDER_LABEL = "镜像列表顺序（与检查更新一致）";
 
+/** 「官方直连」独立选项文案（选中 = 只走直连，跳过镜像）。 */
+const DIRECT_LABEL = "官方直连（恒定兜底）";
+
 // 延迟三档展示（latencyGrade / LatencyTag）抽在 ./mirrorLatency，
 // 与设置页镜像面板共用同一套档位语义与配色。
 
@@ -188,9 +191,15 @@ export function UpdateAvailableDialog({
       setSnapshot(result);
       setProgress(null);
       setDownloading(false);
-      // 默认下载源 = 检查更新所用镜像列表的首选源（用户指定：检查用什么源，
-      // 默认就写什么源）；「镜像列表顺序」选项可切回整表尝试。
-      setSelectedMirror(updateMirrors[0] ?? null);
+      // 默认下载源 = 本次检查成功拉到清单的那个源（后端 checkedVia 报告；
+      // null = 走的官方直连兜底 → 默认选「官方直连」项）。列表里已不存在时
+      // 回退首选镜像，再退直连。
+      const via = result.checkedVia ?? DIRECT_MIRROR;
+      setSelectedMirror(
+        mirrorEntries.some((entry) => entry.value === via)
+          ? via
+          : (updateMirrors[0] ?? DIRECT_MIRROR),
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, result]);
@@ -216,8 +225,25 @@ export function UpdateAvailableDialog({
     }
   }, [open, downloading]);
 
-  // 下载镜像选项 = 用户镜像列表 + 官方直连兜底（candidate_urls 语义的单选版）。
-  const mirrorOptions = [...updateMirrors.filter((m) => m.trim() !== ""), DIRECT_MIRROR];
+  // 可测速的源 = 用户镜像 + 官方直连（「镜像列表顺序」哨兵项不参与测速）。
+  const testableSources = [...updateMirrors.filter((m) => m.trim() !== ""), DIRECT_MIRROR];
+  // 下拉选项序列：镜像列表顺序（selectedMirror=null）→ 用户镜像 → 官方直连。
+  const mirrorEntries = [
+    { value: "default", label: LIST_ORDER_LABEL },
+    ...testableSources.map((m) => ({
+      value: m,
+      label: m === DIRECT_MIRROR ? DIRECT_LABEL : mirrorHost(m),
+    })),
+  ];
+  // 触发框文案必须受控：listbox 折叠时 Option 未注册，Fluent 从
+  // selectedOptions 派生的显示文案为空（Selection 契约：受控 selectedOptions
+  // 时 value 须一并受控）。
+  const selectedDisplay =
+    selectedMirror == null
+      ? LIST_ORDER_LABEL
+      : selectedMirror === DIRECT_MIRROR
+        ? DIRECT_LABEL
+        : mirrorHost(selectedMirror);
 
   async function handleTestOne(mirror: string) {
     setTestingOne(mirror);
@@ -239,7 +265,7 @@ export function UpdateAvailableDialog({
     setTestingAll(true);
     try {
       const collected: Record<string, MirrorSpeedResult> = {};
-      for (const mirror of mirrorOptions) {
+      for (const mirror of testableSources) {
         try {
           collected[mirror] = await testMirrorSpeed(mirror);
         } catch (error) {
@@ -251,7 +277,7 @@ export function UpdateAvailableDialog({
         }
         setLatencies((current) => ({ ...current, [mirror]: collected[mirror] }));
       }
-      const best = mirrorOptions
+      const best = testableSources
         .map((mirror) => ({ mirror, result: collected[mirror] }))
         .filter(({ result }) => result.ok && result.latencyMs != null)
         .sort((a, b) => (a.result.latencyMs ?? 0) - (b.result.latencyMs ?? 0))[0];
@@ -340,7 +366,7 @@ export function UpdateAvailableDialog({
                   </div>
                 </div>
               )}
-              {/* 下载源：默认选中检查更新的镜像首选源；全部测速后自动选最快可用源。 */}
+              {/* 下载源：默认选中检查时命中清单的镜像（checkedVia）；全部测速后自动选最快可用源。 */}
               <div className={badgeStyles.mirrorSection}>
                 <div className={badgeStyles.mirrorHeader}>
                   <div className={badgeStyles.mirrorLabel}>
@@ -360,12 +386,13 @@ export function UpdateAvailableDialog({
                   </Button>
                 </div>
                 <div className={badgeStyles.mirrorHint}>
-                  与检查更新使用相同的镜像源列表，全部失败时自动回退官方直连；测速后自动选择最快的可用源。
+                  默认选中检查更新时命中的源；全部失败时自动回退官方直连，测速后自动选择最快的可用源。
                 </div>
                 <Dropdown
                   className={badgeStyles.mirrorDropdown}
-                  // 受控：显示文本由 selectedOptions 派生（Fluent Dropdown 无 value prop）。
-                  // 选「镜像列表顺序」项 = 清空选择、回到整表按序尝试。
+                  // value 必须一并受控：listbox 折叠时 Option 未注册，Fluent 从
+                  // selectedOptions 派生的触发框文案为空（Selection 契约注释）。
+                  value={selectedDisplay}
                   selectedOptions={selectedMirror ? [selectedMirror] : ["default"]}
                   onOptionSelect={(_, data) => {
                     setSelectedMirror(
@@ -373,20 +400,16 @@ export function UpdateAvailableDialog({
                     );
                   }}
                 >
-                  {mirrorOptions.map((mirror) => (
-                    <Option
-                      key={mirror}
-                      value={mirror === DIRECT_MIRROR ? "default" : mirror}
-                      text={mirror === DIRECT_MIRROR ? LIST_ORDER_LABEL : mirrorHost(mirror)}
-                    >
+                  {mirrorEntries.map(({ value, label }) => (
+                    <Option key={value} value={value} text={label}>
                       <span className={badgeStyles.mirrorOptionContent}>
-                        <span>
-                          {mirror === DIRECT_MIRROR ? LIST_ORDER_LABEL : mirrorHost(mirror)}
-                        </span>
-                        <LatencyTag
-                          result={latencies[mirror]}
-                          busy={testingAll || testingOne === mirror}
-                        />
+                        <span>{label}</span>
+                        {value !== "default" && (
+                          <LatencyTag
+                            result={latencies[value]}
+                            busy={testingAll || testingOne === value}
+                          />
+                        )}
                       </span>
                     </Option>
                   ))}

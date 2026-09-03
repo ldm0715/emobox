@@ -68,19 +68,29 @@ pub fn join_mirror(mirror: &str, url: &str) -> Option<String> {
     Some(format!("{normalized}{url}"))
 }
 
-/// 检查/下载源序列：用户镜像依次在前，官方直连永远兜底在最后（去重）。
-/// 用户若把 github.com 本身填成镜像，等于直连，跳过以免拼出无效前缀地址。
-pub fn candidate_urls(mirrors: &[String], url: &str) -> Vec<String> {
-    let mut urls: Vec<String> = mirrors
+/// 检查/下载源序列（带来源）：用户镜像依次在前（过滤误填直连本尊），官方
+/// 直连永远兜底在最后（去重）。返回 `(来源镜像, 拼接后的完整 URL)`——来源为
+/// `None` 表示官方直连；`check_update` 把它作为 `checkedVia` 报告给前端
+/// （默认下载源 = 检查成功命中的那个源）。
+pub fn candidate_sources(mirrors: &[String], url: &str) -> Vec<(Option<String>, String)> {
+    let mut sources: Vec<(Option<String>, String)> = mirrors
         .iter()
         .filter(|mirror| !mirror_is_github_direct(mirror))
-        .filter_map(|mirror| join_mirror(mirror, url))
+        .filter_map(|mirror| join_mirror(mirror, url).map(|u| (Some(mirror.clone()), u)))
         .collect();
     let direct = url.trim().to_string();
-    if !direct.is_empty() && !urls.contains(&direct) {
-        urls.push(direct);
+    if !direct.is_empty() && !sources.iter().any(|(_, u)| *u == direct) {
+        sources.push((None, direct));
     }
-    urls
+    sources
+}
+
+/// 同 `candidate_sources` 但只取 URL 序列（下载路径用）。
+pub fn candidate_urls(mirrors: &[String], url: &str) -> Vec<String> {
+    candidate_sources(mirrors, url)
+        .into_iter()
+        .map(|(_, url)| url)
+        .collect()
 }
 
 /// 镜像地址是否就是 GitHub 直连本体（用户误把它当镜像填写）。
@@ -151,6 +161,8 @@ pub enum UpdateCheckResult {
         pub_date: Option<String>,
         size: Option<u64>,
         download_url: String,
+        /// 本次清单经哪个镜像拉取（`None` = 官方直连兜底）。
+        checked_via: Option<String>,
     },
     NoRelease {
         current_version: String,
@@ -161,7 +173,13 @@ pub enum UpdateCheckResult {
 }
 
 /// 按当前平台挑选资产并比较版本，产出给前端的检查结果。
-fn evaluate_manifest(manifest: UpdateManifest, current_version: &str) -> UpdateCheckResult {
+/// `checked_via`：本次清单经哪个镜像拉取（`None` = 官方直连兜底），前端拿它
+/// 做默认下载源（「检查走哪个源成功，下载默认就选哪个」）。
+fn evaluate_manifest(
+    manifest: UpdateManifest,
+    current_version: &str,
+    checked_via: Option<String>,
+) -> UpdateCheckResult {
     if !is_newer_version(&manifest.version, current_version) {
         return UpdateCheckResult::UpToDate {
             current_version: current_version.to_string(),
@@ -180,6 +198,7 @@ fn evaluate_manifest(manifest: UpdateManifest, current_version: &str) -> UpdateC
         };
     };
     UpdateCheckResult::Available {
+        checked_via,
         current_version: current_version.to_string(),
         latest_version: version,
         notes,
@@ -199,10 +218,11 @@ fn http_agent(read_timeout: Duration) -> ureq::Agent {
 }
 
 /// 依次尝试镜像与直连拉取 latest.json。404 表示仓库还没有发布版本。
-fn fetch_manifest(mirrors: &[String]) -> Result<UpdateManifest, String> {
+/// 成功时同时返回命中的**来源镜像**（`None` = 官方直连兜底）。
+fn fetch_manifest_via(mirrors: &[String]) -> Result<(UpdateManifest, Option<String>), String> {
     let agent = http_agent(READ_TIMEOUT);
     let mut last_error = "未配置任何更新源。".to_string();
-    for candidate in candidate_urls(mirrors, &latest_manifest_url()) {
+    for (source, candidate) in candidate_sources(mirrors, &latest_manifest_url()) {
         match agent.get(&candidate).set("User-Agent", USER_AGENT).call() {
             Ok(response) => {
                 let mut body = String::new();
@@ -215,7 +235,7 @@ fn fetch_manifest(mirrors: &[String]) -> Result<UpdateManifest, String> {
                     continue;
                 }
                 match serde_json::from_str::<UpdateManifest>(&body) {
-                    Ok(manifest) => return Ok(manifest),
+                    Ok(manifest) => return Ok((manifest, source)),
                     Err(error) => last_error = format!("解析更新清单失败：{error}"),
                 }
             }
@@ -229,8 +249,8 @@ fn fetch_manifest(mirrors: &[String]) -> Result<UpdateManifest, String> {
 
 /// 检查更新：拉取清单 → 平台资产 → 版本比较。
 pub fn check_update(mirrors: &[String], current_version: &str) -> UpdateCheckResult {
-    match fetch_manifest(mirrors) {
-        Ok(manifest) => evaluate_manifest(manifest, current_version),
+    match fetch_manifest_via(mirrors) {
+        Ok((manifest, checked_via)) => evaluate_manifest(manifest, current_version, checked_via),
         Err(message) => {
             if message == NO_RELEASE_MESSAGE {
                 UpdateCheckResult::NoRelease {
@@ -459,7 +479,7 @@ pub fn download_and_stage(
     let Some(_guard) = try_begin_download(state) else {
         return Err("已有更新下载正在进行，请等待其完成或取消。".to_string());
     };
-    let manifest = fetch_manifest(mirrors)?;
+    let manifest = fetch_manifest_via(mirrors).map(|(manifest, _)| manifest)?;
     let asset = manifest
         .platform_asset()
         .ok_or_else(|| format!("更新清单缺少 {} 平台条目", platform_key()))?
@@ -624,6 +644,24 @@ mod tests {
     }
 
     #[test]
+    fn candidate_sources_tracks_mirror_origin() {
+        let mirrors = vec![
+            "https://gh-proxy.com".to_string(),
+            "https://github.com/".to_string(),
+        ];
+        assert_eq!(
+            candidate_sources(&mirrors, "https://github.com/x"),
+            vec![
+                (
+                    Some("https://gh-proxy.com".to_string()),
+                    "https://gh-proxy.com/https://github.com/x".to_string()
+                ),
+                (None, "https://github.com/x".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn version_compare_accepts_v_prefix() {
         assert!(is_newer_version("v0.2.0", "0.1.0"));
         assert!(is_newer_version("0.10.0", "0.9.9"));
@@ -694,16 +732,18 @@ mod tests {
             notes: Some("## 更新".to_string()),
             platforms,
         };
-        match evaluate_manifest(manifest, "0.1.0") {
+        match evaluate_manifest(manifest, "0.1.0", Some("https://gh-proxy.com/".to_string())) {
             UpdateCheckResult::Available {
                 latest_version,
                 size,
                 download_url,
+                checked_via,
                 ..
             } => {
                 assert_eq!(latest_version, "0.2.0");
                 assert_eq!(size, Some(123));
                 assert!(download_url.ends_with("setup.exe"));
+                assert_eq!(checked_via.as_deref(), Some("https://gh-proxy.com/"));
             }
             other => panic!("应为 Available，实际：{other:?}"),
         }
@@ -717,14 +757,14 @@ mod tests {
             notes: None,
             platforms: HashMap::new(),
         };
-        match evaluate_manifest(manifest("0.1.0"), "0.1.0") {
+        match evaluate_manifest(manifest("0.1.0"), "0.1.0", None) {
             UpdateCheckResult::UpToDate { current_version } => {
                 assert_eq!(current_version, "0.1.0");
             }
             other => panic!("应为 UpToDate，实际：{other:?}"),
         }
         assert!(matches!(
-            evaluate_manifest(manifest("0.0.9"), "0.1.0"),
+            evaluate_manifest(manifest("0.0.9"), "0.1.0", None),
             UpdateCheckResult::UpToDate { .. }
         ));
     }
@@ -738,7 +778,7 @@ mod tests {
             platforms: HashMap::new(),
         };
         assert!(matches!(
-            evaluate_manifest(manifest, "0.1.0"),
+            evaluate_manifest(manifest, "0.1.0", None),
             UpdateCheckResult::Error { .. }
         ));
     }

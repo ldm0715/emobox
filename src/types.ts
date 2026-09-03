@@ -283,6 +283,8 @@ export type UpdateCheckResult =
       pubDate: string | null;
       size: number | null;
       downloadUrl: string;
+      /** 本次检查成功拉到清单的镜像；null = 走的官方直连兜底。 */
+      checkedVia: string | null;
     }
   | { status: "noRelease"; currentVersion: string }
   | { status: "error"; message: string };
