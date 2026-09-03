@@ -39,40 +39,28 @@ export const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusLarge,
     padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
   },
-  row: {
-    display: "grid",
-    gridTemplateColumns: "auto minmax(0, 1fr) auto",
-    alignItems: "center",
-    columnGap: tokens.spacingHorizontalL,
-    "@media (max-width: 640px)": {
-      gridTemplateColumns: "auto minmax(0, 1fr)",
-      rowGap: tokens.spacingVerticalS,
-      justifyItems: "start",
-      "& > *:nth-child(3)": {
-        gridColumn: 2,
-      },
-    },
-  },
-  // 设置行左端的 Fluent 20px 图标（与 SettingsMenu 的 rowIcon 同范式）。
-  rowIcon: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "20px",
-    alignSelf: "center",
-    color: tokens.colorNeutralForeground2,
-    "& svg": {
-      width: "20px",
-      height: "20px",
-      display: "block",
-      flexShrink: 0,
-    },
-  },
-  text: {
-    minWidth: 0,
+  // 内容密集卡（镜像源摘要行）：图标并入标题行、不占独立列（与
+  // SettingsMenu 的 settingCardStack 同范式，2026-09 统一整改）。
+  cardStack: {
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalSNudge,
+  },
+  labelIconRow: {
+    display: "flex",
+    alignItems: "center",
+    // 与 SettingsMenu 统一：图标→标题间距 S=8px、图标盒 20×20、
+    // 标题行高 20px——等高盒 + 居中才是真正同线。
+    columnGap: tokens.spacingHorizontalS,
+  },
+  labelIcon: {
+    width: "20px",
+    height: "20px",
+    color: tokens.colorNeutralForeground2,
+    flexShrink: 0,
+  },
+  titleAction: {
+    marginLeft: "auto",
   },
   labelRow: {
     display: "flex",
@@ -81,6 +69,8 @@ export const useStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     fontSize: tokens.fontSizeBase400,
     fontWeight: tokens.fontWeightSemibold,
+    // 行高钉死 20px 与图标盒等高（与 SettingsMenu 同款对齐修正）。
+    lineHeight: "20px",
   },
   description: {
     color: tokens.colorNeutralForeground3,
@@ -320,16 +310,18 @@ export function MirrorSourceCard() {
 
   return (
     <>
-      <div className={mergeClasses(styles.card, styles.row)}>
-        <span className={styles.rowIcon}><Globe20Regular /></span>
-        <div className={styles.text}>
+      <div className={mergeClasses(styles.card, styles.cardStack)}>
+        <div className={styles.labelIconRow}>
+          <Globe20Regular className={styles.labelIcon} />
           <RowLabel
             label="镜像源"
             detail="检查更新与下载安装包时按列表顺序尝试这些 GitHub 加速镜像（gh-proxy 风格前缀代理），全部失败时自动回退官方直连。支持自行添加与测速排序。"
           />
-          <div className={styles.description}>{summary}</div>
+          <Button className={styles.titleAction} onClick={() => setPanelOpen(true)}>
+            管理镜像源
+          </Button>
         </div>
-        <Button onClick={() => setPanelOpen(true)}>管理镜像源</Button>
+        <div className={styles.description}>{summary}</div>
       </div>
       <MirrorSourcePanel
         open={panelOpen}
