@@ -12,6 +12,7 @@ import {
   CheckboxUnchecked20Regular,
   Apps20Filled,
   Apps20Regular,
+  ArrowClockwise20Regular,
   Grid20Filled,
   Grid20Regular,
   GridDots20Regular,
@@ -30,6 +31,9 @@ interface LibraryHeaderProps {
   onToggleMultiSelect: () => void;
   onSortChange: (option: SortOption) => void;
   onDensityChange: (density: GridDensity) => void;
+  /** 刷新图库：当前视图全量重拉。导入进行中禁用。 */
+  onRefresh: () => void;
+  refreshDisabled?: boolean;
 }
 
 const sortLabels: Record<SortOption, string> = {
@@ -97,6 +101,8 @@ export function LibraryHeader({
   onToggleMultiSelect,
   onSortChange,
   onDensityChange,
+  onRefresh,
+  refreshDisabled,
 }: LibraryHeaderProps) {
   const styles = useStyles();
 
@@ -108,6 +114,17 @@ export function LibraryHeader({
       </div>
 
       <div className={styles.actions}>
+        <Tooltip content="刷新图库" relationship="label">
+          <Button
+            size="small"
+            appearance="subtle"
+            aria-label="刷新图库"
+            icon={<ArrowClockwise20Regular />}
+            disabled={refreshDisabled}
+            onClick={onRefresh}
+          />
+        </Tooltip>
+
         <Tooltip content={multiSelectMode ? "退出多选" : "进入多选模式"} relationship="label">
           <ToggleButton
             size="small"

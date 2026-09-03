@@ -53,6 +53,8 @@ interface EmojiLibraryViewProps {
   onCollectFromClipboard: () => void;
   onDensityChange: (density: GridDensity) => void;
   onSortChange: (option: SortOption) => void;
+  /** 刷新图库：当前视图全量重拉（LibraryHeader「刷新」按钮）。 */
+  onRefresh: () => void;
   onToggleMultiSelect: () => void;
   onItemSelect: (item: IndexedImage, mode: SelectionMode) => void;
   onClearSelection: () => void;
@@ -204,6 +206,7 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     onCollectFromClipboard,
     onDensityChange,
     onSortChange,
+    onRefresh,
     onToggleMultiSelect,
     onItemSelect,
     onClearSelection,
@@ -326,6 +329,8 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
         onToggleMultiSelect={onToggleMultiSelect}
         onSortChange={onSortChange}
         onDensityChange={onDensityChange}
+        onRefresh={onRefresh}
+        refreshDisabled={importing}
       />
 
       <div className={styles.status}>

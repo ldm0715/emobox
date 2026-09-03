@@ -261,6 +261,10 @@ export function App() {
   // Phase 22：分组视图内导入后留在原视图，需要手动触发视图 effect 重拉第 1 页
   // （currentView 等 deps 未变）。landingKey 不变 → 不重播入场动画。
   const [viewReloadTick, setViewReloadTick] = useState(0);
+  // 强制全量替换标志：导入完成 / 手动刷新时置 true，视图 effect 消费一次——
+  // 绕过同 key merge（merge 会把新项追加到尾部，不按当前排序落位）并重播入场
+  // 动画、滚动回顶。latest-ref 模式，不进 effect deps。
+  const forceFullReloadRef = useRef(false);
   // Phase 32：OCR 存量回填进度（ocr-tags-updated 事件 phase=backfill 时更新；
   // null = 本会话没触发过回填）。传给设置弹窗展示「正在识别 N/M」。
   const [ocrBackfill, setOcrBackfill] = useState<OcrTagsUpdatedPayload | null>(null);
@@ -791,8 +795,10 @@ export function App() {
   }, [clipboardCollectShortcut, dispatchToast]);
 
   // Phase 22：带 targetGroupId（分组视图内发起的导入）且用户仍停留在该分组
-  // 视图时，留在分组并经 viewReloadTick 重拉第 1 页；其余情况维持原行为
-  // （切回「全部」，让用户看到刚导入的内容）。
+  // 视图时，留在分组；其余情况切回「全部」让用户看到刚导入的内容。无论停在哪，
+  // 导入后的重拉都强制全量替换（forceFullReloadRef）：新图必须按当前排序落在
+  // 正确位置——同 key merge 只会把它追加到尾部，按导入时间/最近优先排序时
+  // 用户看不到新图，必须切排序才能看到（2026-09 修复）。
   const prepareAfterImport = useCallback(async (targetGroupId: number | null) => {
     const stayedInTargetGroup =
       targetGroupId !== null && currentViewRef.current === `group:${targetGroupId}`;
@@ -801,11 +807,21 @@ export function App() {
     }
     setSearchQuery("");
     clearSelectionRef.current();
+    forceFullReloadRef.current = true;
+    setViewReloadTick((tick) => tick + 1);
     await refreshLibrary();
     await refreshSidebar();
-    if (stayedInTargetGroup) {
-      setViewReloadTick((tick) => tick + 1);
-    }
+  }, [refreshLibrary, refreshSidebar]);
+
+  // 工具栏「刷新图库」：当前视图全量重拉（含 recent 视图重取 recentItems）+
+  // 计数 / 侧栏刷新。不切视图、不清搜索词——用户要的是原地刷新。
+  const handleManualRefresh = useCallback(() => {
+    forceFullReloadRef.current = true;
+    setViewReloadTick((tick) => tick + 1);
+    // recent 视图数据源只在启动与复制事件更新，手动刷新需重取。
+    void getRecentImages().then(setRecentItems).catch(notifyError);
+    void refreshLibrary();
+    void refreshSidebar();
   }, [refreshLibrary, refreshSidebar]);
 
   // toast 文案里的目标分组名（用发起导入时捕获的 id 查名，防中途换视图漂移）。
@@ -1047,6 +1063,9 @@ export function App() {
     let disposed = false;
     viewSeqRef.current += 1;
     const seq = viewSeqRef.current;
+    // 导入完成 / 手动刷新置位：本次落地绕过同 key merge，全量替换 + 重播入场动画。
+    const forceFull = forceFullReloadRef.current;
+    forceFullReloadRef.current = false;
     // 作废追加游标：第 1 页落地前 loadMore 一律跳过（见 nextOffsetRef 注释）。
     nextOffsetRef.current = null;
     const trimmedQuery = debouncedQuery.trim();
@@ -1098,7 +1117,7 @@ export function App() {
         // 视口「莫名下滑/跳位」（2026-09 修复）。真视图/搜索/排序切换照旧
         // 全量替换。取舍：modified-time 排序的项跳顶要等下一次真切换生效。
         const landingKey = `${currentView}|${trimmedQuery}|${sortOption}`;
-        const sameKey = lastLandedKeyRef.current === landingKey;
+        const sameKey = !forceFull && lastLandedKeyRef.current === landingKey;
         setCurrentEmojis(
           sameKey ? mergeReloadedItems(currentEmojisRef.current, items) : items,
         );
@@ -1107,8 +1126,9 @@ export function App() {
         nextOffsetRef.current = items.length;
         mergeFavoriteFlags(items);
         // 真正的视图/搜索词/排序切换（而非同 key 重拉）→ 递增落地代数，
-        // 触发 EmojiLibraryView 的容器级入场动画（key 重挂载）。
-        if (lastLandedKeyRef.current !== landingKey) {
+        // 触发 EmojiLibraryView 的容器级入场动画（key 重挂载）。导入完成 /
+        // 手动刷新（forceFull）同样递增：新数据按排序落位 + 滚动回顶。
+        if (forceFull || lastLandedKeyRef.current !== landingKey) {
           lastLandedKeyRef.current = landingKey;
           setViewGeneration((g) => g + 1);
         }
@@ -1774,6 +1794,7 @@ export function App() {
           onCollectFromClipboard={() => void handleCollectFromClipboard()}
           onDensityChange={setDensity}
           onSortChange={setSortOption}
+          onRefresh={handleManualRefresh}
           onToggleMultiSelect={handleToggleMultiSelect}
           onItemSelect={handleItemSelect}
           onClearSelection={clear}
