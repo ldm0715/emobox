@@ -110,6 +110,48 @@ export function intersectTagIds(rows: readonly { tagIds: number[] }[]): number[]
   return common;
 }
 
+/** 各表情 tagIds 的并集（左栏「当前标签」展示所有选中表情的标签全集）。 */
+export function unionTagIds(rows: readonly { tagIds: number[] }[]): number[] {
+  const seen = new Set<number>();
+  for (const row of rows) {
+    for (const id of row.tagIds) seen.add(id);
+  }
+  return [...seen];
+}
+
+/**
+ * 全局删除标签后的选中集同步：从 selected 移除该 id，同时把它从 initial
+ * 基准集剔除（标签已全局消失，无需再出现在 removedTagIds 里让后端 remove——
+ * 行不存在，remove 是无操作；从基准剔除可避免 footer 误计入一个「−」）。
+ */
+export function removeDeletedTag(
+  selected: ReadonlySet<number>,
+  initialTagIds: readonly number[],
+  deletedId: number,
+): { selected: Set<number>; initialTagIds: number[] } {
+  const nextSelected = new Set(selected);
+  nextSelected.delete(deletedId);
+  return {
+    selected: nextSelected,
+    initialTagIds: initialTagIds.filter((id) => id !== deletedId),
+  };
+}
+
+/**
+ * 行内重命名是否可提交：trim 非空、与原名不同（NOCASE 相同只是改大小写也
+ * 允许——后端唯一约束是 NOCASE，改名本身合法），且不与暂存新名重复。
+ */
+export function canSubmitRename(
+  currentName: string,
+  inputName: string,
+  newNames: readonly string[] = [],
+): boolean {
+  const trimmed = inputName.trim();
+  if (trimmed.length === 0) return false;
+  if (trimmed === currentName.trim()) return false;
+  return !newNames.some((name) => name.toLowerCase() === trimmed.toLowerCase());
+}
+
 /** 手动识别批次的累计统计（`ocr-tags-updated` payload 的相关字段）。 */
 export interface OcrBatchStats {
   /** 已完成识别尝试的行数（= tagged + empty + failed）。 */

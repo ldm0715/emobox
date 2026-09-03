@@ -4,11 +4,14 @@ import type { TagOption } from "./tagPickerHelpers";
 import {
   buildOcrNotice,
   canStageNewTagName,
+  canSubmitRename,
   filterTagsByQuery,
   findExactTag,
   intersectTagIds,
   mergeOcrSelection,
+  removeDeletedTag,
   sortPopularTags,
+  unionTagIds,
 } from "./tagPickerHelpers";
 
 function tag(id: number, name: string, count = 0): TagOption {
@@ -119,6 +122,56 @@ describe("tagPickerHelpers", () => {
 
     it("某个表情没有任何标签时交集为空", () => {
       expect(intersectTagIds([{ tagIds: [1] }, { tagIds: [] }])).toEqual([]);
+    });
+  });
+
+  describe("unionTagIds", () => {
+    it("空输入返回空", () => {
+      expect(unionTagIds([])).toEqual([]);
+    });
+
+    it("取所有表情 tagIds 的并集（保持首次出现顺序）", () => {
+      expect(
+        unionTagIds([{ tagIds: [1, 2] }, { tagIds: [2, 3] }, { tagIds: [] }]),
+      ).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe("removeDeletedTag", () => {
+    it("从选中集与基准集同时移除", () => {
+      const result = removeDeletedTag(new Set([1, 2]), [1, 2, 3], 2);
+      expect([...result.selected]).toEqual([1]);
+      expect(result.initialTagIds).toEqual([1, 3]);
+    });
+
+    it("不在选中集里也安全（仅基准集变化）", () => {
+      const result = removeDeletedTag(new Set([5]), [1, 2], 1);
+      expect([...result.selected]).toEqual([5]);
+      expect(result.initialTagIds).toEqual([2]);
+    });
+
+    it("删除后 removedTagIds 不再包含该 id（基准已剔除）", () => {
+      const { selected, initialTagIds } = removeDeletedTag(new Set([1]), [1, 2], 2);
+      const initial = new Set(initialTagIds);
+      const removed = [...initial].filter((id) => !selected.has(id));
+      expect(removed).toEqual([]);
+    });
+  });
+
+  describe("canSubmitRename", () => {
+    it("拒绝空名与未改名", () => {
+      expect(canSubmitRename("猫猫", "  ")).toBe(false);
+      expect(canSubmitRename("猫猫", " 猫猫 ")).toBe(false);
+    });
+
+    it("改名（含仅大小写变化）可提交", () => {
+      expect(canSubmitRename("cat", "dog")).toBe(true);
+      expect(canSubmitRename("cat", "CAT")).toBe(true);
+    });
+
+    it("拒绝与暂存新名 NOCASE 重复", () => {
+      expect(canSubmitRename("cat", "dog", ["DOG"])).toBe(false);
+      expect(canSubmitRename("cat", "dog", ["bird"])).toBe(true);
     });
   });
 

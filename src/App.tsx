@@ -30,11 +30,9 @@ import { buildBatchFilenames, normalizeExtension } from "./features/library/batc
 import { useDebouncedValue } from "./features/library/useDebouncedValue";
 import { useMultiSelection, type SelectionMode } from "./features/library/useMultiSelection";
 import {
-  addTagsToEmojis,
   checkForUpdate,
   copyImageToClipboard,
   createGroup,
-  createTag,
   deleteGroup,
   getErrorMessage,
   getRecentImages,
@@ -44,7 +42,6 @@ import {
   listTags,
   OCR_TAGS_UPDATED_EVENT,
   openAssetsDirectory,
-  removeTagsFromEmojis,
   renameEmojis,
   renameGroup,
   searchEmojis,
@@ -101,40 +98,48 @@ const PAGE_SIZE = 200;
  * 按视图构造第 offset 页的请求（Phase 17）。recent 视图数据源在客户端（不请求）。
  * trash 走 listDeletedEmojis（kind: "deleted"），其余走 searchEmojis —— 排序
  * 已下推到 SQL（sort 字面量与后端 ORDER BY 分支一一对应）。
+ * limit 由调用方给（loadMore/翻页用 PAGE_SIZE；同 key 重拉用已加载量防内容塌缩）。
  */
 function viewPageRequest(
   view: LibraryView,
   query: string,
   sort: SortOption,
   offset: number,
-): { kind: "search"; options: SearchOptions } | { kind: "deleted"; offset: number } | null {
-  if (view === "trash") return { kind: "deleted", offset };
+  limit: number,
+): { kind: "search"; options: SearchOptions } | { kind: "deleted"; offset: number; limit: number } | null {
+  if (view === "trash") return { kind: "deleted", offset, limit };
   if (view === "recent") return null;
   if (view === "favorites") {
-    return { kind: "search", options: { view: "favorites", query, sort, limit: PAGE_SIZE, offset } };
+    return { kind: "search", options: { view: "favorites", query, sort, limit, offset } };
   }
   if (view === "ungrouped") {
-    return { kind: "search", options: { view: "ungrouped", query, sort, limit: PAGE_SIZE, offset } };
+    return { kind: "search", options: { view: "ungrouped", query, sort, limit, offset } };
   }
   if (view.startsWith("group:")) {
     const groupId = parseInt(view.slice(6), 10);
     if (!Number.isFinite(groupId)) return null;
-    return { kind: "search", options: { view: "group", groupId, query, sort, limit: PAGE_SIZE, offset } };
+    return { kind: "search", options: { view: "group", groupId, query, sort, limit, offset } };
   }
-  return { kind: "search", options: { view: "all", query, sort, limit: PAGE_SIZE, offset } };
+  return { kind: "search", options: { view: "all", query, sort, limit, offset } };
 }
 
-/** 执行一次视图页请求（视图 effect 与 loadMore 共用）。recent → null。 */
+/**
+ * 执行一次视图页请求（视图 effect 与 loadMore 共用）。recent → null。
+ * limit 缺省 PAGE_SIZE；视图 effect 的同 key 重拉传 max(PAGE_SIZE, 已加载量)
+ * ——重拉只拉第 1 页会把已加载的第 2/3 页砍掉，网格高度塌缩 → 浏览器钳制
+ * scrollTop → 视口跳走（真机复现的「保存标签后乱抖」根因之一）。
+ */
 async function fetchViewPage(
   view: LibraryView,
   query: string,
   sort: SortOption,
   offset: number,
+  limit: number = PAGE_SIZE,
 ): Promise<SearchResult | null> {
-  const request = viewPageRequest(view, query, sort, offset);
+  const request = viewPageRequest(view, query, sort, offset, limit);
   if (!request) return null;
   return request.kind === "deleted"
-    ? listDeletedEmojis({ limit: PAGE_SIZE, offset: request.offset })
+    ? listDeletedEmojis({ limit: request.limit, offset: request.offset })
     : searchEmojis(request.options);
 }
 
@@ -256,6 +261,11 @@ export function App() {
   const [ocrBackfill, setOcrBackfill] = useState<OcrTagsUpdatedPayload | null>(null);
   // loadMore 防重入（哨兵可能连续触发）。
   const loadingMoreRef = useRef(false);
+  // currentEmojis 的 latest-ref：视图 effect 重拉时读「当前已加载量」决定拉取
+  // limit（同 key 重拉覆盖已加载页，防内容塌缩），但不进 effect deps（否则
+  // 每次追加都会重拉第 1 页）。与 currentViewRef 同模式。
+  const currentEmojisRef = useRef<IndexedEmoji[]>(currentEmojis);
+  currentEmojisRef.current = currentEmojis;
   // 下一页 offset 游标：按「服务端返回的行数」前进（而非本地 currentEmojis 长度）。
   // 本地删除/去重会让 currentEmojis 与服务端结果集错位，若用其长度做 offset，
   // 全被去重的页会永远请求同一 offset 造成死循环。null = 第 1 页未落地
@@ -480,52 +490,43 @@ export function App() {
     [moveToGroupState, addEmojisToGroupInline, dispatchToast, notifyError],
   );
 
-  const handleTagPickerConfirm = useCallback(
+  // 标签弹窗即时生效模式的刷新通道：每次写操作（加/移除/重命名/全局删除）
+  // 成功后调用。加/移除做 currentEmojis + recentItems 双乐观补丁（recent 视图
+  // 数据源是 recentItems，漏一边都会被旧值覆盖——保存后网格不实时刷新的
+  // 根因）；全局删除影响全部表情，走 viewReloadTick 重拉（同 key 重拉按
+  // 已加载量取数，滚动不跳）。
+  const handleTagsMutated = useCallback(
     async (payload: {
       addedTagIds: number[];
       removedTagIds: number[];
-      newTagNames: string[];
+      fullReload?: boolean;
     }) => {
-      if (!tagPickerState) return;
-      setTagPickerBusy(true);
-      try {
-        const createdNewIds: number[] = [];
-        for (const name of payload.newTagNames) {
-          const created = await createTag(name);
-          createdNewIds.push(created.id);
-        }
-        const addIds = [...payload.addedTagIds, ...createdNewIds];
-        if (addIds.length > 0) {
-          await addTagsToEmojis(addIds, tagPickerState.emojiIds);
-        }
-        if (payload.removedTagIds.length > 0) {
-          await removeTagsFromEmojis(payload.removedTagIds, tagPickerState.emojiIds);
-        }
-        const updateTags = (items: IndexedEmoji[]) =>
-          items.map((it) => {
-            if (!tagPickerState.emojiIds.includes(it.id)) return it;
-            const next = new Set(it.tagIds);
-            for (const id of addIds) next.add(id);
-            for (const id of payload.removedTagIds) next.delete(id);
-            return { ...it, tagIds: Array.from(next) };
-          });
+      const updateTags = (items: IndexedEmoji[]) =>
+        items.map((it) => {
+          if (!tagPickerState?.emojiIds.includes(it.id)) return it;
+          const next = new Set(it.tagIds);
+          for (const id of payload.addedTagIds) next.add(id);
+          for (const id of payload.removedTagIds) next.delete(id);
+          return { ...it, tagIds: Array.from(next) };
+        });
+      if (payload.addedTagIds.length > 0 || payload.removedTagIds.length > 0) {
         setCurrentEmojis(updateTags);
-        await refreshSidebar();
-        setTagPickerState(null);
-        dispatchToast(
-          <Toast>
-            <ToastTitle>标签已更新</ToastTitle>
-          </Toast>,
-          { intent: "success" },
+        setRecentItems((current) =>
+          current.map((record) => {
+            if (!tagPickerState?.emojiIds.includes(record.item.id)) return record;
+            const next = new Set(record.tagIds);
+            for (const id of payload.addedTagIds) next.add(id);
+            for (const id of payload.removedTagIds) next.delete(id);
+            return { ...record, tagIds: Array.from(next) };
+          }),
         );
-      } catch (e) {
-        notifyError(`更新标签失败：${getErrorMessage(e)}`);
-        throw e;
-      } finally {
-        setTagPickerBusy(false);
+      }
+      await refreshSidebar();
+      if (payload.fullReload) {
+        setViewReloadTick((tick) => tick + 1);
       }
     },
-    [tagPickerState, dispatchToast, refreshSidebar, notifyError],
+    [tagPickerState, refreshSidebar],
   );
 
   useEffect(() => {
@@ -627,10 +628,11 @@ export function App() {
   }, []);
 
   // Phase 32：OCR 识别批次进度（Rust 后台每 10 张 + 批末推送）。import 批次
-  // → 新标签落地，刷新侧栏标签并重拉当前视图第 1 页（同 key 重拉不重播入场
-  // 动画）；backfill 批次 → 更新设置弹窗的回填进度，完成时 toast；
-  // manual 批次（Phase 33 标签弹窗触发）走末尾的刷新分支即可——弹窗自己
-  // 订阅同一事件管进度与选中集，这里只负责网格/侧栏数据刷新。
+  // → 批末新标签落地时刷新侧栏标签并重拉当前视图（**只在 finished 时**——
+  // 每 10 张的进度 tick 也刷新会让网格持续重拉、滚动抖动，关弹窗后仍在跳）；
+  // backfill 批次 → 更新设置弹窗的回填进度，完成时 toast；manual 批次
+  // （Phase 33 标签弹窗触发）同 import：只在批末刷一次——弹窗自己订阅同一
+  // 事件管进度与选中集，这里只负责网格/侧栏数据刷新。
   // refreshSidebar / notifyError / dispatchToast 是稳定引用，随 deps 重注册
   // 监听与既有共享监听 effect 同模式。
   useEffect(() => {
@@ -665,9 +667,12 @@ export function App() {
         }
         return;
       }
-      // import 批次：新导入表情的 OCR 标签落地。
-      void refreshSidebar();
-      setViewReloadTick((tick) => tick + 1);
+      // import / manual 批次：进度 tick 不刷新（中途新标签尚未全落地，刷新
+      // 无意义且引发网格重拉抖动）；批末无条件 emit 的 finished 事件才刷。
+      if (payload.finished) {
+        void refreshSidebar();
+        setViewReloadTick((tick) => tick + 1);
+      }
     }).then((stopListening) => {
       if (disposed) stopListening();
       else unlisten = stopListening;
@@ -1069,7 +1074,12 @@ export function App() {
           items = filterItemsByQuery(items, trimmedQuery, groups, tags);
           total = items.length;
         } else {
-          const result = await fetchViewPage(currentView, trimmedQuery, sortOption, 0);
+          // 同 key 重拉（viewReloadTick / groups / tags 变化触发）按已加载量
+          // 拉取：只拉 PAGE_SIZE 会把第 2/3 页砍掉，滚动位置被钳制跳走
+          // （Bug 1 根因之二；真视图切换时 currentEmojis 仍很短/为空，limit
+          // 回到 PAGE_SIZE，行为不变）。
+          const reloadLimit = Math.max(PAGE_SIZE, currentEmojisRef.current.length);
+          const result = await fetchViewPage(currentView, trimmedQuery, sortOption, 0, reloadLimit);
           if (!result) throw new Error("当前视图不可用");
           items = result.items;
           total = result.total;
@@ -1927,12 +1937,11 @@ export function App() {
         emojiCount={tagPickerState?.emojiIds.length ?? 0}
         emojiIds={tagPickerState?.emojiIds ?? []}
         existingTags={tags}
-        initiallySelectedTagIds={tagPickerState?.initiallySelectedTagIds ?? []}
         busy={tagPickerBusy}
         onOpenChange={(open) => {
           if (!open) setTagPickerState(null);
         }}
-        onConfirm={handleTagPickerConfirm}
+        onTagsMutated={handleTagsMutated}
       />
 
       <RenameEmojiDialog
