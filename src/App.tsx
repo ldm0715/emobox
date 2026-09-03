@@ -261,10 +261,22 @@ export function App() {
   // Phase 22：分组视图内导入后留在原视图，需要手动触发视图 effect 重拉第 1 页
   // （currentView 等 deps 未变）。landingKey 不变 → 不重播入场动画。
   const [viewReloadTick, setViewReloadTick] = useState(0);
-  // 强制全量替换标志：导入完成 / 手动刷新时置 true，视图 effect 消费一次——
-  // 绕过同 key merge（merge 会把新项追加到尾部，不按当前排序落位）并重播入场
-  // 动画、滚动回顶。latest-ref 模式，不进 effect deps。
-  const forceFullReloadRef = useRef(false);
+  // 强制全量替换标志：导入完成置 "import"、手动刷新置 "refresh"，视图 effect
+  // 消费一次——绕过同 key merge（merge 会把新项追加到尾部，不按当前排序落位）。
+  // 动画按 kind 分流：import 落地照旧重播入场动画；refresh 落地不重挂载网格，
+  // 走容器 fade-through（见 EmojiLibraryView 的 refreshing / refreshLandedTick）。
+  // latest-ref 模式，不进 effect deps。
+  const forceReloadKindRef = useRef<"import" | "refresh" | null>(null);
+  // 手动刷新进行中：刷新按钮换 Spinner + 网格容器降不透明度（fade-through 的
+  // 变暗半程）。落地 / 拉取失败时由视图 effect 复位（refreshCycleRef 兜底）。
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  // 手动刷新周期在途的 latest-ref 标记：recentItems / groups / tags 都在视图
+  // effect deps 里，一次手动刷新会连带多次重拉，forceKind 可能在被作废的迟到
+  // run 里消费丢失——落地时据此兜底复位刷新态。不进 effect deps。
+  const refreshCycleRef = useRef(false);
+  // 手动刷新落地信号：原地刷新不递增 viewGeneration（不经 resetKey 回顶），
+  // 由独立信号驱动 EmojiLibraryView 回顶。
+  const [refreshLandedTick, setRefreshLandedTick] = useState(0);
   // Phase 32：OCR 存量回填进度（ocr-tags-updated 事件 phase=backfill 时更新；
   // null = 本会话没触发过回填）。传给设置弹窗展示「正在识别 N/M」。
   const [ocrBackfill, setOcrBackfill] = useState<OcrTagsUpdatedPayload | null>(null);
@@ -796,7 +808,7 @@ export function App() {
 
   // Phase 22：带 targetGroupId（分组视图内发起的导入）且用户仍停留在该分组
   // 视图时，留在分组；其余情况切回「全部」让用户看到刚导入的内容。无论停在哪，
-  // 导入后的重拉都强制全量替换（forceFullReloadRef）：新图必须按当前排序落在
+  // 导入后的重拉都强制全量替换（forceReloadKindRef = "import"）：新图必须按当前排序落在
   // 正确位置——同 key merge 只会把它追加到尾部，按导入时间/最近优先排序时
   // 用户看不到新图，必须切排序才能看到（2026-09 修复）。
   const prepareAfterImport = useCallback(async (targetGroupId: number | null) => {
@@ -807,7 +819,7 @@ export function App() {
     }
     setSearchQuery("");
     clearSelectionRef.current();
-    forceFullReloadRef.current = true;
+    forceReloadKindRef.current = "import";
     setViewReloadTick((tick) => tick + 1);
     await refreshLibrary();
     await refreshSidebar();
@@ -815,8 +827,12 @@ export function App() {
 
   // 工具栏「刷新图库」：当前视图全量重拉（含 recent 视图重取 recentItems）+
   // 计数 / 侧栏刷新。不切视图、不清搜索词——用户要的是原地刷新。
+  // 动画是 fade-through：置 isRefreshing 让网格容器变暗（拉取期间旧内容保留），
+  // 落地后由视图 effect 复位回亮；不递增 viewGeneration（不重挂载、不闪空白）。
   const handleManualRefresh = useCallback(() => {
-    forceFullReloadRef.current = true;
+    refreshCycleRef.current = true;
+    setIsRefreshing(true);
+    forceReloadKindRef.current = "refresh";
     setViewReloadTick((tick) => tick + 1);
     // recent 视图数据源只在启动与复制事件更新，手动刷新需重取。
     void getRecentImages().then(setRecentItems).catch(notifyError);
@@ -1063,9 +1079,11 @@ export function App() {
     let disposed = false;
     viewSeqRef.current += 1;
     const seq = viewSeqRef.current;
-    // 导入完成 / 手动刷新置位：本次落地绕过同 key merge，全量替换 + 重播入场动画。
-    const forceFull = forceFullReloadRef.current;
-    forceFullReloadRef.current = false;
+    // 导入完成 / 手动刷新置位：本次落地绕过同 key merge，全量替换（新项按当前
+    // 排序落位）。kind 同时决定落地动画（import 重播入场动画 / refresh 原地换新）。
+    const forceKind = forceReloadKindRef.current;
+    const forceFull = forceKind !== null;
+    forceReloadKindRef.current = null;
     // 作废追加游标：第 1 页落地前 loadMore 一律跳过（见 nextOffsetRef 注释）。
     nextOffsetRef.current = null;
     const trimmedQuery = debouncedQuery.trim();
@@ -1125,16 +1143,36 @@ export function App() {
         setHasMore(items.length < total);
         nextOffsetRef.current = items.length;
         mergeFavoriteFlags(items);
-        // 真正的视图/搜索词/排序切换（而非同 key 重拉）→ 递增落地代数，
-        // 触发 EmojiLibraryView 的容器级入场动画（key 重挂载）。导入完成 /
-        // 手动刷新（forceFull）同样递增：新数据按排序落位 + 滚动回顶。
-        if (forceFull || lastLandedKeyRef.current !== landingKey) {
+        const keyChanged = lastLandedKeyRef.current !== landingKey;
+        // 手动刷新周期终结：recentItems/groups/tags 连带会让 effect 重拉多次，
+        // 无论哪次 run 落地（含同 key merge 的后继 run）都复位刷新态并回顶——
+        // forceKind 若已在被作废的迟到 run 里消费丢失，靠 refreshCycleRef 兜底，
+        // 防刷新按钮永久转圈。
+        const refreshLanding = refreshCycleRef.current;
+        if (refreshLanding) {
+          refreshCycleRef.current = false;
+          setIsRefreshing(false);
+          setRefreshLandedTick((tick) => tick + 1);
+        }
+        // 原地刷新（landingKey 未变的 refresh 落地）不递增 viewGeneration：不重挂
+        // 载网格、visibleCount 不缩水、img DOM 保留，fade-through（变暗→原位换新→
+        // 回亮）就是过渡本身；递增会让整树重挂载闪空白（「闪一下」根因）。
+        // 导入落地 / 真视图切换照旧重播入场动画。
+        const inPlaceRefresh = !keyChanged && (forceKind === "refresh" || refreshLanding);
+        if (forceFull || keyChanged) {
           lastLandedKeyRef.current = landingKey;
-          setViewGeneration((g) => g + 1);
+          if (!inPlaceRefresh) {
+            setViewGeneration((g) => g + 1);
+          }
         }
       } catch (e) {
         if (!disposed && seq === viewSeqRef.current) {
           notifyError(`读取视图失败：${getErrorMessage(e)}`);
+          // 手动刷新拉取失败：复位刷新态（网格回亮），不发作回顶（内容未变）。
+          if (refreshCycleRef.current) {
+            refreshCycleRef.current = false;
+            setIsRefreshing(false);
+          }
         }
       }
     })();
@@ -1787,6 +1825,8 @@ export function App() {
           onToggleSelectAll={handleToggleSelectAll}
           dragActive={dragActive}
           importing={isImporting}
+          refreshing={isRefreshing}
+          refreshLandedTick={refreshLandedTick}
           tagsByPath={tagsByPath}
           onClearSearch={() => setSearchQuery("")}
           onImportImages={() => void handleImportImages()}

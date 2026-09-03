@@ -1,5 +1,6 @@
 import {
   Button,
+  mergeClasses,
   ProgressBar,
   makeStyles,
   motionTokens,
@@ -47,6 +48,11 @@ interface EmojiLibraryViewProps {
   /** 正在向窗口拖文件：只在图片区上方显示放置提示，不盖 header / 状态条。 */
   dragActive: boolean;
   importing: boolean;
+  /** 手动刷新拉取进行中：网格容器降不透明度（fade-through 变暗半程），
+   * 落地后回亮——原地换新不重挂载，避免整树闪空白。 */
+  refreshing: boolean;
+  /** 手动刷新落地信号（App 侧递增）：原地刷新不经 resetKey，由它驱动回顶。 */
+  refreshLandedTick: number;
   onClearSearch: () => void;
   onImportImages: () => void;
   onImportFolder: () => void;
@@ -108,6 +114,17 @@ const useStyles = makeStyles({
     minHeight: 0,
     overflowY: "auto",
     padding: tokens.spacingHorizontalXL,
+    // 手动刷新的 fade-through（变暗 → 原位换新 → 回亮）：曲线/时长与 AppShell
+    // 侧栏折叠过渡一致；reduced-motion 直接跳变。
+    transitionProperty: "opacity",
+    transitionDuration: tokens.durationNormal,
+    transitionTimingFunction: tokens.curveEasyEase,
+    "@media (prefers-reduced-motion: reduce)": {
+      transitionProperty: "none",
+    },
+  },
+  contentRefreshing: {
+    opacity: 0.6,
   },
   // 拖入放置提示：只铺在图片区（content）上方，不盖 header / 状态条。
   // Fluent 做法：品牌浅底 + 1px 实线品牌描边 + 大圆角，不用粗虚线框。
@@ -200,6 +217,8 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
     onToggleSelectAll,
     dragActive,
     importing,
+    refreshing,
+    refreshLandedTick,
     onClearSearch,
     onImportImages,
     onImportFolder,
@@ -242,6 +261,14 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
   useEffect(() => {
     contentRef.current?.scrollTo(0, 0);
   }, [resetKey]);
+
+  // 手动刷新落地：原地刷新不递增 viewGeneration（不经 resetKey 回顶），
+  // 由独立的落地信号驱动同一处回顶。
+  useEffect(() => {
+    if (refreshLandedTick > 0) {
+      contentRef.current?.scrollTo(0, 0);
+    }
+  }, [refreshLandedTick]);
 
   function renderEmptyContent() {
     if (query) {
@@ -331,6 +358,7 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
         onDensityChange={onDensityChange}
         onRefresh={onRefresh}
         refreshDisabled={importing}
+        refreshing={refreshing}
       />
 
       <div className={styles.status}>
@@ -343,7 +371,10 @@ export function EmojiLibraryView(props: EmojiLibraryViewProps) {
       </div>
 
       <div className={styles.contentWrap}>
-        <div className={styles.content} ref={contentRef}>
+        <div
+          className={mergeClasses(styles.content, refreshing && styles.contentRefreshing)}
+          ref={contentRef}
+        >
           {/* 视图/搜索/排序切换的入场淡入：只做在容器层（key 重挂载触发），绝不做
               per-item——EmojiGridItem 是 memo 数百实例，逐项动画会击穿性能红线。
               内层垫普通 div：presence 组件克隆唯一 child 并直接施加动效，child 必须

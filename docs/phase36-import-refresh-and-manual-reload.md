@@ -7,9 +7,12 @@
 > ②顺带补了图库级**手动刷新按钮**（LibraryHeader「多选」左侧）——右键刷新是
 > WebView 整页重载（等于重启前端），不是图库刷新。
 >
-> 修复 = 新增 `forceFullReloadRef`（一次性标志）：导入完成 / 手动刷新置位，视图
-> effect 消费时**绕过 merge 走全量替换**并重播入场动画、滚动回顶。标签写操作 /
+> 修复 = 新增强制全量替换标志（现为 `forceReloadKindRef`，取值
+> `"import" | "refresh" | null`；2026-09 前身是 bool `forceFullReloadRef`）：导入
+> 完成 / 手动刷新置位，视图 effect 消费时**绕过 merge 走全量替换**。标签写操作 /
 > OCR 批末的同 key merge 语义**保持不变**（那是「网格不跳」的正确行为）。
+> 落地动画 2026-09 起按 kind 分流：import 重播入场动画；refresh 改走容器
+> fade-through 不重挂载（见 §4.1）。
 
 ---
 
@@ -95,22 +98,61 @@ merge 是 2026-09 为「标签弹窗写操作后网格不跳」设计的（保�
   3. `refreshLibrary()`（侧栏/头部计数）+ `refreshSidebar()`。
   不切视图、不清搜索词——用户要的是原地刷新。
 
+## 4.1 刷新动画：fade-through 替代重挂载（2026-09 追加）
+
+Phase 36 初版让手动刷新与导入共用同一条落地路径（force → `viewGeneration++` →
+`<FadeSnappy key={resetKey}>` 整树重挂载）。导入场景这是期望的「新内容到达」提示；
+但刷新场景内容通常没变，重挂载带来三重突兀：
+
+1. **「闪一下」主因**：旧网格瞬间卸载（无退场/交叉淡入）→ 全屏空白 → 新网格
+   opacity 0→1 淡入 150ms；
+2. `EmojiGrid` 重挂载使 `visibleCount` 归零为 72——已加载多页时刷新后网格缩水，
+   要重新滚动才补齐；
+3. `<img>` DOM 全部重建，缩略图重新请求/解码可能二次闪白。
+
+改为 Fluent fade-through（内容变暗 → 原地换新 → 回亮，全程零空白帧）：
+
+- `forceFullReloadRef: useRef(false)` 升级为 `forceReloadKindRef:
+  useRef<"import" | "refresh" | null>(null)`——merge 绕过语义不变（`forceFull =
+  kind !== null`），kind 只决定落地动画。
+- `handleManualRefresh` 置 kind `"refresh"` + `isRefreshing(true)` +
+  `refreshCycleRef`（latest-ref 周期标记）；`prepareAfterImport` 置 `"import"`
+  （行为与初版完全一致）。
+- `EmojiLibraryView` 新 props：`refreshing`（`content` div 经 `mergeClasses` 挂
+  `contentRefreshing`（opacity 0.6），transition = durationNormal + curveEasyEase，
+  `prefers-reduced-motion` 跳变——与 AppShell 侧栏折叠过渡同款写法）与
+  `refreshLandedTick`（原地刷新不经 resetKey，由独立信号驱动 `contentRef` 回顶）。
+- 视图 effect 落地分流：`inPlaceRefresh = !keyChanged && (forceKind === "refresh"
+  || refreshLanding)` 时不递增 `viewGeneration`（不重挂载、visibleCount 保留、
+  img DOM 保留）；落地同时复位刷新态 + bump `refreshLandedTick`；catch 分支同样
+  复位（拉取失败回亮，不回顶——内容未变）。
+- **`refreshCycleRef` 兜底（承重）**：`recentItems` / `groups` / `tags` 都在视图
+  effect deps，一次手动刷新会连带多次重拉；forceKind 可能在被 `viewSeqRef` 作废
+  的迟到 run 里消费丢失。只绑 kind 判定「哪次落地清刷新态」会让 `isRefreshing`
+  永远为 true（按钮永久转圈）——落地时只要 `refreshCycleRef` 为 true 就复位 +
+  bump 回顶信号，不依赖 kind 存活。
+- 刷新按钮反馈：拉取中 `icon` 换 `<Spinner size="tiny" />` 并禁用（SettingsMenu
+  既有范式）。
+
 ## 5. 行为对照
 
-| 触发源 | 走 merge？ | 入场动画 / 回顶 | 说明 |
+| 触发源 | 走 merge？ | 落地动画 | 说明 |
 |---|---|---|---|
 | 标签写操作 / OCR 批末 / `viewReloadTick`（一般） | 是 | 否 | 「网格不跳」语义，保持不变 |
-| 导入完成（`prepareAfterImport`） | **否**（force） | 是 | 新图按排序落位 |
-| 手动刷新（`handleManualRefresh`） | **否**（force） | 是 | 当前视图按排序重排 |
-| 真视图 / 搜索 / 排序切换 | 否 | 是 | 既有行为不变 |
+| 导入完成（`prepareAfterImport`） | **否**（force `"import"`） | 重播入场动画 + 回顶 | 新图按排序落位 |
+| 手动刷新（`handleManualRefresh`） | **否**（force `"refresh"`） | fade-through（变暗→原位换新→回亮）+ 回顶 | 当前视图按排序重排，不重挂载 |
+| 真视图 / 搜索 / 排序切换 | 否 | 重播入场动画 | 既有行为不变 |
 
 ## 6. 验收清单（手动）
 
-- 「全部」+ 按添加时间排序 → 导入图片 → 新图**立即出现在第一位**，无需切排序。
+- 「全部」+ 按添加时间排序 → 导入图片 → 新图**立即出现在第一位**，无需切排序，
+  且带入场动画重播（fade-through 是刷新专属，导入不适用）。
 - 分组视图内导入（停留该分组）→ 新图出现在组内正确排序位置。
 - LibraryHeader「刷新图库」→ 当前视图按当前排序重排、计数刷新；recent 视图刷新
   后反映最新复制记录。
-- 导入进行中刷新按钮禁用。
+- **刷新观感（2026-09）**：点击后按钮图标转 Spinner、网格平滑变暗回亮，**全程无
+  空白帧**；深滚动（已加载 > 72 张）后刷新，网格不缩水、缩略图不重载闪白。
+- 导入进行中刷新按钮禁用；刷新拉取中按钮同样禁用。
 - 标签弹窗写操作后网格仍不跳（merge 路径未回归）。
 
 自动化：`npm run build`（tsc + vite）+ `npx vitest run` 全绿（本次无新增测试文件；

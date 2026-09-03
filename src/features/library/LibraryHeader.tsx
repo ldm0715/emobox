@@ -2,6 +2,7 @@ import {
   Button,
   Dropdown,
   Option,
+  Spinner,
   ToggleButton,
   Tooltip,
   makeStyles,
@@ -34,6 +35,8 @@ interface LibraryHeaderProps {
   /** 刷新图库：当前视图全量重拉。导入进行中禁用。 */
   onRefresh: () => void;
   refreshDisabled?: boolean;
+  /** 刷新拉取进行中：图标换 Spinner 并禁用按钮（SettingsMenu 同款范式）。 */
+  refreshing?: boolean;
 }
 
 const sortLabels: Record<SortOption, string> = {
@@ -103,6 +106,7 @@ export function LibraryHeader({
   onDensityChange,
   onRefresh,
   refreshDisabled,
+  refreshing,
 }: LibraryHeaderProps) {
   const styles = useStyles();
 
@@ -119,8 +123,8 @@ export function LibraryHeader({
             size="small"
             appearance="subtle"
             aria-label="刷新图库"
-            icon={<ArrowClockwise20Regular />}
-            disabled={refreshDisabled}
+            icon={refreshing ? <Spinner size="tiny" /> : <ArrowClockwise20Regular />}
+            disabled={refreshDisabled || refreshing}
             onClick={onRefresh}
           />
         </Tooltip>
