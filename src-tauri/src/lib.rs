@@ -149,6 +149,8 @@ pub fn run() {
             commands::set_ocr_config,
             commands::get_ocr_capabilities,
             commands::backfill_ocr_tags,
+            commands::ocr_recognize_emojis,
+            commands::get_emoji_tags,
             commands::list_groups,
             commands::create_group,
             commands::rename_group,

@@ -154,12 +154,26 @@ export interface OcrCapabilities {
   windowsLanguages: string[];
 }
 
-/** `ocr-tags-updated` 事件载荷：一批 OCR 识别的进度（每 10 张 + 批末推送）。 */
+/** `ocr-tags-updated` 事件载荷：一批 OCR 识别的进度（每 10 张 + 批末推送，计数均累计）。 */
 export interface OcrTagsUpdatedPayload {
-  phase: "import" | "backfill";
+  /** manual = 标签弹窗「OCR 识别」按钮触发的手动批次（Phase 33）。 */
+  phase: "import" | "backfill" | "manual";
+  /** 已完成识别尝试的行数（= tagged + empty + failed）。 */
   processed: number;
   total: number;
   finished: boolean;
+  /** 识别成功且提取到至少一个标签的行数。 */
+  tagged: number;
+  /** 识别成功但未提取出任何标签的行数（无文字或文字被标签规则过滤）。 */
+  empty: number;
+  /** 识别失败的行数（文件缺失/解码失败/本地引擎错误；云端错误中止整批不计入）。 */
+  failed: number;
+}
+
+/** 指定表情当前的标签 id 集合（`get_emoji_tags` 返回；标签弹窗同步选中集用）。 */
+export interface EmojiTags {
+  emojiId: number;
+  tagIds: number[];
 }
 
 // 第六阶段新增

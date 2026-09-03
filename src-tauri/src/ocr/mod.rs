@@ -8,7 +8,8 @@
 //! 并发模型：`OCR_LOCK` 串行化所有后台批处理（并发导入 / 回填 / 重试
 //! 排队执行），批内云端引擎按固定间隔节流。幂等守卫是 `ocr_text IS NULL`：
 //! 写过（含"识别过但无文字"的空串）就不再重跑，应用退出丢掉的批次由
-//! 设置页的存量回填补上。
+//! 设置页的存量回填补上。`force = true` 的手动识别（Phase 33，标签弹窗
+//! 触发）解除该守卫：重跑引擎覆盖 `ocr_text`，但标签只增不删。
 
 pub mod ai_studio_ocr;
 pub mod tag_text;
@@ -128,15 +129,25 @@ pub enum OcrPhase {
     Import,
     /// 设置页「为现有表情补跑识别」触发的存量回填。
     Backfill,
+    /// 标签弹窗「OCR 识别」按钮触发的手动识别（force 重跑指定 id）。
+    Manual,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OcrTagsUpdatedPayload {
     pub phase: OcrPhase,
+    /// 已完成识别尝试的行数（= tagged + empty + failed，累计）。
     pub processed: u32,
     pub total: u32,
     pub finished: bool,
+    /// 识别成功且提取到至少一个标签的行数（累计）。
+    pub tagged: u32,
+    /// 识别成功但未提取出任何标签的行数（图片无文字，或文字全被标签规则过滤）。
+    pub empty: u32,
+    /// 识别失败的行数（文件缺失 / 解码失败 / 本地引擎错误；云端错误直接
+    /// 中止整批，出错的行不计入——剩余行靠 `processed < total` 体现）。
+    pub failed: u32,
 }
 
 // ---------- 串行化 ----------
@@ -205,15 +216,29 @@ pub fn capabilities() -> OcrCapabilities {
 
 // ---------- 批处理编排 ----------
 
+/// 批次累计计数（事件 payload 的数值来源）。processed = tagged + empty + failed。
+#[derive(Debug, Clone, Copy, Default)]
+struct BatchCounters {
+    processed: usize,
+    tagged: usize,
+    empty: usize,
+    failed: usize,
+}
+
 /// 处理一批 emoji id。阻塞调用——调用方必须放在 `spawn_blocking` 里。
 /// 批处理全局串行（`OCR_LOCK`）；云端引擎出错时中止本批（剩余行保持
 /// NULL，下次回填重试），本地引擎单张失败仅跳过。
+///
+/// `force = false`（导入 / 回填）维持 `ocr_text IS NULL` 幂等守卫；
+/// `force = true`（标签弹窗手动识别）对已有识别结果的行重跑引擎并覆盖
+/// `ocr_text`——标签只增不删，文件级 / 引擎级失败一律跳过以保留旧文本。
 pub fn process_emoji_ids(
     app: &AppHandle,
     database_path: &Path,
     emoji_ids: Vec<i64>,
     phase: OcrPhase,
     config: OcrConfig,
+    force: bool,
 ) {
     if emoji_ids.is_empty() || config.effective_engine() == OcrEngineKind::Off {
         return;
@@ -230,17 +255,18 @@ pub fn process_emoji_ids(
 
     let total = emoji_ids.len();
     let is_cloud_engine = config.effective_engine() == OcrEngineKind::AiStudio;
-    let mut processed = 0usize;
-    let mut tagged = 0usize;
+    let mut counters = BatchCounters::default();
     for (index, emoji_id) in emoji_ids.iter().enumerate() {
-        let Some(managed_path) = load_pending_path(&connection, *emoji_id) else {
+        let Some(managed_path) = load_pending_path(&connection, *emoji_id, force) else {
             continue;
         };
-        match recognize_row(&mut connection, &config, *emoji_id, &managed_path) {
-            Ok(has_tags) => {
-                processed += 1;
-                if has_tags {
-                    tagged += 1;
+        match recognize_row(&mut connection, &config, *emoji_id, &managed_path, force) {
+            Ok(outcome) => {
+                counters.processed += 1;
+                match outcome {
+                    RowOutcome::Tagged => counters.tagged += 1,
+                    RowOutcome::Empty => counters.empty += 1,
+                    RowOutcome::Failed => counters.failed += 1,
                 }
             }
             Err(error) => {
@@ -253,8 +279,8 @@ pub fn process_emoji_ids(
             }
         }
         if (index + 1) % PROGRESS_EVERY == 0 {
-            emit_progress(app, phase, processed, total, false);
-            if tagged > 0 {
+            emit_progress(app, phase, counters, total, false);
+            if counters.tagged > 0 {
                 quick_search::notify_library_changed(app);
             }
         }
@@ -264,40 +290,58 @@ pub fn process_emoji_ids(
     }
     // 批末事件无条件发一次（哪怕整批都被跳过/中止）：前端靠它解除回填
     // 「进行中」状态。
-    emit_progress(app, phase, processed, total, true);
-    if tagged > 0 {
+    emit_progress(app, phase, counters, total, true);
+    if counters.tagged > 0 {
         quick_search::notify_library_changed(app);
     }
 }
 
-/// 行仍待处理（未软删、ocr_text 为 NULL）才返回其受管路径。
-fn load_pending_path(connection: &Connection, emoji_id: i64) -> Option<String> {
+/// 返回该行的受管路径。`force = false` 时只有仍待识别的行（未软删、
+/// ocr_text 为 NULL）才返回路径；`force = true` 时未软删即重跑。
+fn load_pending_path(connection: &Connection, emoji_id: i64, force: bool) -> Option<String> {
+    let sql = if force {
+        "SELECT managed_path FROM emojis WHERE id = ?1 AND is_deleted = 0"
+    } else {
+        "SELECT managed_path FROM emojis
+         WHERE id = ?1 AND is_deleted = 0 AND ocr_text IS NULL"
+    };
     connection
-        .query_row(
-            "SELECT managed_path FROM emojis
-             WHERE id = ?1 AND is_deleted = 0 AND ocr_text IS NULL",
-            params![emoji_id],
-            |row| row.get::<_, String>(0),
-        )
+        .query_row(sql, params![emoji_id], |row| row.get::<_, String>(0))
         .ok()
 }
 
-/// 识别单张并落库。返回是否打上了至少一个标签。云端引擎的网络/配额错误
-/// 会上抛（调用方中止整批）；本地错误（文件缺失 / 解码失败 / Windows OCR
-/// 不可用）就地吞掉：文件级问题写 `ocr_text = ''` 防止无限重试，引擎级
-/// 问题保留 NULL 等重试。
+/// 单行识别的行级结果。Tagged / Empty / Failed 都是一次完整的识别尝试、
+/// 计入 `processed` 并进进度事件；只有云端引擎的网络/配额错误走 `Err`
+/// 上抛（调用方中止整批）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowOutcome {
+    /// 识别成功并打上至少一个标签。
+    Tagged,
+    /// 识别成功但没有提取出任何标签（图片无文字，或文字全被标签规则过滤）。
+    Empty,
+    /// 识别失败：文件缺失 / 解码失败 / 本地引擎错误。行保持原状。
+    Failed,
+}
+
+/// 识别单张并落库。云端引擎的网络/配额错误会上抛（调用方中止整批）；
+/// 本地错误（文件缺失 / 解码失败 / Windows OCR 不可用）就地吞掉：非 force
+/// 时文件级问题写 `ocr_text = ''` 防止无限重试、引擎级问题保留 NULL 等重试；
+/// force（手动重识别）一律跳过、保留旧文本。
 fn recognize_row(
     connection: &mut Connection,
     config: &OcrConfig,
     emoji_id: i64,
     managed_path: &str,
-) -> Result<bool, String> {
+    force: bool,
+) -> Result<RowOutcome, String> {
     let png_bytes = match image_to_ocr_png(managed_path) {
         Ok(bytes) => bytes,
         Err(error) => {
             log::warn!("OCR 读取图片失败 emoji_id={emoji_id} path={managed_path}：{error}");
-            mark_processed_without_text(connection, emoji_id);
-            return Ok(false);
+            if !force {
+                mark_processed_without_text(connection, emoji_id);
+            }
+            return Ok(RowOutcome::Failed);
         }
     };
 
@@ -307,22 +351,42 @@ fn recognize_row(
             OcrEngineKind::AiStudio => return Err(error),
             OcrEngineKind::Windows => {
                 log::warn!("Windows OCR 识别失败 emoji_id={emoji_id}：{error}");
-                return Ok(false);
+                return Ok(RowOutcome::Failed);
             }
             OcrEngineKind::Off => return Err("OCR 引擎已关闭".to_string()),
         },
     };
 
+    let tagged = apply_recognition_result(connection, emoji_id, &lines, force)?;
+    Ok(if tagged {
+        RowOutcome::Tagged
+    } else {
+        RowOutcome::Empty
+    })
+}
+
+/// 识别结果落库：写 `ocr_text`（force 覆盖旧值，非 force 只写仍为 NULL 的
+/// 行）并按"只增不删"追加提取的标签。返回是否新增了至少一个标签关联。
+/// UPDATE 失败仅记日志、返回无标签（不打断批次）。
+fn apply_recognition_result(
+    connection: &mut Connection,
+    emoji_id: i64,
+    lines: &[String],
+    force: bool,
+) -> Result<bool, String> {
     let text = lines.join("\n");
-    if let Err(error) = connection.execute(
-        "UPDATE emojis SET ocr_text = ?1 WHERE id = ?2 AND ocr_text IS NULL",
-        params![text, emoji_id],
-    ) {
+    let update_sql = if force {
+        // 手动重识别：覆盖旧识别文字（标签在下方按"只增不删"追加）。
+        "UPDATE emojis SET ocr_text = ?1 WHERE id = ?2"
+    } else {
+        "UPDATE emojis SET ocr_text = ?1 WHERE id = ?2 AND ocr_text IS NULL"
+    };
+    if let Err(error) = connection.execute(update_sql, params![text, emoji_id]) {
         log::warn!("OCR 文本落库失败 emoji_id={emoji_id}：{error}");
         return Ok(false);
     }
 
-    let tags = tag_text::extract_tags(&lines);
+    let tags = tag_text::extract_tags(lines);
     let mut tagged = false;
     for tag in tags {
         let result = TagRepository::find_or_create_id(connection, &tag)
@@ -367,12 +431,21 @@ fn image_to_ocr_png(managed_path: &str) -> Result<Vec<u8>, String> {
     AssetService::encode_png_bytes(&image)
 }
 
-fn emit_progress(app: &AppHandle, phase: OcrPhase, processed: usize, total: usize, finished: bool) {
+fn emit_progress(
+    app: &AppHandle,
+    phase: OcrPhase,
+    counters: BatchCounters,
+    total: usize,
+    finished: bool,
+) {
     let payload = OcrTagsUpdatedPayload {
         phase,
-        processed: processed as u32,
+        processed: counters.processed as u32,
         total: total as u32,
         finished,
+        tagged: counters.tagged as u32,
+        empty: counters.empty as u32,
+        failed: counters.failed as u32,
     };
     if let Err(error) = app.emit_to(MAIN_WINDOW_LABEL, OCR_TAGS_UPDATED_EVENT, payload) {
         log::warn!("发送 {OCR_TAGS_UPDATED_EVENT} 失败：{error}");
@@ -394,11 +467,35 @@ pub fn list_pending_emoji_ids(database_path: &Path) -> Result<Vec<i64>, String> 
     Ok(ids)
 }
 
+/// 过滤出指定 id 中存在且未软删的行（保持入参顺序）。供标签弹窗的手动
+/// 识别命令在 spawn 后台批次前先算 queued 数，避免为已删除的 id 空跑。
+pub fn filter_existing_emoji_ids(
+    database_path: &Path,
+    emoji_ids: &[i64],
+) -> Result<Vec<i64>, String> {
+    let connection = database::open_connection(database_path)?;
+    let mut existing = Vec::with_capacity(emoji_ids.len());
+    for emoji_id in emoji_ids {
+        let exists = connection
+            .query_row(
+                "SELECT 1 FROM emojis WHERE id = ?1 AND is_deleted = 0",
+                params![emoji_id],
+                |_| Ok(()),
+            )
+            .is_ok();
+        if exists {
+            existing.push(*emoji_id);
+        }
+    }
+    Ok(existing)
+}
+
 #[cfg(test)]
 mod tests {
     use super::OcrConfig;
     use super::OcrEngineKind;
     use super::OcrState;
+    use super::*;
 
     #[test]
     fn ocr_state_roundtrips_config() {
@@ -438,5 +535,192 @@ mod tests {
     fn config_defaults_to_windows_engine() {
         let config = OcrConfig::default();
         assert_eq!(config.effective_engine(), OcrEngineKind::Windows);
+    }
+
+    // ---------- 手动识别（Phase 33）----------
+
+    /// 简单的手工 tempdir 替代品（同 trash_service 测试，避免引入新依赖）。
+    struct TestDir(std::path::PathBuf);
+    impl TestDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let path = std::env::temp_dir().join(format!("emobox-ocr-{tag}-{nanos}"));
+            std::fs::create_dir_all(&path).expect("mkdir");
+            Self(path)
+        }
+        fn db_path(&self) -> std::path::PathBuf {
+            self.0.join("emobox.sqlite3")
+        }
+    }
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn fresh_db(tag: &str) -> (TestDir, rusqlite::Connection) {
+        use rusqlite::Connection;
+        let dir = TestDir::new(tag);
+        let db_path = dir.db_path();
+        let mut connection = Connection::open(&db_path).expect("open");
+        crate::database::run_migrations(&mut connection).expect("migrations");
+        (dir, connection)
+    }
+
+    fn insert_emoji(
+        connection: &mut rusqlite::Connection,
+        source_path: &str,
+        managed_path: Option<&str>,
+        ocr_text: Option<&str>,
+        deleted: bool,
+    ) -> i64 {
+        connection
+            .execute(
+                "INSERT INTO emojis (
+                    source_type, source_path, managed_path, original_filename,
+                    file_extension, file_size, width, height, sha256, indexed_at,
+                    ocr_text, is_deleted
+                ) VALUES (
+                    'managed_import', ?1, ?2, 'name', 'png', 1, 1, 1, ?3, 0, ?4, ?5
+                )",
+                rusqlite::params![
+                    source_path,
+                    managed_path,
+                    format!("sha-{source_path}"),
+                    ocr_text,
+                    deleted as i64
+                ],
+            )
+            .expect("insert emoji");
+        connection.last_insert_rowid()
+    }
+
+    fn tag_ids_of(connection: &rusqlite::Connection, emoji_id: i64) -> Vec<i64> {
+        let mut statement = connection
+            .prepare("SELECT tag_id FROM emoji_tags WHERE emoji_id = ?1 ORDER BY tag_id")
+            .expect("prepare");
+        statement
+            .query_map(rusqlite::params![emoji_id], |row| row.get::<_, i64>(0))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect")
+    }
+
+    #[test]
+    fn filter_existing_emoji_ids_skips_deleted_and_missing() {
+        let (_dir, mut connection) = fresh_db("filter");
+        let kept_a = insert_emoji(&mut connection, "a.png", Some("assets/a.png"), None, false);
+        let dropped = insert_emoji(&mut connection, "b.png", Some("assets/b.png"), None, true);
+        let kept_b = insert_emoji(&mut connection, "c.png", Some("assets/c.png"), None, false);
+        let db_path = _dir.db_path();
+
+        let result =
+            filter_existing_emoji_ids(&db_path, &[dropped, kept_a, 999_999, kept_b]).expect("ok");
+        assert_eq!(result, vec![kept_a, kept_b]);
+    }
+
+    #[test]
+    fn load_pending_path_force_bypasses_ocr_text_guard() {
+        let (_dir, mut connection) = fresh_db("guard");
+        let recognized = insert_emoji(
+            &mut connection,
+            "a.png",
+            Some("assets/a.png"),
+            Some("旧文本"),
+            false,
+        );
+        let pending = insert_emoji(&mut connection, "b.png", Some("assets/b.png"), None, false);
+        let deleted = insert_emoji(&mut connection, "c.png", Some("assets/c.png"), None, true);
+
+        // 非 force：ocr_text 非空的行与软删行都不可见。
+        assert_eq!(load_pending_path(&connection, recognized, false), None);
+        assert_eq!(
+            load_pending_path(&connection, pending, false),
+            Some("assets/b.png".to_string())
+        );
+        assert_eq!(load_pending_path(&connection, deleted, false), None);
+
+        // force：只挡软删行，已识别的行重跑。
+        assert_eq!(
+            load_pending_path(&connection, recognized, true),
+            Some("assets/a.png".to_string())
+        );
+        assert_eq!(load_pending_path(&connection, deleted, true), None);
+    }
+
+    #[test]
+    fn apply_recognition_result_force_overwrites_text_and_only_adds_tags() {
+        use crate::repositories::tag_repository::TagRepository;
+
+        let (_dir, mut connection) = fresh_db("apply");
+        let emoji_id = insert_emoji(
+            &mut connection,
+            "a.png",
+            Some("assets/a.png"),
+            Some("旧文本"),
+            false,
+        );
+        // 旧结果已有的标签"保留"：重识别后必须仍在、且不重复。
+        let kept_tag_id =
+            TagRepository::find_or_create_id(&mut connection, "保留").expect("create kept tag");
+        EmojiRepository::add_tags(&mut connection, &[kept_tag_id], &[emoji_id]).expect("link");
+
+        let lines = vec!["新文字".to_string(), "保留".to_string()];
+        let tagged =
+            apply_recognition_result(&mut connection, emoji_id, &lines, true).expect("apply force");
+        assert!(tagged);
+
+        let text: String = connection
+            .query_row(
+                "SELECT ocr_text FROM emojis WHERE id = ?1",
+                rusqlite::params![emoji_id],
+                |row| row.get(0),
+            )
+            .expect("read ocr_text");
+        assert_eq!(text, "新文字\n保留");
+
+        let mut tag_names: Vec<String> = connection
+            .prepare(
+                "SELECT t.name FROM emoji_tags et JOIN tags t ON t.id = et.tag_id
+                 WHERE et.emoji_id = ?1 ORDER BY t.name COLLATE NOCASE",
+            )
+            .expect("prepare")
+            .query_map(rusqlite::params![emoji_id], |row| row.get::<_, String>(0))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect");
+        tag_names.sort();
+        assert_eq!(tag_names, vec!["保留", "新文字"]);
+
+        // 重跑同样结果幂等：不产生重复关联。
+        apply_recognition_result(&mut connection, emoji_id, &lines, true).expect("apply again");
+        assert_eq!(tag_ids_of(&connection, emoji_id).len(), 2);
+    }
+
+    #[test]
+    fn apply_recognition_result_without_force_keeps_null_guard() {
+        let (_dir, mut connection) = fresh_db("apply-no-force");
+        let recognized = insert_emoji(
+            &mut connection,
+            "a.png",
+            Some("assets/a.png"),
+            Some("旧文本"),
+            false,
+        );
+
+        // 非 force 路径只应在 ocr_text IS NULL 时被调用；即使误传，也不覆盖旧文本。
+        let lines = vec!["新文字".to_string()];
+        apply_recognition_result(&mut connection, recognized, &lines, false).expect("apply");
+        let text: String = connection
+            .query_row(
+                "SELECT ocr_text FROM emojis WHERE id = ?1",
+                rusqlite::params![recognized],
+                |row| row.get(0),
+            )
+            .expect("read ocr_text");
+        assert_eq!(text, "旧文本");
     }
 }

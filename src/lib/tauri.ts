@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
   ClipboardCopyOutcome,
+  EmojiTags,
   FolderImportSummary,
   IndexedEmoji,
   IndexedImage,
@@ -339,4 +340,14 @@ export function getOcrCapabilities(): Promise<OcrCapabilities> {
 /** 触发存量回填，返回本次待识别数量；识别在后台进行，进度经 OCR_TAGS_UPDATED_EVENT 推送。 */
 export function backfillOcrTags(): Promise<number> {
   return invoke<number>("backfill_ocr_tags");
+}
+
+/** Phase 33：对指定表情手动重跑 OCR（force：已有结果覆盖 ocr_text、标签只增不删）。返回排队数量，0 = 全部无效/已删除。 */
+export function ocrRecognizeEmojis(emojiIds: number[]): Promise<number> {
+  return invoke<number>("ocr_recognize_emojis", { emojiIds });
+}
+
+/** Phase 33：读取指定表情当前的标签 id 集合（手动识别批末同步弹窗选中集用）。 */
+export function getEmojiTags(emojiIds: number[]): Promise<EmojiTags[]> {
+  return invoke<EmojiTags[]>("get_emoji_tags", { emojiIds });
 }

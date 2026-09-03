@@ -450,6 +450,7 @@ fn schedule_ocr_for_new_emojis(
             emoji_ids,
             ocr::OcrPhase::Import,
             config,
+            false,
         );
     });
 }
@@ -507,9 +508,92 @@ pub async fn backfill_ocr_tags(
             emoji_ids,
             ocr::OcrPhase::Backfill,
             config,
+            false,
         );
     });
     Ok(total)
+}
+
+/// Phase 33：标签弹窗「OCR 识别」按钮——对指定 emoji 手动重跑识别。
+/// force 模式：已有识别结果的行覆盖 `ocr_text`，标签只增不删。识别在后台
+/// 线程执行、命令立即返回排队数量；进度经 `ocr-tags-updated`（phase=manual）
+/// 推给主窗口，弹窗据此显示进度并在批末同步选中集。
+#[tauri::command]
+pub async fn ocr_recognize_emojis(
+    app: AppHandle,
+    database_state: State<'_, database::DatabaseState>,
+    emoji_ids: Vec<i64>,
+) -> Result<u32, String> {
+    let config = app.state::<ocr::OcrState>().snapshot();
+    if config.engine == ocr::OcrEngineKind::Off {
+        return Err("请先在设置中选择 OCR 引擎".to_string());
+    }
+    let emoji_ids: Vec<i64> = emoji_ids.into_iter().filter(|id| *id > 0).collect();
+    if emoji_ids.is_empty() {
+        return Ok(0);
+    }
+    let db_state = database_state.inner().clone();
+    let database_path = db_state.database_path().to_path_buf();
+    let existing = tauri::async_runtime::spawn_blocking(move || {
+        ocr::filter_existing_emoji_ids(&database_path, &emoji_ids)
+    })
+    .await
+    .map_err(|error| format!("手动识别任务意外中止：{error}"))??;
+    let total = existing.len() as u32;
+    if total == 0 {
+        return Ok(0);
+    }
+    let database_path = db_state.database_path().to_path_buf();
+    let app_handle = app.clone();
+    // 与导入 / 回填路径一致：长阻塞批处理放独立线程，命令立即返回。
+    std::thread::spawn(move || {
+        ocr::process_emoji_ids(
+            &app_handle,
+            &database_path,
+            existing,
+            ocr::OcrPhase::Manual,
+            config,
+            true,
+        );
+    });
+    Ok(total)
+}
+
+/// Phase 33：读取指定 emoji 的标签 id。标签弹窗在手动识别批末调它同步
+/// 选中集（事件 payload 不携带 id，逐条查询也与分页视图解耦）。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EmojiTagsDto {
+    pub emoji_id: i64,
+    pub tag_ids: Vec<i64>,
+}
+
+#[tauri::command]
+pub async fn get_emoji_tags(
+    database_state: State<'_, database::DatabaseState>,
+    emoji_ids: Vec<i64>,
+) -> Result<Vec<EmojiTagsDto>, String> {
+    let emoji_ids: Vec<i64> = emoji_ids.into_iter().filter(|id| *id > 0).collect();
+    if emoji_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let db_state = database_state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = db_state.connect()?;
+        let relations = EmojiRepository::get_relations_for_ids(&connection, &emoji_ids)?;
+        Ok(emoji_ids
+            .iter()
+            .map(|id| EmojiTagsDto {
+                emoji_id: *id,
+                tag_ids: relations
+                    .get(id)
+                    .map(|relations| relations.tag_ids.clone())
+                    .unwrap_or_default(),
+            })
+            .collect())
+    })
+    .await
+    .map_err(|error| format!("读取表情标签任务意外中止：{error}"))?
 }
 
 // ---- 第六阶段 commands ----

@@ -484,20 +484,17 @@ export function App() {
     async (payload: {
       addedTagIds: number[];
       removedTagIds: number[];
-      newTagName: string | null;
+      newTagNames: string[];
     }) => {
       if (!tagPickerState) return;
       setTagPickerBusy(true);
       try {
-        let newTagId: number | null = null;
-        if (payload.newTagName) {
-          const created = await createTag(payload.newTagName);
-          newTagId = created.id;
+        const createdNewIds: number[] = [];
+        for (const name of payload.newTagNames) {
+          const created = await createTag(name);
+          createdNewIds.push(created.id);
         }
-        const addIds = [
-          ...payload.addedTagIds,
-          ...(newTagId !== null ? [newTagId] : []),
-        ];
+        const addIds = [...payload.addedTagIds, ...createdNewIds];
         if (addIds.length > 0) {
           await addTagsToEmojis(addIds, tagPickerState.emojiIds);
         }
@@ -631,7 +628,9 @@ export function App() {
 
   // Phase 32：OCR 识别批次进度（Rust 后台每 10 张 + 批末推送）。import 批次
   // → 新标签落地，刷新侧栏标签并重拉当前视图第 1 页（同 key 重拉不重播入场
-  // 动画）；backfill 批次 → 更新设置弹窗的回填进度，完成时 toast。
+  // 动画）；backfill 批次 → 更新设置弹窗的回填进度，完成时 toast；
+  // manual 批次（Phase 33 标签弹窗触发）走末尾的刷新分支即可——弹窗自己
+  // 订阅同一事件管进度与选中集，这里只负责网格/侧栏数据刷新。
   // refreshSidebar / notifyError / dispatchToast 是稳定引用，随 deps 重注册
   // 监听与既有共享监听 effect 同模式。
   useEffect(() => {
@@ -1926,6 +1925,7 @@ export function App() {
       <TagPickerDialog
         open={tagPickerState !== null}
         emojiCount={tagPickerState?.emojiIds.length ?? 0}
+        emojiIds={tagPickerState?.emojiIds ?? []}
         existingTags={tags}
         initiallySelectedTagIds={tagPickerState?.initiallySelectedTagIds ?? []}
         busy={tagPickerBusy}
