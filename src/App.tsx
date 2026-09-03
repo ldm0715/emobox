@@ -1065,8 +1065,10 @@ export function App() {
             isFavorite: false,
             lastUsedAt: Number(r.lastUsedAt),
             usageCount: Number(r.useCount),
-            importedAt: null,
-            modifiedAt: null,
+            // 排序兜底：recent 无真实 importedAt/modifiedAt，用 lastUsedAt 近似
+            // （否则 added-time/modified-time 排序全为 0 乱序）。
+            importedAt: r.lastUsedAt,
+            modifiedAt: r.lastUsedAt,
             groupIds: r.groupIds,
             tagIds: r.tagIds,
           }));
@@ -1289,10 +1291,10 @@ export function App() {
   // 更新时未变化项保持对象身份，memo(EmojiGridItem) 只重渲染真正变化的卡片。
   const viewItemsCacheRef = useRef(new WeakMap<object, IndexedImage>());
   const viewItems = useMemo(() => {
-    // currentEmojis 已经是后端按 view 过滤好的；recent 走 IndexedImage 派生
-    if (currentView === "recent") {
-      return recentItems.map((record) => record.item);
-    }
+    // currentEmojis 已经是后端按 view 过滤好的；recent 视图的 effect 同样在
+    // 客户端按 query 过滤后 setCurrentEmojis——投影必须走同一数据源。此前
+    // recent 分支直接全量 recentItems 派生，绕过了过滤结果（搜索词被丢弃，
+    // 搜不出结果也显示全部——真机 bug）。
     const cache = viewItemsCacheRef.current;
     return currentEmojis.map((e) => {
       let item = cache.get(e);
@@ -1312,7 +1314,7 @@ export function App() {
       }
       return item;
     });
-  }, [currentView, currentEmojis, recentItems]);
+  }, [currentEmojis]);
 
   const filteredItems = useMemo(() => {
     // 搜索过滤与排序均由后端 searchEmojis 处理（Phase 17 排序下推，offset 分页
