@@ -59,6 +59,7 @@ import { pickerDialogStyles, type PickerDialogStyles } from "./pickerDialogStyle
 // （区别于勾选的暂存语义），经 onTagsMutated 通知 App 刷新。
 const pickerStyles: PickerDialogStyles & {
   surface: GriffelStyle;
+  body: GriffelStyle;
   panes: GriffelStyle;
   pane: GriffelStyle;
   paneHead: GriffelStyle;
@@ -85,31 +86,51 @@ const pickerStyles: PickerDialogStyles & {
   ocrTitle: GriffelStyle;
   ocrCaption: GriffelStyle;
   ocrProgress: GriffelStyle;
+  notice: GriffelStyle;
 } = {
   ...pickerDialogStyles,
+  // 弹窗高度范式（SettingsMenu 同款，见 phase12/phase19）：surface 定高 +
+  // overflow hidden、body height:100%、content minHeight:0 —— 缺一不可，
+  // 否则 DialogBody 默认 grid auto 1fr 按内容展开，DialogContent 的
+  // overflowY 拿不到有界高度永不滚，OCR 提示 MessageBar 出现时 footer
+  // 溢出 overflow:visible 的 surface 底边、按钮被顶出窗口（2026-09 修复）。
   surface: {
     width: "min(760px, calc(100vw - 48px))",
+    height: "min(680px, calc(100vh - 48px))",
     maxHeight: "min(680px, calc(100vh - 48px))",
+    overflow: "hidden",
+  },
+  body: {
+    height: "100%",
+    minHeight: 0,
   },
   content: {
     ...pickerDialogStyles.content,
+    minHeight: 0,
+    overflow: "hidden",
     // MessageBar 出现在 flex 容器里安全；若改 grid 记得 minmax(0,1fr)（坑见 phase29）。
+  },
+  subtitle: {
+    ...pickerDialogStyles.subtitle,
+    flexShrink: 0,
   },
   panes: {
     display: "flex",
     alignItems: "stretch",
     columnGap: tokens.spacingHorizontalM,
+    // 双栏行是 content 的弹性区：吃剩余高度，MessageBar 出现/消失只压缩
+    // 滚动区、footer 永远钉在 surface 内。
+    flex: 1,
+    minHeight: 0,
   },
   pane: {
     display: "flex",
     flexDirection: "column",
     minWidth: 0,
     flex: 1,
-    // 两栏定高：右栏因多一个 SearchBox 会让「各自 maxHeight 上限」的滚动区
-    // 比左栏矮一截（左右大小不一的根因）。统一定总高、滚动区 flex:1 撑满
-    // 剩余空间，两栏滚动区底边自然对齐。
-    height: "400px",
-    maxHeight: "calc(100vh - 320px)",
+    // 两栏等高由 panes 行 alignItems:stretch + pane flex:1 保证（此前定高
+    // height:400px：右栏多一个 SearchBox，若各自 maxHeight 会让右栏滚动区
+    // 矮一截；定总高、滚动区 flex:1 撑满剩余空间，两栏底边自然对齐）。
   },
   paneHead: {
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
@@ -201,6 +222,7 @@ const pickerStyles: PickerDialogStyles & {
     justifyContent: "space-between",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
+    flexShrink: 0,
   },
   rightActions: {
     display: "flex",
@@ -233,6 +255,7 @@ const pickerStyles: PickerDialogStyles & {
     borderRadius: tokens.borderRadiusMedium,
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
+    flexShrink: 0,
   },
   ocrIcon: {
     flexShrink: 0,
@@ -261,6 +284,11 @@ const pickerStyles: PickerDialogStyles & {
     color: tokens.colorNeutralForeground2,
     fontSize: tokens.fontSizeBase200,
     whiteSpace: "nowrap",
+  },
+  // 弹窗级错误 / OCR 批末提示 MessageBar 的容器：不收缩（长文案折 2 行
+  // 也不被 flex 压扁），高度变化由双栏 panes 的弹性吸收。
+  notice: {
+    flexShrink: 0,
   },
 };
 const useStyles = makeStyles(pickerStyles);
@@ -613,7 +641,7 @@ export function TagPickerDialog({
         modalType="modal"
       >
       <DialogSurface className={styles.surface}>
-        <DialogBody>
+        <DialogBody className={styles.body}>
           <DialogTitle
             action={
               mutating || ocrRunning || renamingBusy ? <Spinner size="small" aria-label="处理中" /> : null
@@ -843,14 +871,14 @@ export function TagPickerDialog({
 
             {error && (
               <FadeSnappy visible appear>
-                <MessageBar intent="error">
+                <MessageBar className={styles.notice} intent="error">
                   <MessageBarBody>{error}</MessageBarBody>
                 </MessageBar>
               </FadeSnappy>
             )}
             {ocrNotice && (
               <FadeSnappy visible appear>
-                <MessageBar intent={ocrNotice.intent}>
+                <MessageBar className={styles.notice} intent={ocrNotice.intent}>
                   <MessageBarBody>{ocrNotice.text}</MessageBarBody>
                 </MessageBar>
               </FadeSnappy>
@@ -862,13 +890,20 @@ export function TagPickerDialog({
                 <DialogTrigger disableButtonEnhancement>
                   <Button appearance="subtle" disabled={mutating || ocrRunning || renamingBusy}>关闭</Button>
                 </DialogTrigger>
-                <Button
-                  appearance="primary"
-                  disabled={mutating || ocrRunning || renamingBusy}
-                  onClick={() => onOpenChange(false)}
-                >
-                  完成
-                </Button>
+                {/* 「完成」也走 DialogTrigger（与「关闭」同款关闭路径）：不能直接
+                    onClick → onOpenChange(false)。直接调用时 Dialog 的 setState
+                    与 App 的 setTagPickerState(null) 同 commit 落地，弹窗内容
+                    （含本按钮）瞬间卸载，Fluent Dialog 的焦点恢复会把焦点还给
+                    网格触发元素，tabster 经 getScrollableContainer 找到网格滚动
+                    容器直接推 scrollTop——「OCR 后点完成网格往下滑」的根因；
+                    DialogTrigger 路径下内部 open state 先翻、App 状态下一拍生效，
+                    焦点恢复时弹窗内容仍在，不触发滚动（2026-09 真机对比
+                    「关闭」不跳、「完成」跳锁定）。 */}
+                <DialogTrigger disableButtonEnhancement action="close">
+                  <Button appearance="primary" disabled={mutating || ocrRunning || renamingBusy}>
+                    完成
+                  </Button>
+                </DialogTrigger>
               </div>
             </div>
           </DialogContent>

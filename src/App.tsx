@@ -29,6 +29,7 @@ import { RenameEmojiDialog } from "./features/library/RenameEmojiDialog";
 import { TagPickerDialog } from "./features/library/TagPickerDialog";
 import { buildBatchFilenames, normalizeExtension } from "./features/library/batchRename";
 import { useDebouncedValue } from "./features/library/useDebouncedValue";
+import { mergeReloadedItems } from "./features/library/viewReloadMerge";
 import { useMultiSelection, type SelectionMode } from "./features/library/useMultiSelection";
 import {
   checkForUpdate,
@@ -1091,14 +1092,22 @@ export function App() {
           total = result.total;
         }
         if (disposed || seq !== viewSeqRef.current) return;
-        setCurrentEmojis(items);
+        // 同 key 重拉（标签操作 / OCR 批末 / viewReloadTick）按 id 合并保序：
+        // 沿用旧数组顺序与对象身份，未变化项保持引用（viewItems / tagsByPath
+        // WeakMap 命中、memo 不失效），避免整组替换引发网格滚动锚定丢失、
+        // 视口「莫名下滑/跳位」（2026-09 修复）。真视图/搜索/排序切换照旧
+        // 全量替换。取舍：modified-time 排序的项跳顶要等下一次真切换生效。
+        const landingKey = `${currentView}|${trimmedQuery}|${sortOption}`;
+        const sameKey = lastLandedKeyRef.current === landingKey;
+        setCurrentEmojis(
+          sameKey ? mergeReloadedItems(currentEmojisRef.current, items) : items,
+        );
         setViewTotal(total);
         setHasMore(items.length < total);
         nextOffsetRef.current = items.length;
         mergeFavoriteFlags(items);
         // 真正的视图/搜索词/排序切换（而非同 key 重拉）→ 递增落地代数，
         // 触发 EmojiLibraryView 的容器级入场动画（key 重挂载）。
-        const landingKey = `${currentView}|${trimmedQuery}|${sortOption}`;
         if (lastLandedKeyRef.current !== landingKey) {
           lastLandedKeyRef.current = landingKey;
           setViewGeneration((g) => g + 1);
