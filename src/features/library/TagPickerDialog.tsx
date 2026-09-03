@@ -2,6 +2,7 @@ import {
   Body1,
   Button,
   Caption1,
+  Checkbox,
   Dialog,
   DialogBody,
   DialogContent,
@@ -63,6 +64,8 @@ const pickerStyles: PickerDialogStyles & {
   paneHead: GriffelStyle;
   paneScroll: GriffelStyle;
   paneSearch: GriffelStyle;
+  batchBar: GriffelStyle;
+  batchBarText: GriffelStyle;
   actionRow: GriffelStyle;
   rowAddSlot: GriffelStyle;
   rowActions: GriffelStyle;
@@ -126,6 +129,23 @@ const pickerStyles: PickerDialogStyles & {
   paneSearch: {
     flexShrink: 0,
     marginBottom: tokens.spacingVerticalXS,
+  },
+  // 左栏批量移除条：选中 ≥1 时浮出（固定在滚动区下方，不占滚动高度）。
+  batchBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    columnGap: tokens.spacingHorizontalS,
+    flexShrink: 0,
+    paddingTop: tokens.spacingVerticalXS,
+  },
+  batchBarText: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   // 行模板（含 hover 操作按钮）：grid auto minmax(0,1fr) auto auto =
   // ［＋添加（右栏专用）］｜名称 | ✏️🗑 | 计数。右栏行有 4 个子元素；左栏行
@@ -293,6 +313,9 @@ export function TagPickerDialog({
   // 确认弹窗目标：removeTarget = 左栏移除（从所选表情）；deleteTarget = 右栏全局删除。
   const [removeTarget, setRemoveTarget] = useState<TagOption | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TagOption | null>(null);
+  // 左栏多选批量移除：选中的标签 id 集；批移确认目标（null = 批量条未触发）。
+  const [selectedForRemoval, setSelectedForRemoval] = useState<Set<number>>(new Set());
+  const [batchRemoveConfirmOpen, setBatchRemoveConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -309,6 +332,8 @@ export function TagPickerDialog({
       setMutating(false);
       setRemoveTarget(null);
       setDeleteTarget(null);
+      setSelectedForRemoval(new Set());
+      setBatchRemoveConfirmOpen(false);
       if (emojiIds.length > 0) {
         void getEmojiTags(emojiIds)
           .then((rows) => setCurrentTagIds(unionTagIds(rows)))
@@ -375,12 +400,47 @@ export function TagPickerDialog({
     try {
       await removeTagsFromEmojis([id], emojiIdsSnapshot);
       setCurrentTagIds((prev) => prev.filter((tagId) => tagId !== id));
+      // 行消失后同步剔除选中集里的该 id（防悬空勾选）。
+      setSelectedForRemoval((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       await onTagsMutated({ addedTagIds: [], removedTagIds: [id] });
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
       setMutating(false);
     }
+  }
+
+  /** 左栏多选批量移除：一次命令移除全部选中标签（后端矩阵写，单事务）。 */
+  async function applyRemoveSelected(ids: number[]) {
+    if (emojiIdsSnapshot.length === 0 || ids.length === 0 || mutating) return;
+    setMutating(true);
+    setError("");
+    try {
+      await removeTagsFromEmojis(ids, emojiIdsSnapshot);
+      const removed = new Set(ids);
+      setCurrentTagIds((prev) => prev.filter((tagId) => !removed.has(tagId)));
+      // 单行/批量移除后行会消失——选中集同步清空防悬空 id。
+      setSelectedForRemoval(new Set());
+      await onTagsMutated({ addedTagIds: [], removedTagIds: ids });
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  function toggleRemovalSelection(id: number) {
+    setSelectedForRemoval((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   /** 搜索无匹配时的「创建」：即时建标签并加到所选表情（不再暂存）。 */
@@ -569,7 +629,7 @@ export function TagPickerDialog({
             </Body1>
 
             <div className={styles.panes}>
-              {/* 左栏：当前标签（所选表情标签并集，完整可滚动，行内改名/删除） */}
+              {/* 左栏：当前标签（行即标签 + 多选批量移除 + 行内改名/单个移除） */}
               <div className={styles.pane}>
                 <div className={styles.paneHead}>
                   当前标签（{currentRows.length}）
@@ -596,6 +656,10 @@ export function TagPickerDialog({
                         buttonClass={styles.rowActionButton}
                         inputClass={styles.renameInput}
                         rowAddSlotClass={styles.rowAddSlot}
+                        selection={{
+                          checked: selectedForRemoval.has(tag.id),
+                          onToggle: toggleRemovalSelection,
+                        }}
                         onStartRename={setRenamingTagId}
                         onSubmitRename={(name) =>
                           void commitRename(tag.id, tag.name, name)
@@ -609,6 +673,33 @@ export function TagPickerDialog({
                     ))
                   )}
                 </div>
+                {/* 批量移除条：选中 ≥1 浮出（多选删除一个一个点太慢——用户反馈）。 */}
+                {selectedForRemoval.size > 0 && (
+                  <div className={styles.batchBar}>
+                    <span className={styles.batchBarText}>
+                      已选 {selectedForRemoval.size} 个标签
+                    </span>
+                    <div className={styles.rightActions}>
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        disabled={mutating}
+                        onClick={() => setSelectedForRemoval(new Set())}
+                      >
+                        取消选择
+                      </Button>
+                      <Button
+                        appearance="primary"
+                        size="small"
+                        icon={<Delete16Regular />}
+                        disabled={mutating}
+                        onClick={() => setBatchRemoveConfirmOpen(true)}
+                      >
+                        移除所选
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <Divider vertical className={styles.paneDivider} />
@@ -808,6 +899,23 @@ export function TagPickerDialog({
         }}
       />
 
+      {/* 左栏批量移除确认（汇总数量；列名空间有限，靠数量 + 左栏可见选中态传达）。 */}
+      <ConfirmDialog
+        open={batchRemoveConfirmOpen}
+        title="批量移除标签"
+        message={
+          `将把 ${selectedForRemoval.size} 个标签从${shownCount > 1 ? ` ${shownCount} 个所选表情` : "这个表情"}上移除。\n标签本身保留，之后仍可在右侧标签库重新添加。`
+        }
+        confirmText="移除"
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setBatchRemoveConfirmOpen(false);
+        }}
+        onConfirm={() => {
+          setBatchRemoveConfirmOpen(false);
+          void applyRemoveSelected([...selectedForRemoval]);
+        }}
+      />
+
       {/* 右栏全局删除确认 */}
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -863,6 +971,11 @@ interface TagRowProps {
   inputClass: string;
   /** 左栏行 ＋ 列占位样式类（主 styles.rowAddSlot）。 */
   rowAddSlotClass: string;
+  /** 左栏多选模式：提供时行首是 Checkbox（批量移除选中态）。 */
+  selection?: {
+    checked: boolean;
+    onToggle: (id: number) => void;
+  };
   /** 右栏「＋添加」模式：提供时行首是加号按钮（点击加到所选表情），
       该标签已在所选表情上时显示「已添加」态。左栏不传（行即标签）。 */
   onAdd?: (id: number) => void;
@@ -889,6 +1002,7 @@ function TagRow({
   buttonClass,
   inputClass,
   rowAddSlotClass,
+  selection,
   onAdd,
   added = false,
   onStartRename,
@@ -977,8 +1091,17 @@ function TagRow({
             onAdd(tag.id);
           }}
         />
+      ) : selection ? (
+        // 左栏多选模式：行首 Checkbox 占 ＋ 列（列结构不变），勾选进入
+        // 批量移除选中集。
+        <Checkbox
+          checked={selection.checked}
+          onChange={() => selection.onToggle(tag.id)}
+          aria-label={`选择标签 ${tag.name}`}
+          disabled={disabled}
+        />
       ) : (
-        // 左栏行的 ＋ 列占位：与右栏加号按钮同宽（24px），两栏列对齐。
+        // 兜底占位：与右栏加号按钮同宽（24px），两栏列对齐。
         <span className={rowAddSlotClass} aria-hidden="true" />
       )}
       <span

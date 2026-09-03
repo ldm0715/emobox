@@ -118,6 +118,7 @@ Phase 33 的「勾选 + 暂存 + 保存」模式经用户多轮使用反馈后**
 |---|---|---|
 | 右栏行首「＋」 | `addTagsToEmojis([id], emojiIds)` 即时加到所选表情；已添加态换对勾、禁用（移除入口在左栏） | 无（可逆，去左栏移除） |
 | 左栏「当前标签」🗑 | ConfirmDialog 确认 → `removeTagsFromEmojis([id], emojiIds)` 从所选表情移除（标签本身保留） | 有（用户要求） |
+| 左栏 Checkbox 多选 + 批量条 | 勾选 ≥1 浮出「已选 N · 取消选择 · 移除所选」批量条 → ConfirmDialog 汇总确认 → `removeTagsFromEmojis(ids, emojiIds)` 矩阵单事务批量移除（一个一个点太慢——用户反馈） | 有（汇总数量） |
 | 两栏行内 ✏️ | 行内 `Input appearance="underline"`（Enter/失焦提交、Esc 取消）→ `renameTag` 即时落库 | 无 |
 | 右栏 🗑 | ConfirmDialog 确认 → `deleteTag` 全局删除（库中所有表情失去） | 有（destructive 红按钮） |
 | 搜索 Enter / 「创建并添加」 | 有精确匹配 → `applyAddTag`；无 → `createTag` + `addTagsToEmojis` 即时建标签 | 无 |
