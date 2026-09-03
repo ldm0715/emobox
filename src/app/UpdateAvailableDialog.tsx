@@ -217,8 +217,9 @@ export function UpdateAvailableDialog({
     };
   }, []);
 
-  // 关闭弹窗时若有下载在途，自动取消——「稍后」即放弃本次下载，避免它
-  // 在无人看管的界面继续跑；重开弹窗重新开始即可。
+  // 关闭弹窗时若有下载在途，自动取消——「今日不提醒」即放弃本次下载，避免
+  // 它在无人看管的界面继续跑；重开弹窗重新开始即可。（App 层在任何关闭
+  // 路径都会写入「今日不提醒」搁置键，今天内启动不再自动弹。）
   useEffect(() => {
     if (!open && downloading) {
       void cancelUpdateDownload();
@@ -448,7 +449,7 @@ export function UpdateAvailableDialog({
               ) : (
                 <>
                   <Button appearance="subtle" onClick={() => onOpenChange(false)}>
-                    稍后
+                    今日不提醒
                   </Button>
                   <Button appearance="primary" onClick={() => void handleDownload()}>
                     下载并安装

@@ -14,6 +14,7 @@ import { AppShell } from "./app/AppShell";
 import { AppToolbar } from "./app/AppToolbar";
 import { CloseActionDialog, type CloseChoice } from "./app/CloseActionDialog";
 import { UpdateAvailableDialog } from "./app/UpdateAvailableDialog";
+import { isUpdateSnoozedToday, snoozeUpdateForToday } from "./app/updateSnooze";
 import { LibrarySidebar } from "./app/LibrarySidebar";
 import { SettingsDialog } from "./app/SettingsMenu";
 import { useAppSettings } from "./components/ThemeProvider";
@@ -194,8 +195,9 @@ export function App() {
   } = useLibraryImport(notifyError);
 
   // 启动静默检查出的新版本（status === "available"）。null = 没有可用更新。
-  // 弹窗展示后置回 null（结果已进弹窗快照）；「稍后/关闭」只关弹窗不改
-  // autoCheckUpdates，本次会话不再重弹（启动检查只跑一次）。
+  // 弹窗展示后置回 null（结果已进弹窗快照）；关闭弹窗（按钮 / X / Esc）
+  // 即「今日不提醒」——写入 updateSnooze 日期键，今天内启动不再自动弹
+  // （设置页手动「检查更新」不受抑制）；跨午夜自然恢复。
   const [updateAvailable, setUpdateAvailable] = useState<UpdateCheckResult | null>(
     null,
   );
@@ -204,6 +206,7 @@ export function App() {
 
   // Phase 27：启动 3s 后静默检查更新（错开启动时的库加载/缩略图请求高峰）。
   // 失败静默——网络不可用不该每次启动都打扰；发现新版本改弹窗（不再用 toast）。
+  // 2026-09：今天已被「今日不提醒」搁置则不再自动弹（频率太高的问题）。
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const { autoCheckUpdates: enabled, updateMirrors: mirrors } =
@@ -212,6 +215,7 @@ export function App() {
       checkForUpdate(mirrors)
         .then((result) => {
           if (result.status !== "available") return;
+          if (isUpdateSnoozedToday()) return;
           setUpdateAvailable(result);
           setUpdateDialogOpen(true);
         })
@@ -1829,7 +1833,11 @@ export function App() {
         result={updateAvailable}
         onOpenChange={(next) => {
           setUpdateDialogOpen(next);
-          if (!next) setUpdateAvailable(null);
+          if (!next) {
+            setUpdateAvailable(null);
+            // 任何关闭路径（「今日不提醒」按钮 / X / Esc）都搁置到今天结束。
+            snoozeUpdateForToday();
+          }
         }}
         onNotifyError={notifyError}
       />
