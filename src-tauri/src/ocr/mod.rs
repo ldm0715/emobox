@@ -77,6 +77,9 @@ pub struct OcrConfig {
     pub engine: OcrEngineKind,
     pub ai_studio_api_url: String,
     pub ai_studio_token: String,
+    /// AI Studio 识别模型（v2 异步 API 的必填请求参数，如 PP-OCRv6；
+    /// 空串 = 引擎侧回默认值）。
+    pub ai_studio_model: String,
     /// Tesseract 可执行文件路径（空串 = 自动检测：常见安装位置 + PATH）。
     pub tesseract_path: String,
 }
@@ -107,12 +110,14 @@ impl OcrState {
         engine: OcrEngineKind,
         api_url: String,
         token: String,
+        model: String,
         tesseract_path: String,
     ) {
         let mut config = self.lock();
         config.engine = engine;
         config.ai_studio_api_url = api_url;
         config.ai_studio_token = token;
+        config.ai_studio_model = model;
         config.tesseract_path = tesseract_path;
     }
 
@@ -182,6 +187,7 @@ fn recognize_lines(config: &OcrConfig, png_bytes: &[u8]) -> Result<Vec<String>, 
         OcrEngineKind::AiStudio => ai_studio_ocr::recognize_lines(
             &config.ai_studio_api_url,
             &config.ai_studio_token,
+            &config.ai_studio_model,
             png_bytes,
         ),
         OcrEngineKind::Tesseract => {
@@ -538,16 +544,19 @@ mod tests {
             OcrEngineKind::AiStudio,
             "https://api.example.com/ocr".to_string(),
             "tok".to_string(),
+            "PP-OCRv6".to_string(),
             String::new(),
         );
         let snapshot = state.snapshot();
         assert_eq!(snapshot.effective_engine(), OcrEngineKind::AiStudio);
         assert_eq!(snapshot.ai_studio_api_url, "https://api.example.com/ocr");
         assert_eq!(snapshot.ai_studio_token, "tok");
+        assert_eq!(snapshot.ai_studio_model, "PP-OCRv6");
 
         // Off 与引擎切换幂等：重复 set 覆盖。
         state.set(
             OcrEngineKind::Off,
+            String::new(),
             String::new(),
             String::new(),
             String::new(),

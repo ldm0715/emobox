@@ -58,12 +58,14 @@ interface PersistedSettings {
   // 由 Rust 侧恒定兜底，不在此列）。
   updateMirrors: string[];
   // Phase 32: OCR 识图自动打标签。windows = 系统内置 OCR（本地离线，默认）；
-  // aiStudio = 百度 AI Studio PaddleOCR（云端同步 API，图片会上传百度服务器，
-  // 需要在 AI Studio task 页创建的个人 API URL + Access Token）。localStorage
+  // aiStudio = 百度 AI Studio PaddleOCR（云端异步任务 API，图片会上传百度服务器，
+  // 需要生成 Access Token；API 地址留空走官方默认端点）。localStorage
   // 事实源，挂载/变更时推送到 Rust OcrState 内存镜像。
   ocrEngine: OcrEngineKind;
   aiStudioOcrApiUrl: string;
   aiStudioOcrToken: string;
+  /** AI Studio 识别模型（v2 异步 API 的必填请求参数）。 */
+  aiStudioOcrModel: string;
   // Phase 34: Tesseract 可执行文件路径（空串 = 自动检测：常见安装位置 + PATH）。
   tesseractPath: string;
 }
@@ -86,6 +88,7 @@ interface SettingsContextValue extends PersistedSettings {
   setOcrEngine: (engine: OcrEngineKind) => void;
   setAiStudioOcrApiUrl: (url: string) => void;
   setAiStudioOcrToken: (token: string) => void;
+  setAiStudioOcrModel: (model: string) => void;
   setTesseractPath: (path: string) => void;
 }
 
@@ -108,6 +111,7 @@ const defaultSettings: PersistedSettings = {
   ocrEngine: "windows",
   aiStudioOcrApiUrl: "",
   aiStudioOcrToken: "",
+  aiStudioOcrModel: "PP-OCRv6",
   tesseractPath: "",
 };
 
@@ -227,6 +231,7 @@ function readSettings(): PersistedSettings {
       ocrEngine: isOcrEngine(parsed.ocrEngine) ? parsed.ocrEngine : defaultSettings.ocrEngine,
       aiStudioOcrApiUrl: asString(parsed.aiStudioOcrApiUrl) ?? defaultSettings.aiStudioOcrApiUrl,
       aiStudioOcrToken: asString(parsed.aiStudioOcrToken) ?? defaultSettings.aiStudioOcrToken,
+      aiStudioOcrModel: asString(parsed.aiStudioOcrModel) ?? defaultSettings.aiStudioOcrModel,
       tesseractPath: asString(parsed.tesseractPath) ?? defaultSettings.tesseractPath,
     };
   } catch {
@@ -302,6 +307,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       engine: settings.ocrEngine,
       aiStudioApiUrl: settings.aiStudioOcrApiUrl,
       aiStudioToken: settings.aiStudioOcrToken,
+      aiStudioModel: settings.aiStudioOcrModel,
       tesseractPath: settings.tesseractPath,
     }).catch((error) => {
       console.error("推送 OCR 设置失败", error);
@@ -310,6 +316,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     settings.ocrEngine,
     settings.aiStudioOcrApiUrl,
     settings.aiStudioOcrToken,
+    settings.aiStudioOcrModel,
     settings.tesseractPath,
   ]);
 
@@ -365,6 +372,10 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setAiStudioOcrToken: (aiStudioOcrToken) => setSettings((current) => ({
         ...current,
         aiStudioOcrToken,
+      })),
+      setAiStudioOcrModel: (aiStudioOcrModel) => setSettings((current) => ({
+        ...current,
+        aiStudioOcrModel,
       })),
       setTesseractPath: (tesseractPath) => setSettings((current) => ({
         ...current,

@@ -328,6 +328,7 @@ export function setOcrConfig(config: {
   engine: OcrEngineKind;
   aiStudioApiUrl: string;
   aiStudioToken: string;
+  aiStudioModel: string;
   tesseractPath: string;
 }): Promise<void> {
   return invoke<void>("set_ocr_config", config);

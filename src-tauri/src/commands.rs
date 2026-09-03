@@ -461,6 +461,7 @@ pub fn set_ocr_config(
     engine: String,
     ai_studio_api_url: String,
     ai_studio_token: String,
+    ai_studio_model: String,
     tesseract_path: String,
 ) -> Result<(), String> {
     // localStorage 是事实源，这里只更新内存镜像；未知值按关闭处理（不该发生）。
@@ -468,7 +469,13 @@ pub fn set_ocr_config(
         log::warn!("未知的 OCR 引擎值：{engine}，按关闭处理");
         ocr::OcrEngineKind::Off
     });
-    state.set(engine, ai_studio_api_url, ai_studio_token, tesseract_path);
+    state.set(
+        engine,
+        ai_studio_api_url,
+        ai_studio_token,
+        ai_studio_model,
+        tesseract_path,
+    );
     Ok(())
 }
 

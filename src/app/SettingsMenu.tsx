@@ -117,6 +117,12 @@ const ocrEngineLabels: Record<OcrEngineKind, string> = {
   aiStudio: "AI Studio PaddleOCR（云端）",
 };
 
+/** AI Studio 识别模型（v2 异步 API 的 model 请求参数）→ 下拉展示文案。 */
+const aiStudioModelLabels: Record<string, string> = {
+  "PP-OCRv6": "PP-OCRv6（纯文字识别，推荐）",
+  "PP-OCRv5": "PP-OCRv5（纯文字识别）",
+};
+
 /** AI Studio 控制台入口（openExternalUrl 主机白名单内的唯一百度域名）。 */
 const AI_STUDIO_CONSOLE_URL = "https://aistudio.baidu.com/paddleocr/task";
 
@@ -456,6 +462,8 @@ export function SettingsDialog({
     setAiStudioOcrApiUrl,
     aiStudioOcrToken,
     setAiStudioOcrToken,
+    aiStudioOcrModel,
+    setAiStudioOcrModel,
     tesseractPath,
     setTesseractPath,
   } = useAppSettings();
@@ -904,16 +912,27 @@ export function SettingsDialog({
               <div className={styles.settingText}>
                 <LabelInfo
                   label="AI Studio 接口"
-                  detail="在 aistudio.baidu.com/paddleocr/task 创建个人 API URL（创建时选择模型，如 PP-OCRv5/v6）并生成 Access Token，分别粘贴到下面。识别请求会把图片上传到百度服务器；每日免费额度与并发限制以 AI Studio 页面说明为准。"
+                  detail="在 AI Studio 生成 Access Token 粘贴到下面即可；接口地址走官方异步识别端点（paddleocr.aistudio-app.com），留空即可，一般无需修改。识别请求会把图片上传到百度服务器；按张消耗每日免费额度，以 AI Studio 页面说明为准。"
                 />
                 <div className={styles.ocrFields}>
                   <Input
                     className={styles.ocrInput}
-                    placeholder="API URL（https://aistudio.baidu.com/…）"
+                    placeholder="API 地址（留空使用官方默认端点）"
                     value={aiStudioOcrApiUrl}
                     onChange={(_, data) => setAiStudioOcrApiUrl(data.value)}
-                    aria-label="AI Studio API URL"
+                    aria-label="AI Studio API 地址"
                   />
+                  <Dropdown
+                    className={styles.ocrInput}
+                    aria-label="AI Studio 识别模型"
+                    value={aiStudioModelLabels[aiStudioOcrModel] ?? aiStudioOcrModel}
+                    selectedOptions={[aiStudioOcrModel]}
+                    onOptionSelect={(_, data) =>
+                      setAiStudioOcrModel(data.optionValue ?? aiStudioOcrModel)}
+                  >
+                    <Option value="PP-OCRv6">PP-OCRv6（纯文字识别，推荐）</Option>
+                    <Option value="PP-OCRv5">PP-OCRv5（纯文字识别）</Option>
+                  </Dropdown>
                   <Input
                     className={styles.ocrInput}
                     type="password"

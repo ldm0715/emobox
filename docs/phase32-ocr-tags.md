@@ -8,19 +8,23 @@
 用户确认的三个决策：
 
 1. **云端引擎 = 百度 AI Studio PaddleOCR 在线 API**（不是本地 PaddleOCR，也不是
-   百度智能云 aip.baidubce.com 的旧 OCR API）。AI Studio 的服务形态：
-   - 用户在 `aistudio.baidu.com/paddleocr/task` 创建**个人 API_URL**——模型
-     （PP-OCRv5 / PP-OCRv6 / PaddleOCR-VL 等）在创建 URL 时选定，**请求体没有
-     model 字段**（文档检索时确认：同步 API 文档页收录的还是 PP-OCRv5，v6 已上线
-     在异步文档侧边栏有「新品」入口，但两者请求形态一致——模型绑定 URL）；
-   - 鉴权：请求头 `Authorization: token <Access Token>`；
-   - 请求：`POST {API_URL}`，JSON `{"file": "<base64>", "fileType": 1}`；
-   - 响应：`result.ocrResults[0].prunedResult.rec_texts`（PP-OCR 产线 res 的简化
-     JSON，文本行数组）；错误 `errorCode` 非 0（12001 每日配额 / 12002 频率限制
-     映射成友好文案）；
-   - 选**同步 API** 而非异步 API（`/api/v2/ocr/jobs` + 轮询）：异步为多页 PDF /
-     批量文档设计，表情包单张场景单次 POST 延迟更低、实现简单得多；
-   - 每日免费额度约 2 万次（用户口述），以 AI Studio 页面为准，代码里不写死。
+   百度智能云 aip.baidubce.com 的旧 OCR API）。服务形态（**2026-09 起为 v2 异步
+   任务 API**，见下方「2026-09 迁移记录」——原同步 API 服务端已下线）：
+   - 提交：`POST https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`，
+     multipart/form-data：`file`（图片字节）+ `model`（如 PP-OCRv6——**模型从
+     旧版的"URL 绑定"改成了必填请求参数**）+ `optionalPayload`（JSON 字符串，
+     官方示例值：跳过文档方向/矫正/文本行方向分类）；
+   - 鉴权：请求头 `Authorization: Bearer <Access Token>`（不再是小写 `token`）；
+   - 提交响应信封 `{"traceId":…, "code":0, "msg":"…", "data":{"jobId":"…"}}`；
+   - 轮询：每 2s `GET …/api/v2/ocr/jobs/{jobId}`（同样带 Bearer），`data.state`
+     ∈ pending / running / done / failed；failed 时 `data.errorMsg`；done 时
+     `data.resultUrl.jsonUrl` 指向结果文件（GET 它**不需要鉴权**）；总预算 120s，
+     超时按云端错误处理（中止整批）；
+   - 结果：JSONL，每行一页 `{"result":{"ocrResults":[{"prunedResult":
+     {…,"rec_texts":["…"]}}]}}`——PP-OCR 产线的结构与旧同步 API 一致；
+   - 错误：信封 `code` 非 0（401 token 无效、10010 队列满、12001 每日页数上限、
+     12002 频率限制、10007 模型参数错误、5xx 系统错误），映射友好文案；
+   - 表情包单张小图正常几秒 done；每日免费额度以 AI Studio 页面为准，代码不写死。
 2. **默认引擎 = 系统 OCR**（Windows.Media.Ocr，本地离线、零额度成本）。中文识别
    依赖系统语言包（设置 → 时间和语言 → 语言 → 中文 → 可选功能「文字识别」），
    未装时引擎创建失败、按行 warn 跳过，不影响导入。
@@ -62,10 +66,11 @@
   `poisoned.into_inner()` 恢复毒化锁（与 `lock_import` 同语义）。
 - **不动 `updated_at`**：OCR 标签概念上是导入的一部分，不触发 modified-time 排序
   跳动。回收站行不跑 OCR（`is_deleted=0` 守卫）。
-- **设置推送**：`ocrEngine` / `aiStudioOcrApiUrl` / `aiStudioOcrToken` 存
-  `localStorage: emobox.settings`（事实源），ThemeProvider 挂载/变更时经
-  `set_ocr_config` 推到 Rust `OcrState` 内存镜像（两窗口幂等，同 selectionSearch
-  模式）。**Access Token 只存本机 localStorage**，随命令读内存镜像，不进日志。
+- **设置推送**：`ocrEngine` / `aiStudioOcrApiUrl` / `aiStudioOcrToken` /
+  `aiStudioOcrModel`（2026-09 异步迁移新增）存 `localStorage: emobox.settings`
+  （事实源），ThemeProvider 挂载/变更时经 `set_ocr_config` 推到 Rust `OcrState`
+  内存镜像（两窗口幂等，同 selectionSearch 模式）。**Access Token 只存本机
+  localStorage**，随命令读内存镜像，不进日志。
 
 ### Windows OCR（WinRT）实现要点
 
@@ -93,12 +98,43 @@
 
 - 设置页「存储与导入」新增「文字识别（OCR）」组：引擎 Dropdown、Windows 引擎的
   可用性状态行（`get_ocr_capabilities` 懒检测一次，进入 storage 页才跑 WinRT）、
-  aiStudio 展开的 API URL + Token（password）输入与「打开 AI Studio 控制台」
+  aiStudio 展开的 API 地址（可留空走官方默认端点）+ 模型 Dropdown
+  （PP-OCRv6/PP-OCRv5）+ Token（password）输入与「打开 AI Studio 控制台」
   按钮（`open_external_url` 白名单新增 `aistudio.baidu.com`）、「存量回填」按钮。
 - 回填进度：命令返回待识别总数（立即），进度经 `ocr-tags-updated`
   （`phase: backfill`）事件推进 → App 存 `ocrBackfill` state 传给设置弹窗；
   finished 时按 processed/total 分 success / warning / error toast。
 - 批末事件**无条件发一次**（哪怕整批被跳过）——前端靠它解除回填「进行中」状态。
+
+## 2026-09 迁移记录：同步 API → v2 异步 jobs API
+
+**根因**（用户报 `HTTP 500: {"traceId":…,"code":500,"msg":"Internal Server Error"}`）：
+百度已把 AI Studio PaddleOCR 在线接口从「同步识别」整体换成异步任务协议
+（官方文档「异步 API 完整调用示例」ai.baidu.com/ai-doc/AISTUDIO/fml7mozw5），
+旧同步 API（个人 API_URL + `{"file": base64}` JSON + `Authorization: token`）
+服务端已下线——新服务端收到旧格式请求直接回 500，且这个 `traceId/code/msg`
+信封本身就是新 API 的错误格式。当时选同步 API 的前提（"异步为多页 PDF 设计、
+个人 URL 可用"）已失效。
+
+**改动**（`ocr/ai_studio_ocr.rs` 整体重写）：
+
+- 提交/轮询/拉结果三段式（见上）；multipart 请求体手工构造（不引新依赖），
+  `model` / `optionalPayload` 文本字段 + `file` 二进制；
+- `resolve_job_url` URL 归一化：留空 → 官方默认端点；已是 `…/api/v2/ocr/jobs`
+  → 原样；官方域名（paddleocr.aistudio-app.com）或旧版 aistudio.baidu.com
+  地址但路径不对 → 官方默认端点（存量用户粘的旧 URL 自动迁移，**不用重填**）；
+  其余（自建网关）→ 原样、轮询在其后拼 `/{jobId}`；
+- 新增 `ai_studio_model` 配置字段（`OcrConfig` / `OcrState::set` /
+  `set_ocr_config` 命令 / `tauri.ts` / `ThemeProvider` / 设置页模型 Dropdown），
+  空串回默认 PP-OCRv6；
+- 错误码翻译扩到新信封：401 token 无效 / 10010 队列满 / 12001 每日页数上限 /
+  12002 频率限制 / 10007 模型参数错误（提示改 PP-OCRv6/v5）；
+- JSONL 结果解析兼容：缺 `ocrResults`（PaddleOCR-VL 等文档解析模型）时报错
+  引导切 PP-OCR 模型；无文字行 → 空 Vec（= 识别过但无文字，幂等守卫照旧）。
+
+**编排侧不变**：单张 `recognize_lines(api_url, token, model, png_bytes) ->
+Vec<String>` 契约、`OCR_LOCK` 串行、批内 1s 节流、云端错误中止整批、
+`ocr_text` 幂等守卫、批末事件，全部维持。
 
 ## 联网例外
 
@@ -108,8 +144,9 @@
 ## 验证
 
 - `ocr::tag_text`（10 用例：拆分/过滤/截断/去重/上限）、`ocr::ai_studio_ocr`
-  （响应解析契约/错误码/配置校验）、`ocr`（OcrState 读写/引擎枚举/默认值）、
-  `windows_ocr` 冒烟（枚举语言不 panic）。
+  （jobs 协议纯函数：URL 归一化/multipart 构造/jobId/状态/JSONL 解析/错误码/
+  配置校验）、`ocr`（OcrState 读写/引擎枚举/默认值）、`windows_ocr` 冒烟
+  （枚举语言不 panic）。
 - 全量：cargo fmt/check/clippy -D warnings/test（216）+ npm run build + vitest。
 
 ## 手动验收
