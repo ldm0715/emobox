@@ -345,6 +345,20 @@ export function TagPickerDialog({
   const [selectedForRemoval, setSelectedForRemoval] = useState<Set<number>>(new Set());
   const [batchRemoveConfirmOpen, setBatchRemoveConfirmOpen] = useState(false);
 
+  // 常挂载弹窗的 state 跨会话残留，而 surface 每次 open 都重新挂载：若首帧就
+  // 渲染上一轮的标签行，用户会看到上一个表情的标签闪一下，且 Fluent 的
+  // useFocusFirstElement 会聚焦第一行的 Checkbox、紧接着被 open 重置卸载（焦点
+  // 掉到 <body>，正是 lib/dialogFocusGuard.ts 所述链路的触发源之一）。在渲染阶段
+  // 消费 open 翻转（React 官方「props 变化时调整 state」模式），保证 surface 首帧
+  // 左栏为空，首个可聚焦元素回到不会被卸载的右栏 SearchBox。
+  // 清空只能放在 open 翻转时，不能放在关闭时——关闭有退场动画，那样列表会在
+  // 动画期间闪成空的（仓库既有的「常挂载弹窗 payload 快照」约定同理由）。
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) setCurrentTagIds([]);
+  }
+
   useEffect(() => {
     if (open) {
       setShownCount(emojiCount);
@@ -354,7 +368,8 @@ export function TagPickerDialog({
       setOcrNotice(null);
       ocrProgressRef.current = null;
       setOcrProgress(null);
-      setCurrentTagIds([]);
+      // currentTagIds 的重置已提前到渲染阶段（见上方 prevOpen 注释）——放在这里
+      // 太晚：surface 首帧已经带着上一轮的标签行挂载并被 Fluent 聚焦了。
       setRenamingTagId(null);
       setRenamingBusy(false);
       setMutating(false);
