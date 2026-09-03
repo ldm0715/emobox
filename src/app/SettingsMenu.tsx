@@ -113,11 +113,15 @@ const viewLabels: Record<DefaultLibraryView, string> = {
 const ocrEngineLabels: Record<OcrEngineKind, string> = {
   off: "关闭",
   windows: "系统 OCR（本地）",
+  tesseract: "Tesseract OCR（本地）",
   aiStudio: "AI Studio PaddleOCR（云端）",
 };
 
 /** AI Studio 控制台入口（openExternalUrl 主机白名单内的唯一百度域名）。 */
 const AI_STUDIO_CONSOLE_URL = "https://aistudio.baidu.com/paddleocr/task";
+
+/** Tesseract Windows 安装包说明页（github.com 在 openExternalUrl 白名单内）。 */
+const TESSERACT_DOWNLOAD_URL = "https://github.com/UB-Mannheim/tesseract/wiki";
 
 interface SettingsNavItem {
   id: SettingsSection;
@@ -452,6 +456,8 @@ export function SettingsDialog({
     setAiStudioOcrApiUrl,
     aiStudioOcrToken,
     setAiStudioOcrToken,
+    tesseractPath,
+    setTesseractPath,
   } = useAppSettings();
   // 「检查更新」的就地反馈 toaster（top-end，与主窗口一致）。
   const toasterId = "settings-update-toaster";
@@ -463,7 +469,8 @@ export function SettingsDialog({
   // 「检查更新」按钮检查中态。发现新版本 → onUpdateAvailable 交给 App 层弹窗；
   // 已是最新 / 没有发布 / 出错 → toast 反馈（弹窗只在有新版本时出现）。
   const [checkingUpdate, setCheckingUpdate] = useState(false);
-  // Phase 32：Windows OCR 可用性（进入「存储与导入」页时懒检测一次）。
+  // Phase 32：Windows OCR / Tesseract 可用性（进入「存储与导入」页时懒检测一次；
+  // 「重新检测」按钮把它置回 null 复用同一条懒检测链路重拉）。
   const [ocrCaps, setOcrCaps] = useState<OcrCapabilities | null>(null);
   // 存量回填触发中的短暂状态（await backfillOcrTags 期间）；批处理进度
   // 由 App 层经 ocrBackfill 事件 state 传入。
@@ -488,8 +495,8 @@ export function SettingsDialog({
     };
   }, []);
 
-  // Windows OCR 可用性探测要跑 WinRT（Rust 侧 spawn_blocking），只在
-  // 首次进入「存储与导入」时做一次，失败静默（显示"检测中"不阻塞）。
+  // 引擎可用性探测要跑 WinRT / spawn Tesseract 进程（Rust 侧 spawn_blocking），
+  // 只在首次进入「存储与导入」时做一次，失败静默（显示"检测中"不阻塞）。
   useEffect(() => {
     if (section !== "storage" || ocrCaps) return;
     let cancelled = false;
@@ -813,7 +820,7 @@ export function SettingsDialog({
             <div className={styles.settingText}>
               <LabelInfo
                 label="识别引擎"
-                detail="导入完成后在后台识别图片中的文字并自动追加为标签（文件名标签保留不变，搜索时两路都能命中）。「系统 OCR」完全本地离线，零额度成本，中文识别依赖系统语言包；「AI Studio PaddleOCR」是百度云端识别，对表情包文字更准，但图片会上传到百度服务器，且按张消耗每日免费额度。"
+                detail="导入完成后在后台识别图片中的文字并自动追加为标签（文件名标签保留不变，搜索时两路都能命中）。「系统 OCR」完全本地离线，零额度成本，中文识别依赖系统语言包；「Tesseract」是外置开源本地引擎，需自行安装并配置中文语言包，对风格化文字效果一般；「AI Studio PaddleOCR」是百度云端识别，对表情包文字更准，但图片会上传到百度服务器，且按张消耗每日免费额度。"
               />
             </div>
             <Dropdown
@@ -823,6 +830,7 @@ export function SettingsDialog({
               onOptionSelect={(_, data) => setOcrEngine(data.optionValue as OcrEngineKind)}
             >
               <Option value="windows">系统 OCR（本地）</Option>
+              <Option value="tesseract">Tesseract OCR（本地）</Option>
               <Option value="aiStudio">AI Studio PaddleOCR（云端）</Option>
               <Option value="off">关闭</Option>
             </Dropdown>
@@ -841,6 +849,53 @@ export function SettingsDialog({
                 </div>
               </div>
               <Badge appearance="tint">{ocrCaps?.windowsOcrAvailable ? "仅本地处理" : "不可用"}</Badge>
+            </div>
+          )}
+          {ocrEngine === "tesseract" && (
+            <div className={mergeClasses(styles.card, styles.settingRowStack)}>
+              <span className={styles.rowIcon}><ShieldCheckmark20Regular /></span>
+              <div className={styles.settingText}>
+                <div className={styles.settingLabel}>本地识别状态</div>
+                <div className={styles.settingDescription}>
+                  {ocrCaps === null
+                    ? "正在检测本机 Tesseract 安装状态…"
+                    : ocrCaps.tesseractAvailable
+                      ? `已检测到 Tesseract${ocrCaps.tesseractVersion ? `（${ocrCaps.tesseractVersion}）` : ""}，识别走本地引擎，图片不出本机。已安装语言：${ocrCaps.tesseractLanguages.join("、") || "无"}。${ocrCaps.tesseractLanguages.includes("chi_sim") ? "" : "未检测到中文语言包（chi_sim），中文识别效果会很差：可重新运行安装程序勾选中文语言数据，或将 chi_sim.traineddata 复制到安装目录的 tessdata 文件夹。"}`
+                      : "未检测到 Tesseract：它是一款开源本地 OCR，需自行安装（Windows 安装包由 UB-Mannheim 维护）。安装时建议在语言数据组件中勾选 Chinese (Simplified)，否则无法识别中文。"}
+                </div>
+                {ocrCaps !== null && !ocrCaps.tesseractAvailable && (
+                  <div className={styles.pathRow}>
+                    <Button
+                      icon={<Link20Regular />}
+                      onClick={() => {
+                        openExternalUrl(TESSERACT_DOWNLOAD_URL).catch((error) =>
+                          onNotifyError(`打开 Tesseract 下载页失败：${getErrorMessage(error)}`),
+                        );
+                      }}
+                    >
+                      打开 Tesseract 下载页
+                    </Button>
+                  </div>
+                )}
+                <div className={styles.ocrFields}>
+                  <Input
+                    className={styles.ocrInput}
+                    placeholder="tesseract.exe 完整路径（可选，留空自动检测）"
+                    value={tesseractPath}
+                    onChange={(_, data) => setTesseractPath(data.value)}
+                    aria-label="Tesseract 可执行文件路径"
+                  />
+                </div>
+                <div className={styles.pathRow}>
+                  <Button
+                    icon={ocrCaps === null ? <Spinner size="tiny" /> : <ArrowClockwise20Regular />}
+                    onClick={() => setOcrCaps(null)}
+                  >
+                    重新检测
+                  </Button>
+                </div>
+              </div>
+              <Badge appearance="tint">{ocrCaps?.tesseractAvailable ? "仅本地处理" : "未安装"}</Badge>
             </div>
           )}
           {ocrEngine === "aiStudio" && (

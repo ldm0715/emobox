@@ -1,6 +1,8 @@
 // TagPickerDialog（Phase 33 重设计）的纯函数：常用标签排序、搜索过滤、
 // OCR 识别结果合并。抽出来便于 vitest 覆盖，组件只做渲染。
 
+import type { OcrEngineKind } from "../../types";
+
 export interface TagOption {
   id: number;
   name: string;
@@ -132,12 +134,13 @@ export interface OcrNotice {
  * 识别批末的提示文案。约定：
  * - 全部成功且有标签 → null（chips 出现即是反馈）；
  * - 全部成功但无标签 → info「识别成功，但未识别出可用文字」（Windows 引擎
- *   附切换 AI Studio 的建议——本地 OCR 效果有限，这是该场景的常见原因）；
+ *   附切换 AI Studio 的建议、Tesseract 附检查语言包的建议——两者本地 OCR
+ *   效果有限，语言包缺失是该场景的常见原因）；
  * - 全部失败 → error；部分失败 / 云端中止 → warning 汇总。
  */
 export function buildOcrNotice(
   stats: OcrBatchStats,
-  engine: "off" | "windows" | "aiStudio",
+  engine: OcrEngineKind,
 ): OcrNotice | null {
   const unfinished = stats.processed < stats.total;
 
@@ -153,7 +156,9 @@ export function buildOcrNotice(
       const suffix =
         engine === "windows"
           ? "。Windows 本地 OCR 效果有限，可在设置中切换 AI Studio 引擎后重试"
-          : "";
+          : engine === "tesseract"
+            ? "。Tesseract 的识别效果依赖语言包，请确认已安装中文（chi_sim）与英文（eng）语言数据"
+            : "";
       return { intent: "info", text: `识别成功，但未从图片中识别出可用的文字${suffix}` };
     }
     return null;

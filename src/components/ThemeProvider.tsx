@@ -64,6 +64,8 @@ interface PersistedSettings {
   ocrEngine: OcrEngineKind;
   aiStudioOcrApiUrl: string;
   aiStudioOcrToken: string;
+  // Phase 34: Tesseract 可执行文件路径（空串 = 自动检测：常见安装位置 + PATH）。
+  tesseractPath: string;
 }
 
 interface SettingsContextValue extends PersistedSettings {
@@ -84,6 +86,7 @@ interface SettingsContextValue extends PersistedSettings {
   setOcrEngine: (engine: OcrEngineKind) => void;
   setAiStudioOcrApiUrl: (url: string) => void;
   setAiStudioOcrToken: (token: string) => void;
+  setTesseractPath: (path: string) => void;
 }
 
 const STORAGE_KEY = "emobox.settings";
@@ -105,6 +108,7 @@ const defaultSettings: PersistedSettings = {
   ocrEngine: "windows",
   aiStudioOcrApiUrl: "",
   aiStudioOcrToken: "",
+  tesseractPath: "",
 };
 
 const brand: BrandVariants = {
@@ -183,7 +187,7 @@ function isShortcut(value: unknown): value is string {
 }
 
 function isOcrEngine(value: unknown): value is OcrEngineKind {
-  return value === "off" || value === "windows" || value === "aiStudio";
+  return value === "off" || value === "windows" || value === "tesseract" || value === "aiStudio";
 }
 
 function asString(value: unknown): string | null {
@@ -223,6 +227,7 @@ function readSettings(): PersistedSettings {
       ocrEngine: isOcrEngine(parsed.ocrEngine) ? parsed.ocrEngine : defaultSettings.ocrEngine,
       aiStudioOcrApiUrl: asString(parsed.aiStudioOcrApiUrl) ?? defaultSettings.aiStudioOcrApiUrl,
       aiStudioOcrToken: asString(parsed.aiStudioOcrToken) ?? defaultSettings.aiStudioOcrToken,
+      tesseractPath: asString(parsed.tesseractPath) ?? defaultSettings.tesseractPath,
     };
   } catch {
     return defaultSettings;
@@ -289,18 +294,24 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     });
   }, [settings.closeToTray]);
 
-  // Phase 32：把 OCR 引擎与 AI Studio 凭据推送到 Rust（OcrState 内存镜像，
-  // 导入命令在后台识别时读取）。幂等；两个窗口都会执行。失败仅 log ——
-  // Rust 侧默认与这里一致（windows，凭据为空）。
+  // Phase 32：把 OCR 引擎与 AI Studio 凭据（Phase 34 加 Tesseract 路径）推送到
+  // Rust（OcrState 内存镜像，导入命令在后台识别时读取）。幂等；两个窗口都会
+  // 执行。失败仅 log —— Rust 侧默认与这里一致（windows，凭据为空）。
   useEffect(() => {
     setOcrConfig({
       engine: settings.ocrEngine,
       aiStudioApiUrl: settings.aiStudioOcrApiUrl,
       aiStudioToken: settings.aiStudioOcrToken,
+      tesseractPath: settings.tesseractPath,
     }).catch((error) => {
       console.error("推送 OCR 设置失败", error);
     });
-  }, [settings.ocrEngine, settings.aiStudioOcrApiUrl, settings.aiStudioOcrToken]);
+  }, [
+    settings.ocrEngine,
+    settings.aiStudioOcrApiUrl,
+    settings.aiStudioOcrToken,
+    settings.tesseractPath,
+  ]);
 
   const value = useMemo<SettingsContextValue>(
     () => ({
@@ -354,6 +365,10 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       setAiStudioOcrToken: (aiStudioOcrToken) => setSettings((current) => ({
         ...current,
         aiStudioOcrToken,
+      })),
+      setTesseractPath: (tesseractPath) => setSettings((current) => ({
+        ...current,
+        tesseractPath,
       })),
     }),
     [resolvedTheme, settings],

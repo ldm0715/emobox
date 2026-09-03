@@ -461,20 +461,25 @@ pub fn set_ocr_config(
     engine: String,
     ai_studio_api_url: String,
     ai_studio_token: String,
+    tesseract_path: String,
 ) -> Result<(), String> {
     // localStorage 是事实源，这里只更新内存镜像；未知值按关闭处理（不该发生）。
     let engine = ocr::OcrEngineKind::from_str(&engine).unwrap_or_else(|| {
         log::warn!("未知的 OCR 引擎值：{engine}，按关闭处理");
         ocr::OcrEngineKind::Off
     });
-    state.set(engine, ai_studio_api_url, ai_studio_token);
+    state.set(engine, ai_studio_api_url, ai_studio_token, tesseract_path);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn get_ocr_capabilities() -> Result<ocr::OcrCapabilities, String> {
-    // 引擎可用性探测要跑 WinRT，别占用主线程。
-    tauri::async_runtime::spawn_blocking(ocr::capabilities)
+pub async fn get_ocr_capabilities(
+    state: State<'_, ocr::OcrState>,
+) -> Result<ocr::OcrCapabilities, String> {
+    // 引擎可用性探测要跑 WinRT / spawn Tesseract 进程，别占用主线程；
+    // 先取配置快照（含 Tesseract 自定义路径），不把 State 借用带进闭包。
+    let config = state.snapshot();
+    tauri::async_runtime::spawn_blocking(move || ocr::capabilities(&config))
         .await
         .map_err(|error| format!("读取 OCR 能力任务意外中止：{error}"))
 }

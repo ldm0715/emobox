@@ -13,6 +13,7 @@
 
 pub mod ai_studio_ocr;
 pub mod tag_text;
+pub mod tesseract_ocr;
 #[cfg(windows)]
 pub mod windows_ocr;
 
@@ -55,6 +56,8 @@ pub enum OcrEngineKind {
     #[default]
     Windows,
     AiStudio,
+    /// Phase 34：调用外部 Tesseract 命令行，需用户自行安装。
+    Tesseract,
 }
 
 impl OcrEngineKind {
@@ -63,6 +66,7 @@ impl OcrEngineKind {
             "off" => Some(Self::Off),
             "windows" => Some(Self::Windows),
             "aiStudio" => Some(Self::AiStudio),
+            "tesseract" => Some(Self::Tesseract),
             _ => None,
         }
     }
@@ -73,6 +77,8 @@ pub struct OcrConfig {
     pub engine: OcrEngineKind,
     pub ai_studio_api_url: String,
     pub ai_studio_token: String,
+    /// Tesseract 可执行文件路径（空串 = 自动检测：常见安装位置 + PATH）。
+    pub tesseract_path: String,
 }
 
 impl OcrConfig {
@@ -96,11 +102,18 @@ impl OcrState {
         }
     }
 
-    pub fn set(&self, engine: OcrEngineKind, api_url: String, token: String) {
+    pub fn set(
+        &self,
+        engine: OcrEngineKind,
+        api_url: String,
+        token: String,
+        tesseract_path: String,
+    ) {
         let mut config = self.lock();
         config.engine = engine;
         config.ai_studio_api_url = api_url;
         config.ai_studio_token = token;
+        config.tesseract_path = tesseract_path;
     }
 
     pub fn snapshot(&self) -> OcrConfig {
@@ -171,6 +184,9 @@ fn recognize_lines(config: &OcrConfig, png_bytes: &[u8]) -> Result<Vec<String>, 
             &config.ai_studio_token,
             png_bytes,
         ),
+        OcrEngineKind::Tesseract => {
+            tesseract_ocr::recognize_lines(&config.tesseract_path, png_bytes)
+        }
     }
 }
 
@@ -204,13 +220,25 @@ pub fn windows_ocr_capabilities() -> (bool, Vec<String>) {
 pub struct OcrCapabilities {
     pub windows_ocr_available: bool,
     pub windows_languages: Vec<String>,
+    /// Phase 34：Tesseract 检测状态（路径未配置时按常见位置 + PATH 探测）。
+    pub tesseract_available: bool,
+    pub tesseract_version: Option<String>,
+    pub tesseract_languages: Vec<String>,
+    pub tesseract_path: Option<String>,
 }
 
-pub fn capabilities() -> OcrCapabilities {
+pub fn capabilities(config: &OcrConfig) -> OcrCapabilities {
     let (windows_ocr_available, windows_languages) = windows_ocr_capabilities();
+    let tesseract = tesseract_ocr::probe(&config.tesseract_path);
     OcrCapabilities {
         windows_ocr_available,
         windows_languages,
+        tesseract_available: tesseract.available,
+        tesseract_version: tesseract.version,
+        tesseract_languages: tesseract.languages,
+        tesseract_path: tesseract
+            .exe_path
+            .map(|path| path.to_string_lossy().into_owned()),
     }
 }
 
@@ -351,6 +379,10 @@ fn recognize_row(
             OcrEngineKind::AiStudio => return Err(error),
             OcrEngineKind::Windows => {
                 log::warn!("Windows OCR 识别失败 emoji_id={emoji_id}：{error}");
+                return Ok(RowOutcome::Failed);
+            }
+            OcrEngineKind::Tesseract => {
+                log::warn!("Tesseract OCR 识别失败 emoji_id={emoji_id}：{error}");
                 return Ok(RowOutcome::Failed);
             }
             OcrEngineKind::Off => return Err("OCR 引擎已关闭".to_string()),
@@ -506,6 +538,7 @@ mod tests {
             OcrEngineKind::AiStudio,
             "https://api.example.com/ocr".to_string(),
             "tok".to_string(),
+            String::new(),
         );
         let snapshot = state.snapshot();
         assert_eq!(snapshot.effective_engine(), OcrEngineKind::AiStudio);
@@ -513,7 +546,12 @@ mod tests {
         assert_eq!(snapshot.ai_studio_token, "tok");
 
         // Off 与引擎切换幂等：重复 set 覆盖。
-        state.set(OcrEngineKind::Off, String::new(), String::new());
+        state.set(
+            OcrEngineKind::Off,
+            String::new(),
+            String::new(),
+            String::new(),
+        );
         assert_eq!(state.snapshot().effective_engine(), OcrEngineKind::Off);
     }
 
@@ -527,6 +565,10 @@ mod tests {
         assert_eq!(
             OcrEngineKind::from_str("windows"),
             Some(OcrEngineKind::Windows)
+        );
+        assert_eq!(
+            OcrEngineKind::from_str("tesseract"),
+            Some(OcrEngineKind::Tesseract)
         );
         assert_eq!(OcrEngineKind::from_str("other"), None);
     }

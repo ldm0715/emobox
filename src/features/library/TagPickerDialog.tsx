@@ -387,7 +387,9 @@ export function TagPickerDialog({
   const ocrCaption =
     ocrEngine === "off"
       ? "OCR 引擎未启用，请先在设置 → 存储 → 文字识别中选择引擎"
-      : "从图片中的文字自动提取标签；已识别过的会重新识别并覆盖识别文字（标签只增不删）";
+      : ocrEngine === "tesseract"
+        ? "从图片中的文字自动提取标签；已识别过的会重新识别并覆盖识别文字（标签只增不删）。Tesseract 为本机安装的外部引擎，需已安装并配置中文（chi_sim）/英文（eng）语言包"
+        : "从图片中的文字自动提取标签；已识别过的会重新识别并覆盖识别文字（标签只增不删）";
 
   const selectedIdsSorted = useMemo(() => [...selected].sort((a, b) => a - b), [selected]);
 

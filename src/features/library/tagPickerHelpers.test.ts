@@ -146,6 +146,17 @@ describe("tagPickerHelpers", () => {
       expect(cloud?.text).not.toContain("AI Studio");
     });
 
+    it("Tesseract 无文字 → 附检查语言包建议，不提 AI Studio", () => {
+      const notice = buildOcrNotice(
+        { processed: 2, total: 2, tagged: 0, empty: 2, failed: 0 },
+        "tesseract",
+      );
+      expect(notice?.intent).toBe("info");
+      expect(notice?.text).toContain("chi_sim");
+      expect(notice?.text).toContain("语言数据");
+      expect(notice?.text).not.toContain("AI Studio");
+    });
+
     it("全部失败 → error 提示", () => {
       const notice = buildOcrNotice(
         { processed: 2, total: 2, tagged: 0, empty: 0, failed: 2 },

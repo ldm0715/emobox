@@ -145,13 +145,19 @@ export interface StorageInfo {
 
 // ---------- Phase 32: OCR 识图自动打标签 ----------
 
-/** OCR 引擎。windows = 系统内置 OCR（本地离线，默认）；aiStudio = 百度 AI Studio PaddleOCR（云端，需 API URL + Access Token）。 */
-export type OcrEngineKind = "off" | "windows" | "aiStudio";
+/** OCR 引擎。windows = 系统内置 OCR（本地离线，默认）；tesseract = 外部 Tesseract 命令行（本地，需自行安装，Phase 34）；aiStudio = 百度 AI Studio PaddleOCR（云端，需 API URL + Access Token）。 */
+export type OcrEngineKind = "off" | "windows" | "tesseract" | "aiStudio";
 
-/** Windows OCR 可用性（设置页展示；未装含「文字识别」的语言包时 available 为 false）。 */
+/** 各引擎可用性（设置页展示：Windows OCR 未装含「文字识别」的语言包、Tesseract 未安装程序或语言包时 available 为 false）。 */
 export interface OcrCapabilities {
   windowsOcrAvailable: boolean;
   windowsLanguages: string[];
+  /** Tesseract 检测状态（自定义路径 → 常见安装位置 → PATH）。 */
+  tesseractAvailable: boolean;
+  tesseractVersion: string | null;
+  tesseractLanguages: string[];
+  /** 实际定位到的 tesseract 可执行文件路径（未检测到时为 null）。 */
+  tesseractPath: string | null;
 }
 
 /** `ocr-tags-updated` 事件载荷：一批 OCR 识别的进度（每 10 张 + 批末推送，计数均累计）。 */

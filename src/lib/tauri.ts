@@ -328,11 +328,12 @@ export function setOcrConfig(config: {
   engine: OcrEngineKind;
   aiStudioApiUrl: string;
   aiStudioToken: string;
+  tesseractPath: string;
 }): Promise<void> {
   return invoke<void>("set_ocr_config", config);
 }
 
-/** Windows OCR 可用性与语言列表（WinRT 探测在后台线程跑）。 */
+/** 各引擎可用性：Windows OCR 走 WinRT 探测、Tesseract 走进程探测（都在后台线程跑）。 */
 export function getOcrCapabilities(): Promise<OcrCapabilities> {
   return invoke<OcrCapabilities>("get_ocr_capabilities");
 }
