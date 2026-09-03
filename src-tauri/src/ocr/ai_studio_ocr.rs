@@ -24,6 +24,8 @@ use std::time::Instant;
 
 /// 官方异步 API 的任务提交端点；用户没填地址（或填的是已下线的旧版地址）时兜底。
 const DEFAULT_JOB_URL: &str = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs";
+/// AI Studio 网页控制台的每日额度端点（走网页登录 Cookie，非 Access Token）。
+const PAGE_COUNT_URL: &str = "https://aistudio.baidu.com/paddlex/v3/ocr/api/pageCount";
 /// 默认识别模型（官方控制台示例当前值；设置里可切换）。
 pub const DEFAULT_MODEL: &str = "PP-OCRv6";
 /// PP-OCR 产线的可选参数（官方示例值）：跳过文档方向 / 矫正 / 文本行方向
@@ -91,6 +93,105 @@ fn normalize_model(model: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// 「未登录」错误哨兵：额度 / Token 查询接口走 `aistudio.baidu.com` 网页登录
+/// Cookie（Bearer Token 不通，实测返回 `{errorCode:500,"未登录"}`），登录态缺失
+/// 时统一返回这个常量，命令层据此转成可判别的结构化错误给前端（显示「去登录」）。
+pub const NOT_LOGGED_IN: &str = "NOT_LOGGED_IN";
+
+/// AI Studio 每日免费额度（网页控制台 `pageCount` 接口，鉴权走登录 Cookie）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiStudioQuota {
+    /// 每日调用页数上限。
+    pub limit: i64,
+    /// 今日已用页数。
+    pub used: i64,
+    /// 白名单账号不受每日额度限制。
+    pub whitelist: bool,
+}
+
+/// 查询每日额度。`cookie_header` 是 `aistudio.baidu.com` 的登录 Cookie
+/// （由 `ai_studio_auth::read_cookie_header` 从登录 WebView 读取），
+/// `model` 沿用设置里的识别模型（额度按模型计）。
+pub fn fetch_quota(cookie_header: &str, model: &str) -> Result<AiStudioQuota, String> {
+    let cookie_header = cookie_header.trim();
+    if cookie_header.is_empty() {
+        return Err(NOT_LOGGED_IN.to_string());
+    }
+    let model = normalize_model(model);
+    let body = get_with_cookie(
+        &format!("{PAGE_COUNT_URL}?model={model}"),
+        cookie_header,
+        "额度查询",
+    )?;
+    parse_quota_body(&body)
+}
+
+/// 带 Cookie 的 GET（额度 / Token 查询共用：网页登录态接口，不用 Bearer）。
+pub(crate) fn get_with_cookie(
+    url: &str,
+    cookie_header: &str,
+    action: &str,
+) -> Result<String, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(CONNECT_TIMEOUT)
+        .timeout_read(READ_TIMEOUT)
+        .build();
+    let response = agent
+        .get(url)
+        .set("User-Agent", USER_AGENT)
+        .set("Cookie", cookie_header)
+        .call()
+        .map_err(|error| map_http_error(error, action))?;
+    read_body(response, &format!("读取 AI Studio {action}响应失败"))
+}
+
+/// 网页控制台信封错误（`errorCode`/`errorMsg`）：「未登录」返回哨兵常量
+/// （任何非 0 码 + 未登录文案都视为登录态缺失），其余按既有错误码表翻译。
+pub(crate) fn envelope_error(code: i64, message: &str) -> String {
+    if message.contains("未登录") {
+        return NOT_LOGGED_IN.to_string();
+    }
+    friendly_error(code, message)
+}
+
+/// 解析额度响应：`{"errorCode":0,"result":{"limit":…,"used":…,"whitelist":…}}`。
+/// 信封键是 `errorCode`/`errorMsg`（网页控制台 API），与 jobs API 的 `code`/`msg`
+/// 不同，故独立解析、不动 `error_detail`。独立成纯函数便于单测锁定契约。
+pub fn parse_quota_body(body: &str) -> Result<AiStudioQuota, String> {
+    let value: serde_json::Value = serde_json::from_str(body)
+        .map_err(|error| format!("AI Studio 额度响应不是有效 JSON：{error}"))?;
+    if let Some(code) = value.get("errorCode").and_then(|v| v.as_i64())
+        && code != 0
+    {
+        let message = value
+            .get("errorMsg")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未知错误");
+        return Err(envelope_error(code, message));
+    }
+    let result = value
+        .get("result")
+        .ok_or_else(|| "AI Studio 额度响应缺少 result 字段".to_string())?;
+    let limit = result
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| "AI Studio 额度响应缺少 result.limit 字段".to_string())?;
+    let used = result
+        .get("used")
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| "AI Studio 额度响应缺少 result.used 字段".to_string())?;
+    let whitelist = result
+        .get("whitelist")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Ok(AiStudioQuota {
+        limit,
+        used,
+        whitelist,
+    })
 }
 
 /// 识别一张 PNG 图片，返回按行的识别文本。
@@ -380,15 +481,19 @@ fn parse_result_jsonl(body: &str) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::AiStudioQuota;
     use super::DEFAULT_JOB_URL;
     use super::DEFAULT_MODEL;
     use super::JobState;
+    use super::NOT_LOGGED_IN;
     use super::build_multipart_body;
     use super::error_detail;
+    use super::fetch_quota;
     use super::friendly_error;
     use super::normalize_model;
     use super::parse_job_id;
     use super::parse_job_state;
+    use super::parse_quota_body;
     use super::parse_result_jsonl;
     use super::resolve_job_url;
     use super::validate_config;
@@ -606,5 +711,74 @@ mod tests {
         let (url, token) = validate_config("  https://api.example.com/ocr  ", " tok ").expect("ok");
         assert_eq!(url, "https://api.example.com/ocr");
         assert_eq!(token, "tok");
+    }
+
+    #[test]
+    fn quota_body_parses_counts_and_whitelist() {
+        let quota = parse_quota_body(
+            r#"{"logId":"l","errorCode":0,"errorMsg":"Success","result":{"limit":20000,"used":36,"whitelist":false}}"#,
+        )
+        .expect("parse");
+        assert_eq!(
+            quota,
+            AiStudioQuota {
+                limit: 20000,
+                used: 36,
+                whitelist: false
+            }
+        );
+        // whitelist 缺省按 false 兜底。
+        let quota = parse_quota_body(r#"{"errorCode":0,"result":{"limit":20000,"used":0}}"#)
+            .expect("parse");
+        assert!(!quota.whitelist);
+        // 白名单账号透传。
+        let quota = parse_quota_body(
+            r#"{"errorCode":0,"result":{"limit":20000,"used":20000,"whitelist":true}}"#,
+        )
+        .expect("parse");
+        assert!(quota.whitelist);
+    }
+
+    #[test]
+    fn quota_body_maps_not_logged_in_to_sentinel() {
+        // 实测形态：Bearer 不通，返回 errorCode 500 +「未登录」。
+        let error =
+            parse_quota_body(r#"{"logId":"l","errorCode":500,"errorMsg":"未登录","result":null}"#)
+                .expect_err("not logged in");
+        assert_eq!(error, NOT_LOGGED_IN);
+        // 任何非 0 码 + 未登录文案都视为登录态缺失。
+        let error = parse_quota_body(r#"{"errorCode":3,"errorMsg":"用户未登录"}"#)
+            .expect_err("not logged in");
+        assert_eq!(error, NOT_LOGGED_IN);
+    }
+
+    #[test]
+    fn quota_body_translates_envelope_error_codes() {
+        let error = parse_quota_body(
+            r#"{"errorCode":12001,"errorMsg":"page limit exceeded","result":null}"#,
+        )
+        .expect_err("quota error");
+        assert!(error.contains("每日"), "actual: {error}");
+    }
+
+    #[test]
+    fn quota_body_rejects_malformed_payloads() {
+        assert!(parse_quota_body("not json").is_err());
+        assert!(parse_quota_body(r#"{"errorCode":0}"#).is_err());
+        assert!(parse_quota_body(r#"{"errorCode":0,"result":null}"#).is_err());
+        assert!(parse_quota_body(r#"{"errorCode":0,"result":{"used":1}}"#).is_err());
+    }
+
+    #[test]
+    fn quota_requires_cookie() {
+        // 未登录 WebView（拿不到 Cookie）时直接返回哨兵，不发网络请求。
+        assert_eq!(
+            fetch_quota("", "PP-OCRv6").expect_err("no cookie"),
+            NOT_LOGGED_IN
+        );
+        assert_eq!(
+            fetch_quota("   ", "PP-OCRv6").expect_err("no cookie"),
+            NOT_LOGGED_IN
+        );
     }
 }

@@ -491,6 +491,49 @@ pub async fn get_ocr_capabilities(
         .map_err(|error| format!("读取 OCR 能力任务意外中止：{error}"))
 }
 
+/// 打开 AI Studio 登录窗口（内嵌 WebView，登录态落在应用自己的 WebView2
+/// profile）并启动登录轮询；登录成功经 `aistudio-login-complete` 事件把
+/// 自动抓取的 Access Token 推给主窗口。命令本身立即返回。
+///
+/// 必须是 async 命令 + `spawn_blocking`：Windows 上在**同步命令**里做窗口
+/// 操作（build/show/set_focus）会死锁事件循环，登录窗口冻成白屏且关不掉
+/// （tauri#4121）；窗口操作放独立线程是官方文档给的安全模式。
+#[tauri::command]
+pub async fn login_aistudio(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || ocr::ai_studio_auth::start_login_flow(app))
+        .await
+        .map_err(|error| format!("登录任务意外中止：{error}"))?
+}
+
+/// 查询 AI Studio 每日免费额度（`pageCount` 接口走网页登录 Cookie，不是
+/// Access Token——Bearer 实测不通）。未登录时错误串带 `NOT_LOGGED_IN`
+/// 前缀，前端据此显示「去登录」而不是普通错误。
+#[tauri::command]
+pub async fn get_ai_studio_quota(
+    app: AppHandle,
+    state: State<'_, ocr::OcrState>,
+) -> Result<ocr::ai_studio_ocr::AiStudioQuota, String> {
+    let model = state.snapshot().ai_studio_model;
+    // cookies_for_url 在 Windows 的同步命令里调用会死锁（wry#583），
+    // Cookie 读取与 HTTP 查询都放 blocking 线程。
+    tauri::async_runtime::spawn_blocking(move || {
+        let cookie_header = ocr::ai_studio_auth::read_cookie_header(&app)?;
+        ocr::ai_studio_ocr::fetch_quota(&cookie_header, &model)
+    })
+    .await
+    .map_err(|error| format!("额度查询任务意外中止：{error}"))?
+    .map_err(|error| {
+        if error == ocr::ai_studio_ocr::NOT_LOGGED_IN {
+            format!(
+                "{}:未登录 AI Studio，请先登录",
+                ocr::ai_studio_ocr::NOT_LOGGED_IN
+            )
+        } else {
+            error
+        }
+    })
+}
+
 #[tauri::command]
 pub async fn backfill_ocr_tags(
     app: AppHandle,

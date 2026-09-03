@@ -145,8 +145,8 @@ export interface StorageInfo {
 
 // ---------- Phase 32: OCR 识图自动打标签 ----------
 
-/** OCR 引擎。windows = 系统内置 OCR（本地离线，默认）；tesseract = 外部 Tesseract 命令行（本地，需自行安装，Phase 34）；aiStudio = 百度 AI Studio PaddleOCR（云端，需 API URL + Access Token）。 */
-export type OcrEngineKind = "off" | "windows" | "tesseract" | "aiStudio";
+/** OCR 引擎。windows = 系统内置 OCR（本地离线，默认）；tesseract = 外部 Tesseract 命令行（本地，需自行安装，Phase 34）；aiStudio = 百度 AI Studio PaddleOCR（云端，手动填 API URL + Access Token）；aiStudioLogin = AI Studio 登录模式（云端，内嵌窗口登录自动抓 Token 与额度，2026-09）。 */
+export type OcrEngineKind = "off" | "windows" | "tesseract" | "aiStudio" | "aiStudioLogin";
 
 /** 各引擎可用性（设置页展示：Windows OCR 未装含「文字识别」的语言包、Tesseract 未安装程序或语言包时 available 为 false）。 */
 export interface OcrCapabilities {
@@ -180,6 +180,16 @@ export interface OcrTagsUpdatedPayload {
 export interface EmojiTags {
   emojiId: number;
   tagIds: number[];
+}
+
+/** AI Studio 每日免费额度（`pageCount` 接口，走网页登录 Cookie；查询成功 = 登录态有效）。 */
+export interface AiStudioQuota {
+  /** 每日调用页数上限。 */
+  limit: number;
+  /** 今日已用页数。 */
+  used: number;
+  /** 白名单账号不受每日额度限制。 */
+  whitelist: boolean;
 }
 
 // 第六阶段新增

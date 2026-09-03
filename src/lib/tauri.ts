@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
+  AiStudioQuota,
   ClipboardCopyOutcome,
   EmojiTags,
   FolderImportSummary,
@@ -352,4 +353,17 @@ export function ocrRecognizeEmojis(emojiIds: number[]): Promise<number> {
 /** Phase 33：读取指定表情当前的标签 id 集合（手动识别批末同步弹窗选中集用）。 */
 export function getEmojiTags(emojiIds: number[]): Promise<EmojiTags[]> {
   return invoke<EmojiTags[]>("get_emoji_tags", { emojiIds });
+}
+
+/** 主窗口事件：AI Studio 登录窗口轮询到登录成功，payload 携带自动抓取的 Access Token。 */
+export const AISTUDIO_LOGIN_COMPLETE_EVENT = "aistudio-login-complete";
+
+/** 打开 AI Studio 登录窗口（内嵌 WebView）并启动登录轮询；登录成功经 AISTUDIO_LOGIN_COMPLETE_EVENT 回主窗口。 */
+export function loginAiStudio(): Promise<void> {
+  return invoke<void>("login_aistudio");
+}
+
+/** 查询 AI Studio 每日免费额度（走网页登录 Cookie）。未登录时错误串以 NOT_LOGGED_IN 开头。 */
+export function getAiStudioQuota(): Promise<AiStudioQuota> {
+  return invoke<AiStudioQuota>("get_ai_studio_quota");
 }

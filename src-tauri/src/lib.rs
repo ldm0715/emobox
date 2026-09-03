@@ -148,6 +148,8 @@ pub fn run() {
             commands::collect_image_from_clipboard,
             commands::set_ocr_config,
             commands::get_ocr_capabilities,
+            commands::login_aistudio,
+            commands::get_ai_studio_quota,
             commands::backfill_ocr_tags,
             commands::ocr_recognize_emojis,
             commands::get_emoji_tags,
@@ -195,6 +197,14 @@ pub fn run() {
                         }
                     }
                     tray::TRAY_MENU_LABEL => {
+                        api.prevent_close();
+                        if let Err(error) = window.hide() {
+                            log::error!("隐藏窗口 {} 失败：{error}", window.label());
+                        }
+                    }
+                    // AI Studio 登录窗口：常驻隐藏不销毁（同浮层模式）；
+                    // 用户关窗 = 放弃登录，登录轮询检测到不可见即停止。
+                    ocr::ai_studio_auth::WINDOW_LABEL => {
                         api.prevent_close();
                         if let Err(error) = window.hide() {
                             log::error!("隐藏窗口 {} 失败：{error}", window.label());

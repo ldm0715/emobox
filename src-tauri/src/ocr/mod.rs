@@ -11,6 +11,7 @@
 //! 设置页的存量回填补上。`force = true` 的手动识别（Phase 33，标签弹窗
 //! 触发）解除该守卫：重跑引擎覆盖 `ocr_text`，但标签只增不删。
 
+pub mod ai_studio_auth;
 pub mod ai_studio_ocr;
 pub mod tag_text;
 pub mod tesseract_ocr;
@@ -55,7 +56,11 @@ pub enum OcrEngineKind {
     /// 默认引擎：本地离线、零额度成本（与前端 PersistedSettings 默认一致）。
     #[default]
     Windows,
+    /// AI Studio 云端（手动配置：API URL + Access Token）。
     AiStudio,
+    /// AI Studio 云端（登录模式，2026-09：凭据经内嵌登录窗口自动抓取，
+    /// Token 仍落在 `ai_studio_token` 配置位，识别链路与 AiStudio 完全共用）。
+    AiStudioLogin,
     /// Phase 34：调用外部 Tesseract 命令行，需用户自行安装。
     Tesseract,
 }
@@ -66,9 +71,15 @@ impl OcrEngineKind {
             "off" => Some(Self::Off),
             "windows" => Some(Self::Windows),
             "aiStudio" => Some(Self::AiStudio),
+            "aiStudioLogin" => Some(Self::AiStudioLogin),
             "tesseract" => Some(Self::Tesseract),
             _ => None,
         }
+    }
+
+    /// 是否云端引擎（节流 / 错误中止整批等云端语义按此判定）。
+    pub fn is_cloud(self) -> bool {
+        matches!(self, Self::AiStudio | Self::AiStudioLogin)
     }
 }
 
@@ -184,7 +195,8 @@ fn recognize_lines(config: &OcrConfig, png_bytes: &[u8]) -> Result<Vec<String>, 
     match config.effective_engine() {
         OcrEngineKind::Off => Err("OCR 引擎已关闭".to_string()),
         OcrEngineKind::Windows => recognize_windows(png_bytes),
-        OcrEngineKind::AiStudio => ai_studio_ocr::recognize_lines(
+        // 登录模式与手动模式共用同一条识别链路（Token 都在 ai_studio_token）。
+        OcrEngineKind::AiStudio | OcrEngineKind::AiStudioLogin => ai_studio_ocr::recognize_lines(
             &config.ai_studio_api_url,
             &config.ai_studio_token,
             &config.ai_studio_model,
@@ -288,7 +300,7 @@ pub fn process_emoji_ids(
     };
 
     let total = emoji_ids.len();
-    let is_cloud_engine = config.effective_engine() == OcrEngineKind::AiStudio;
+    let is_cloud_engine = config.effective_engine().is_cloud();
     let mut counters = BatchCounters::default();
     for (index, emoji_id) in emoji_ids.iter().enumerate() {
         let Some(managed_path) = load_pending_path(&connection, *emoji_id, force) else {
@@ -382,7 +394,7 @@ fn recognize_row(
     let lines = match recognize_lines(config, &png_bytes) {
         Ok(lines) => lines,
         Err(error) => match config.effective_engine() {
-            OcrEngineKind::AiStudio => return Err(error),
+            OcrEngineKind::AiStudio | OcrEngineKind::AiStudioLogin => return Err(error),
             OcrEngineKind::Windows => {
                 log::warn!("Windows OCR 识别失败 emoji_id={emoji_id}：{error}");
                 return Ok(RowOutcome::Failed);
@@ -572,6 +584,10 @@ mod tests {
             Some(OcrEngineKind::AiStudio)
         );
         assert_eq!(
+            OcrEngineKind::from_str("aiStudioLogin"),
+            Some(OcrEngineKind::AiStudioLogin)
+        );
+        assert_eq!(
             OcrEngineKind::from_str("windows"),
             Some(OcrEngineKind::Windows)
         );
@@ -580,6 +596,16 @@ mod tests {
             Some(OcrEngineKind::Tesseract)
         );
         assert_eq!(OcrEngineKind::from_str("other"), None);
+    }
+
+    #[test]
+    fn login_engine_is_cloud_and_shares_pipeline() {
+        // 登录模式与手动模式同为云端引擎（节流 / 错误中止整批）。
+        assert!(OcrEngineKind::AiStudioLogin.is_cloud());
+        assert!(OcrEngineKind::AiStudio.is_cloud());
+        assert!(!OcrEngineKind::Windows.is_cloud());
+        assert!(!OcrEngineKind::Tesseract.is_cloud());
+        assert!(!OcrEngineKind::Off.is_cloud());
     }
 
     #[test]

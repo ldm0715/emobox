@@ -191,7 +191,13 @@ function isShortcut(value: unknown): value is string {
 }
 
 function isOcrEngine(value: unknown): value is OcrEngineKind {
-  return value === "off" || value === "windows" || value === "tesseract" || value === "aiStudio";
+  return (
+    value === "off" ||
+    value === "windows" ||
+    value === "tesseract" ||
+    value === "aiStudio" ||
+    value === "aiStudioLogin"
+  );
 }
 
 function asString(value: unknown): string | null {
