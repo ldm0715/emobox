@@ -4,9 +4,16 @@
 //! 在多 owner（QuickSearch、ClipboardCollect）之间检测冲突并显式管理状态。
 //!
 //! 状态机：
-//! - `Unknown` — 启动时无法判定；启动清理 `reconcile` 会转 `Synced`
-//! - `Synced` — 内存 map 与插件真实注册一致
+//! - `Unknown` — 启动时（前端 effect 尚未注册）；无 OS 注册
+//! - `Synced` — 内存 map 与插件真实注册一致（经 `try_set` 到达）
 //! - `RecoveryRequired` — 已知不一致；UI 应显示 banner
+//!
+//! 刻意**不在启动时做 unregister_all**（原 D5 reconcile 已移除）：Windows
+//! RegisterHotKey 注册归进程所有，进程退出即自动释放，新进程没有"上次残留"
+//! 可清；并发其他实例的热键又清不掉。而打包版前端从磁盘加载很快，常抢在
+//! setup 跑完前完成注册，事后 unregister_all 会把刚注册的 OS 热键抹掉，注册表
+//! 内存态却仍报 Synced（假注册，界面"已注册"但按键无响应）。注册一律只经
+//! `try_set` 主动建立/换键。
 
 use std::{
     collections::HashMap,
@@ -110,21 +117,6 @@ impl ShortcutRegistry {
             .lock()
             .map(|i| i.by_display.clone())
             .unwrap_or_default()
-    }
-
-    /// 启动时调用：unregister_all 然后按内存 state 重新注册。
-    /// 启动时 state 是空的（Unknown），所以这一步主要是 unregister 任何残留的
-    /// OS 注册（可能来自上一次崩溃或未清理），让 `reconcile` 之后状态由调用方
-    /// 重新建立。
-    pub fn reconcile<R: Runtime>(&self, app: &AppHandle<R>) -> Result<(), String> {
-        let manager = app.global_shortcut();
-        if let Err(error) = manager.unregister_all() {
-            self.set_state(ShortcutSyncState::RecoveryRequired);
-            return Err(format!("启动时清理全局快捷键失败：{error}"));
-        }
-        // 状态变 Synced，调用方会通过 set_shortcut 重新建立 owner 注册
-        self.set_state(ShortcutSyncState::Synced);
-        Ok(())
     }
 
     /// 关键流程（D5）。所有"注册/注销"都走这里。

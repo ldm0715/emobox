@@ -40,7 +40,7 @@
   CloseBehavior / Update——`set_selection_search_enabled` 等命令同理可能早到）；
   初始化失败 `.expect(...)` 直接退出（与原 setup 返回 Err 的 panic 行为等价，
   但窗口来不及加载前端，不会出现"窗口开着但命令全挂"）。
-- **setup 闭包**只留 tray::setup、文件名标签回填循环、快捷键 reconcile、
+- **setup 闭包**只留 tray::setup、文件名标签回填循环、快捷键 reconcile（**2026-09 已移除**：启动期 `unregister_all` 会把打包版前端抢跑刚注册的热键抹掉，见 CLAUDE.md `shortcut_registry.rs` 条目）、
   DWM 圆角三件套。回填期间前端可正常读库（WAL + busy_timeout 5s 兜底并发）。
 - **重复 manage 会 panic**：`app.manage` 与 `Builder::manage` 是同一个
   StateManager（`assert!("state for type ... is already being managed")`），

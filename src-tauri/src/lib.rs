@@ -109,13 +109,14 @@ pub fn run() {
                 Err(error) => log::warn!("打开数据库做标签回填失败：{error}"),
             }
 
-            // 启动清理全局快捷键（D5 reconcile），确保 OS 层面没有上次的残留
-            if let Err(error) = app
-                .state::<shortcut_registry::ShortcutRegistry>()
-                .reconcile(app.handle())
-            {
-                log::warn!("启动时清理全局快捷键失败：{error}");
-            }
+            // 注意：这里**不再**做启动时的 unregister_all / reconcile——Windows
+            // RegisterHotKey 的注册归进程所有，进程退出即自动释放，新进程不存在
+            // "上次运行的残留 OS 级热键"可清；并发其他实例的热键又清不掉（进程级
+            // 隔离）。而打包版前端从磁盘加载很快，常抢在 setup 跑完前完成注册，
+            // 事后 unregister_all 会把这批刚注册的热键抹掉（注册表内存态仍报 Synced，
+            // 界面显示"已注册"但按键无响应）。快捷键注册完全由前端 effect 驱动
+            // （src/App.tsx update_quick_search_shortcut / update_clipboard_collect_shortcut），
+            // setup 期不要做任何可能破坏它的清理。
 
             // 透明圆角窗口（快捷搜索浮层 / 托盘菜单）：Windows 10 上 DWM 默认
             // 阴影若未清除，会在圆角外留下直角色块（tauri#11321）。tauri.conf.json
