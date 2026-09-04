@@ -1,7 +1,6 @@
 import { makeStyles, tokens } from "@fluentui/react-components";
 import {
-  ArrowSync20Regular,
-  Copy20Regular,
+  ArrowRepeatAll20Regular,
   FolderAdd20Regular,
   Gif20Regular,
   Grid20Regular,
@@ -12,122 +11,133 @@ import {
   type FluentIcon,
 } from "@fluentui/react-icons";
 import type { ReactNode } from "react";
-import { useCardStyles, useSectionStyles } from "../styles/common";
+import { useSectionStyles } from "../styles/common";
+
+/* ------------------------------------------------------------------ */
+/* 特性：9 项横向紧凑小卡，3 列铺满宽度（图标 + 名称 + 一行说明）          */
+/* ------------------------------------------------------------------ */
 
 const useStyles = makeStyles({
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-    gap: "16px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+    gap: "14px",
+    maxWidth: "1080px",
+    marginLeft: "auto",
+    marginRight: "auto",
   },
-  iconBox: {
-    width: "40px",
-    height: "40px",
+  tile: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "14px 16px",
+    textAlign: "left",
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
+  },
+  tileIcon: {
+    flexShrink: 0,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: tokens.colorBrandBackground2,
+    width: "34px",
+    height: "34px",
     color: tokens.colorBrandForeground1,
+    backgroundColor: tokens.colorBrandBackground2,
     borderRadius: tokens.borderRadiusMedium,
-    marginBottom: "14px",
   },
-  title: {
-    margin: "0 0 6px",
-    fontSize: tokens.fontSizeBase400,
+  tileBody: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: "1px",
+  },
+  tileName: {
+    fontSize: tokens.fontSizeBase300,
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground1,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
-  text: {
-    margin: "0",
-    fontSize: tokens.fontSizeBase300,
-    lineHeight: "1.65",
-    color: tokens.colorNeutralForeground2,
-  },
-  code: {
-    fontFamily: tokens.fontFamilyMonospace,
+  tileText: {
     fontSize: tokens.fontSizeBase200,
-    padding: "1px 5px",
-    borderRadius: tokens.borderRadiusSmall,
-    backgroundColor: tokens.colorNeutralBackground3,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    lineHeight: "1.5",
+    color: tokens.colorNeutralForeground2,
   },
 });
 
-const FEATURES: { icon: FluentIcon; title: string; text: ReactNode }[] = [
+type Feature = { icon: FluentIcon; name: string; text: ReactNode };
+
+const FEATURES: Feature[] = [
   {
     icon: FolderAdd20Regular,
-    title: "受管导入，原文件永不动",
-    text: "图片 / 文件夹导入与拖放都会复制进素材库并生成缩略图；导入文件夹时按子文件夹自动建立同名分组，原始图片绝不改动。",
+    name: "受管导入",
+    text: "图片 / 文件夹复制进素材库，原文件永不动。",
   },
   {
     icon: Search20Regular,
-    title: "秒速搜索",
-    text: (
-      <>
-        全库跨字段即时搜索，支持 <code className="feature-code">组*标签</code> 精确语法；「最近使用」复制即记录、一键回找。
-      </>
-    ),
+    name: "秒速搜索",
+    text: "跨文件名、分组、标签即时搜索。",
   },
   {
     icon: SearchSquare20Regular,
-    title: "全局搜索浮层",
-    text: "在任何应用里 Ctrl+Alt+Space 唤出独立搜索窗，选中即复制，可选自动粘贴回原窗口（微信 / QQ / 飞书等）。",
+    name: "全局搜索浮层",
+    text: "任意窗口 Ctrl+Alt+Space 唤起。",
   },
   {
     icon: Gif20Regular,
-    title: "GIF 动图保真",
-    text: "素材库悬停即播动画；复制到微信 / QQ 保留完整动画（按文件通道），不再只有首帧。",
+    name: "GIF 动图保真",
+    text: "悬停即播，粘贴到微信 / QQ 不丢动画。",
   },
   {
-    icon: Copy20Regular,
-    title: "智能去重",
-    text: "SHA-256 字节级 + dHash 感知双重去重，相似图可预览比对、可强制导入。",
+    icon: ArrowRepeatAll20Regular,
+    name: "智能去重",
+    text: "SHA-256 字节级 + dHash 感知双通道。",
   },
   {
     icon: Grid20Regular,
-    title: "完整整理体系",
-    text: "分组 / 标签 / 收藏 / 回收站 / 多选批量操作 / 多种排序，全部本地持久化。",
+    name: "整理体系",
+    text: "分组 / 标签 / 收藏 / 回收站 / 多选批量。",
   },
   {
     icon: ScanText20Regular,
-    title: "OCR 识图打标签",
-    text: "导入后自动识别图片中的文字并转为标签，用文字就能搜到表情；系统 OCR / Tesseract / AI Studio 云端三种引擎可选。",
-  },
-  {
-    icon: ArrowSync20Regular,
-    title: "应用内自动更新",
-    text: "启动静默检查新版本，内置 GitHub 加速镜像源（可增删、测速排序），安装包经 SHA-256 校验后才安装。",
+    name: "OCR 识图打标签",
+    text: "自动识别图中文字，三种引擎可选。",
   },
   {
     icon: LockClosed20Regular,
-    title: "本地优先",
-    text: "默认全离线，无账号、无使用数据上传，数据全部留在你自己的电脑上。",
+    name: "本地优先",
+    text: "全离线、无账号，数据不出本机。",
   },
 ];
 
 export function Features() {
   const section = useSectionStyles();
-  const card = useCardStyles();
   const styles = useStyles();
 
   return (
     <section id="features" className={section.section}>
       <div className={section.header}>
-        <h2 className={section.title}>从导入到粘贴的完整链路</h2>
+        <h2 className={section.title}>从导入到粘贴的完整流程</h2>
         <p className={section.description}>
-          不只是「存图」，EmoBox 覆盖了表情素材从进来、整理，到搜出、发出去的每一步。
+          EmoBox 不只是存图工具——素材从导入、整理，到搜索、复制、发出，都在这台电脑上完成。
         </p>
       </div>
+
       <div className={styles.grid}>
         {FEATURES.map((feature) => {
           const Icon = feature.icon;
           return (
-            <div key={feature.title} className={card.card}>
-              <div className={styles.iconBox}>
+            <div key={feature.name} className={styles.tile}>
+              <span className={styles.tileIcon}>
                 <Icon aria-hidden />
+              </span>
+              <div className={styles.tileBody}>
+                <span className={styles.tileName}>{feature.name}</span>
+                <span className={styles.tileText}>{feature.text}</span>
               </div>
-              <h3 className={styles.title}>{feature.title}</h3>
-              <p className={styles.text}>{feature.text}</p>
             </div>
           );
         })}

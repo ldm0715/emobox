@@ -9,8 +9,13 @@ import {
   Search20Regular,
   type FluentIcon,
 } from "@fluentui/react-icons";
-import { useState, type ReactNode } from "react";
-import { useSectionStyles } from "../styles/common";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCardStyles, useSectionStyles } from "../styles/common";
+import { ALL_STICKERS, COW_STICKERS, FISH_STICKERS } from "../mockStickers";
+import { StickerImage } from "./StickerImage";
+
+// 聊天记录里「[图片]」占位随机替换成的贴纸池（每次刷新重洗一次）
+const CHAT_STICKERS = ALL_STICKERS.slice().sort(() => Math.random() - 0.5);
 
 /* ------------------------------------------------------------------ */
 /* 痛点场景：左侧竖排卡片（悬停/点击切换），右侧联动动画示意             */
@@ -22,16 +27,17 @@ const useStyles = makeStyles({
     gridTemplateColumns: "minmax(0, 400px) minmax(0, 1fr)",
     gap: "24px",
     alignItems: "stretch",
-    "@media (max-width: 920px)": {
+    "@media (max-width: 1000px)": {
       gridTemplateColumns: "minmax(0, 1fr)",
     },
   },
 
-  // 左列：竖排痛点卡
+  // 左列：竖排痛点卡（纵向均布，让底边与右栏演示对齐）
   list: {
     display: "flex",
     flexDirection: "column",
     gap: "12px",
+    justifyContent: "space-between",
   },
   pointCard: {
     position: "relative",
@@ -42,9 +48,6 @@ const useStyles = makeStyles({
     padding: "18px 18px 18px 22px",
     textAlign: "left",
     fontFamily: "inherit",
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusLarge,
     cursor: "pointer",
     transitionProperty: "background-color, border-color",
     transitionDuration: tokens.durationFaster,
@@ -73,15 +76,15 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: tokens.colorNeutralBackground3,
-    color: tokens.colorNeutralForeground2,
+    backgroundColor: tokens.colorBrandBackground2,
+    color: tokens.colorBrandForeground1,
     borderRadius: tokens.borderRadiusMedium,
     transitionProperty: "background-color, color",
     transitionDuration: tokens.durationFaster,
   },
   pointIconBoxActive: {
-    backgroundColor: tokens.colorBrandBackground2,
-    color: tokens.colorBrandForeground1,
+    backgroundColor: tokens.colorBrandBackground,
+    color: tokens.colorNeutralForegroundOnBrand,
   },
   pointBody: {
     minWidth: 0,
@@ -121,9 +124,9 @@ const useStyles = makeStyles({
     flexDirection: "column",
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusXLarge,
+    borderRadius: tokens.borderRadiusLarge,
     overflow: "hidden",
-    "@media (max-width: 920px)": {
+    "@media (max-width: 1000px)": {
       position: "static",
       order: -1,
       minHeight: "380px",
@@ -232,9 +235,9 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "10px",
-    width: "132px",
-    padding: "18px 12px",
+    gap: "16px",
+    width: "178px",
+    padding: "20px 14px",
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusLarge,
@@ -242,29 +245,46 @@ const useStyles = makeStyles({
   appCardName: {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "8px",
     fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground2,
   },
-  appCardEmojis: {
-    display: "flex",
-    gap: "6px",
-    fontSize: "26px",
-    lineHeight: "1",
+  appBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "22px",
+    height: "22px",
+    flexShrink: 0,
+    borderRadius: tokens.borderRadiusCircular,
+    color: "#ffffff",
+    "& svg": {
+      width: "14px",
+      height: "14px",
+      display: "block",
+    },
   },
-  scatterFloat: {
-    position: "absolute",
-    fontSize: "22px",
-    opacity: "0.55",
-    pointerEvents: "none",
+  appSticker: {
+    display: "block",
+    width: "150px",
+    height: "150px",
+    objectFit: "contain",
+  },
+  gifImg: {
+    display: "block",
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    padding: "4px",
+    boxSizing: "border-box",
   },
 
   /* ---- Demo 2：翻聊天记录找不到 ---- */
   chatScrollFrame: {
     position: "relative",
-    width: "300px",
-    height: "250px",
+    width: "460px",
+    height: "300px",
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -273,7 +293,7 @@ const useStyles = makeStyles({
   chatScrollTrack: {
     display: "flex",
     flexDirection: "column",
-    gap: "10px",
+    gap: "14px",
     padding: "14px",
     animationName: {
       from: { transform: "translateY(0)" },
@@ -296,16 +316,30 @@ const useStyles = makeStyles({
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
+  chatBubbleImg: {
+    alignSelf: "flex-start",
+    display: "flex",
+    padding: "3px",
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  chatImg: {
+    display: "block",
+    width: "86px",
+    height: "86px",
+    objectFit: "contain",
+  },
   chatScan: {
     position: "absolute",
     top: "50%",
     left: "50%",
-    margin: "-26px 0 0 -26px",
+    margin: "-36px 0 0 -36px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    width: "52px",
-    height: "52px",
+    width: "72px",
+    height: "72px",
     color: tokens.colorBrandForeground1,
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorBrandStroke1}`,
@@ -329,23 +363,23 @@ const useStyles = makeStyles({
   gifCompare: {
     display: "flex",
     alignItems: "center",
-    gap: "18px",
+    gap: "26px",
   },
   gifCard: {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "10px",
-    width: "168px",
-    padding: "18px 12px 14px",
+    gap: "14px",
+    width: "256px",
+    padding: "22px 16px 18px",
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusLarge,
   },
   gifFrame: {
     position: "relative",
-    width: "96px",
-    height: "96px",
+    width: "172px",
+    height: "172px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -353,6 +387,9 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
+  },
+  gifFrameMuted: {
+    backgroundColor: tokens.colorNeutralBackground3,
   },
   gifCardName: {
     fontSize: tokens.fontSizeBase100,
@@ -375,8 +412,8 @@ const useStyles = makeStyles({
     padding: "1px 6px",
     fontSize: "10px",
     fontWeight: tokens.fontWeightSemibold,
-    color: tokens.colorNeutralForeground1,
-    backgroundColor: tokens.colorNeutralForeground3,
+    color: "#ffffff",
+    backgroundColor: "rgba(219, 68, 55, 0.92)",
     borderRadius: tokens.borderRadiusSmall,
   },
   gifArrow: {
@@ -388,35 +425,25 @@ const useStyles = makeStyles({
   dupWrap: {
     display: "flex",
     alignItems: "center",
-    gap: "28px",
+    gap: "48px",
   },
   dupStack: {
     position: "relative",
-    width: "150px",
-    height: "150px",
+    width: "300px",
+    height: "300px",
     flexShrink: 0,
+    cursor: "default",
   },
-  dupCard: {
+  dupImg: {
     position: "absolute",
-    inset: "0",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "4px",
-    backgroundColor: tokens.colorNeutralBackground3,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusLarge,
-    boxShadow: tokens.shadow4,
-  },
-  dupEmoji: {
-    fontSize: "40px",
-    lineHeight: "1",
-  },
-  dupName: {
-    fontSize: tokens.fontSizeBase100,
-    fontFamily: tokens.fontFamilyMonospace,
-    color: tokens.colorNeutralForeground3,
+    top: "50%",
+    left: "50%",
+    width: "205px",
+    height: "205px",
+    objectFit: "contain",
+    transitionProperty: "transform",
+    transitionDuration: tokens.durationFast,
+    transitionTimingFunction: tokens.curveEasyEase,
   },
   dupList: {
     display: "flex",
@@ -443,61 +470,190 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground3,
   },
+  hint: {
+    marginTop: "22px",
+    textAlign: "center",
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground4,
+  },
+
+  // 桌面双栏布局：窄屏隐藏
+  wideOnly: {
+    "@media (max-width: 1000px)": {
+      display: "none",
+    },
+  },
+
+  // 移动端横向滑动轮播：宽屏隐藏
+  mobile: {
+    display: "none",
+    "@media (max-width: 1000px)": {
+      display: "block",
+    },
+  },
+  mobileViewport: {
+    display: "flex",
+    overflowX: "auto",
+    scrollSnapType: "x mandatory",
+    scrollbarWidth: "none",
+    msOverflowStyle: "none",
+    "&::-webkit-scrollbar": {
+      display: "none",
+    },
+  },
+  mobileSlide: {
+    flex: "0 0 100%",
+    minWidth: "100%",
+    scrollSnapAlign: "start",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "4px 0",
+    boxSizing: "border-box",
+  },
+  mobileBody: {
+    marginTop: "12px",
+  },
+  mobileHead: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    marginBottom: "6px",
+  },
+  mobileIcon: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "34px",
+    height: "34px",
+    flexShrink: 0,
+    color: tokens.colorBrandForeground1,
+    backgroundColor: tokens.colorBrandBackground2,
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  mobileTitle: {
+    fontSize: tokens.fontSizeBase400,
+    fontWeight: tokens.fontWeightSemibold,
+    color: tokens.colorNeutralForeground1,
+  },
+  mobileText: {
+    margin: "0",
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: "1.65",
+    color: tokens.colorNeutralForeground2,
+  },
+  mobilePager: {
+    marginTop: "14px",
+    display: "flex",
+    justifyContent: "center",
+    gap: "6px",
+  },
+  pagerDot: {
+    width: "8px",
+    height: "8px",
+    padding: "0",
+    border: "none",
+    borderRadius: tokens.borderRadiusCircular,
+    backgroundColor: tokens.colorNeutralStroke2,
+    cursor: "pointer",
+    transitionProperty: "width, background-color",
+    transitionDuration: tokens.durationFast,
+  },
+  pagerDotActive: {
+    width: "22px",
+    backgroundColor: tokens.colorBrandBackground,
+  },
 });
+
+/** 演示内容按可用宽度等比缩放（窄屏自动缩小、不裁剪），宽屏为 1:1。 */
+function FitToWidth({ children }: { children: ReactNode }) {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState({ scale: 1, height: 0 });
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return;
+    const update = () => {
+      const width = inner.offsetWidth;
+      if (!width) return;
+      const scale = Math.min(1, outer.clientWidth / width);
+      setFit({ scale, height: inner.offsetHeight * scale });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(outer);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={outerRef}
+      style={{
+        width: "100%",
+        height: fit.height,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "flex-start",
+        overflow: "hidden",
+      }}
+    >
+      <div ref={innerRef} style={{ transform: `scale(${fit.scale})`, transformOrigin: "top center" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Demo 场景组件                                                        */
 /* ------------------------------------------------------------------ */
 
-// 场景 1：同一个表情，三个 App 各存一份
+// 场景 1：同一张贴纸，三个 App 各存一份
 function ScatterDemo() {
   const styles = useStyles();
+  const sticker = FISH_STICKERS[1];
   const apps = [
-    { name: "微信", icon: <ChatMultiple20Regular />, emojis: ["😂", "🤣"] },
-    { name: "QQ", icon: <ChatMultiple20Regular />, emojis: ["😂", "😭"] },
-    { name: "下载文件夹", icon: <Folder20Regular />, emojis: ["😂", "🎉"] },
-  ];
-  const drifts = [
-    { emoji: "😂", top: "6%", left: "4%", delay: "0s" },
-    { emoji: "🎉", top: "12%", right: "5%", delay: "0.7s" },
-    { emoji: "😭", bottom: "8%", left: "8%", delay: "1.3s" },
-    { emoji: "🤣", bottom: "4%", right: "10%", delay: "1.9s" },
+    {
+      name: "WeChat",
+      logo: <span style={{ fontSize: "11px", lineHeight: 1, fontWeight: 700 }}>W</span>,
+      color: "#07C160",
+      bg: "rgba(7, 193, 96, 0.12)",
+    },
+    {
+      name: "QQ",
+      logo: <span style={{ fontSize: "10px", lineHeight: 1, fontWeight: 700 }}>QQ</span>,
+      color: "#12B7F5",
+      bg: "rgba(18, 183, 245, 0.12)",
+    },
+    {
+      name: "下载文件夹",
+      logo: <Folder20Regular />,
+      color: "#E8B24A",
+      bg: "rgba(232, 178, 74, 0.16)",
+    },
   ];
   return (
     <div className={styles.scatterWrap}>
-      {drifts.map((drift) => (
-        <span
-          key={drift.emoji + drift.top}
-          className={mergeClasses(styles.scatterFloat, styles.float)}
-          style={{
-            top: drift.top,
-            left: drift.left,
-            right: drift.right,
-            bottom: drift.bottom,
-            animationDelay: drift.delay,
-          }}
-          aria-hidden
-        >
-          {drift.emoji}
-        </span>
-      ))}
       {apps.map((app, index) => (
         <div
           key={app.name}
           className={mergeClasses(styles.appCard, styles.float)}
-          style={{ animationDelay: `${index * 0.6}s` }}
+          style={{
+            animationDelay: `${index * 0.6}s`,
+            borderColor: app.color,
+            backgroundColor: app.bg,
+          }}
         >
-          <span className={styles.appCardName}>
-            {app.icon}
+          <span className={styles.appCardName} style={{ color: app.color }}>
+            <span className={styles.appBadge} style={{ backgroundColor: app.color }}>
+              {app.logo}
+            </span>
             {app.name}
           </span>
-          <span className={styles.appCardEmojis}>
-            {app.emojis.map((emoji) => (
-              <span key={emoji} role="img" aria-label={emoji}>
-                {emoji}
-              </span>
-            ))}
-          </span>
+          <img className={styles.appSticker} src={sticker.src} alt="" draggable={false} />
         </div>
       ))}
     </div>
@@ -508,14 +664,14 @@ function ScatterDemo() {
 function ChatScrollDemo() {
   const styles = useStyles();
   const lines = [
-    "今晚谁去吃烧烤 🍢",
+    "deepseek 貌似要大幅涨价了",
     "[图片]",
-    "哈哈哈笑死 😂",
+    "梁叔叔最不喜欢就是你们这些10块10快充的用户了",
     "[图片]",
     "[图片]",
-    "那只猫敲键盘的呢",
+    "ds老师，我还记得你",
     "[图片]",
-    "谁发过猫猫动图来着",
+    "哈哈哈 这楼都能吵起来",
     "[图片]",
     "[图片]",
   ];
@@ -523,11 +679,21 @@ function ChatScrollDemo() {
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
       <div className={styles.chatScrollFrame}>
         <div className={styles.chatScrollTrack} aria-hidden>
-          {[...lines, ...lines].map((line, index) => (
-            <span key={`${line}-${index}`} className={styles.chatBubble}>
-              {line}
-            </span>
-          ))}
+          {[...lines, ...lines].map((line, index) => {
+            if (line === "[图片]") {
+              const sticker = CHAT_STICKERS[index % CHAT_STICKERS.length];
+              return (
+                <span key={`${line}-${index}`} className={styles.chatBubbleImg}>
+                  <img className={styles.chatImg} src={sticker.src} alt="" draggable={false} />
+                </span>
+              );
+            }
+            return (
+              <span key={`${line}-${index}`} className={styles.chatBubble}>
+                {line}
+              </span>
+            );
+          })}
         </div>
         <div className={mergeClasses(styles.chatScan, styles.scan)}>
           <Search20Regular />
@@ -544,6 +710,8 @@ function ChatScrollDemo() {
 // 场景 3：GIF 粘出去只剩首帧
 function GifDemo() {
   const styles = useStyles();
+  // 用组里的真 gif（100000002043.gif）：左边完整动画，右边同图只显示首帧
+  const gif = COW_STICKERS[0];
   return (
     <div className={styles.gifCompare}>
       <div className={styles.gifCard}>
@@ -562,53 +730,63 @@ function GifDemo() {
               GIF
             </span>
           </span>
-          <span className={styles.bounce} role="img" aria-label="动图">
-            😹
-          </span>
+          <img className={mergeClasses(styles.gifImg, styles.bounce)} src={gif.src} alt="" draggable={false} />
         </div>
-        <span className={styles.gifCardName}>cat-laugh.gif</span>
+        <span className={styles.gifCardName}>{gif.name}</span>
         <span className={styles.gifCardLabel}>素材库里 · 完整动画</span>
       </div>
       <ArrowRight20Regular className={styles.gifArrow} aria-hidden />
       <div className={styles.gifCard}>
-        <div className={styles.gifFrame}>
-          <span style={{ filter: "grayscale(0.4)" }} role="img" aria-label="定格画面">
-            😹
+        <div className={mergeClasses(styles.gifFrame, styles.gifFrameMuted)}>
+          <span style={{ display: "flex", width: "100%", height: "100%", filter: "grayscale(1) opacity(0.85)" }}>
+            <StickerImage className={styles.gifImg} src={gif.src} gif />
           </span>
           <span className={styles.gifFrozen}>静止</span>
         </div>
-        <span className={styles.gifCardName}>cat-laugh.gif</span>
+        <span className={styles.gifCardName}>{gif.name}</span>
         <span className={styles.gifCardLabel}>粘贴后 · 只剩首帧</span>
       </div>
     </div>
   );
 }
 
-// 场景 4：同一张图存了五份
+// 场景 4：同一张贴纸存了五份
 function DuplicateDemo() {
   const styles = useStyles();
-  const copies = [
-    { rotate: "-8deg", x: "-26px", y: "-14px" },
-    { rotate: "-4deg", x: "-13px", y: "-7px" },
-    { rotate: "0deg", x: "0px", y: "0px" },
-    { rotate: "4deg", x: "13px", y: "7px" },
-    { rotate: "8deg", x: "26px", y: "14px" },
-  ];
+  const sticker = FISH_STICKERS[2];
+  const [fanned, setFanned] = useState(false);
+  // 5 层同一张贴纸：平时轻微叠压，悬停时散开露出层数
+  const layers = Array.from({ length: 5 }, (_, i) => {
+    const d = i - 2; // -2..2
+    return {
+      rotate: `${d * 3.5}deg`,
+      baseX: d * 5,
+      baseY: d * 3,
+      openX: d * 40,
+      openY: d * 13,
+      z: i + 1,
+    };
+  });
   return (
     <div className={styles.dupWrap}>
-      <div className={mergeClasses(styles.dupStack, styles.stackBreath)} aria-hidden>
-        {copies.map((copy, index) => (
-          <div
-            key={copy.rotate}
-            className={styles.dupCard}
+      <div
+        className={styles.dupStack}
+        onMouseEnter={() => setFanned(true)}
+        onMouseLeave={() => setFanned(false)}
+        aria-label="同一张贴纸重复保存了五份"
+      >
+        {layers.map((layer, index) => (
+          <img
+            key={index}
+            className={styles.dupImg}
+            src={sticker.src}
+            alt=""
+            draggable={false}
             style={{
-              transform: `translate(${copy.x}, ${copy.y}) rotate(${copy.rotate})`,
-              zIndex: index + 1,
+              transform: `translate(-50%, -50%) translate(${fanned ? layer.openX : layer.baseX}px, ${fanned ? layer.openY : layer.baseY}px) rotate(${layer.rotate})`,
+              zIndex: layer.z,
             }}
-          >
-            <span className={styles.dupEmoji}>😂</span>
-            <span className={styles.dupName}>image({index + 1}).png</span>
-          </div>
+          />
         ))}
       </div>
       <div>
@@ -620,7 +798,7 @@ function DuplicateDemo() {
             </span>
           ))}
         </div>
-        <div className={styles.dupNote}>同一张图 · 5 份拷贝，想清理又不敢删</div>
+        <div className={styles.dupNote}>同一份表情包 · 存了 5 份，想清理又不敢删</div>
       </div>
     </div>
   );
@@ -650,7 +828,7 @@ const PAIN_POINTS: PainPoint[] = [
     id: "cantfind",
     icon: ChatMultiple20Regular,
     title: "聊天时找不到那张图",
-    text: "只记得「是一只猫在敲键盘」，然后花半小时翻聊天记录和收藏夹。",
+    text: "只记得「好像是一条鱼的动图」，然后花半小时翻聊天记录和收藏夹。",
     demo: <ChatScrollDemo />,
   },
   {
@@ -669,8 +847,84 @@ const PAIN_POINTS: PainPoint[] = [
   },
 ];
 
+/** 移动端轮播：演示横向滑动（末尾循环回第 1 张），下方说明联动切换。 */
+function PainMobileCarousel() {
+  const styles = useStyles();
+  const trackRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef(0);
+  const [active, setActive] = useState(0);
+  const count = PAIN_POINTS.length;
+
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const onScroll = () => {
+      const width = track.clientWidth;
+      if (!width) return;
+      const pos = Math.round(track.scrollLeft / width);
+      if (pos >= count) {
+        // 滑到最后一张克隆的首屏：循环回到第 1 张
+        setActive(0);
+        activeRef.current = 0;
+        track.scrollTo({ left: 0 });
+      } else if (pos !== activeRef.current) {
+        setActive(pos);
+        activeRef.current = pos;
+      }
+    };
+    track.addEventListener("scroll", onScroll, { passive: true });
+    return () => track.removeEventListener("scroll", onScroll);
+  }, [count]);
+
+  function goTo(index: number) {
+    const track = trackRef.current;
+    if (!track) return;
+    const width = track.clientWidth;
+    setActive(index);
+    activeRef.current = index;
+    track.scrollTo({ left: index * width, behavior: "smooth" });
+  }
+
+  const slides = [...PAIN_POINTS, PAIN_POINTS[0]];
+  const current = PAIN_POINTS[active];
+  const ActiveIcon = current.icon;
+
+  return (
+    <div className={styles.mobile}>
+      <div className={styles.mobileViewport} ref={trackRef}>
+        {slides.map((point, index) => (
+          <div key={index} className={styles.mobileSlide}>
+            <FitToWidth>{point.demo}</FitToWidth>
+          </div>
+        ))}
+      </div>
+      <div className={styles.mobileBody}>
+        <div className={styles.mobileHead}>
+          <span className={styles.mobileIcon}>
+            <ActiveIcon aria-hidden />
+          </span>
+          <span className={styles.mobileTitle}>{current.title}</span>
+        </div>
+        <p className={styles.mobileText}>{current.text}</p>
+        <div className={styles.mobilePager}>
+          {PAIN_POINTS.map((_, index) => (
+            <button
+              key={index}
+              type="button"
+              aria-label={`查看第 ${index + 1} 个场景`}
+              className={mergeClasses(styles.pagerDot, index === active && styles.pagerDotActive)}
+              onClick={() => goTo(index)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PainPoints() {
   const section = useSectionStyles();
+  const card = useCardStyles();
   const styles = useStyles();
   const [activeIndex, setActiveIndex] = useState(0);
   const active = PAIN_POINTS[activeIndex];
@@ -679,12 +933,13 @@ export function PainPoints() {
   return (
     <section id="pain-points" className={section.section}>
       <div className={section.header}>
-        <h2 className={section.title}>这些瞬间，你一定很熟悉</h2>
+        <h2 className={section.title}>表情攒得越多，越难找到想用的那张</h2>
         <p className={section.description}>
-          表情包越来越多的同时，也越来越难找。把鼠标移到左边的场景上，看看是不是你。
+          表情散落在不同 App、聊天记录和文件夹里，GIF 粘出去常只剩首帧，重复的图也越攒越多。
         </p>
       </div>
-      <div className={styles.layout}>
+      <div className={styles.wideOnly}>
+        <div className={styles.layout}>
         <div className={styles.list}>
           {PAIN_POINTS.map((point, index) => {
             const Icon = point.icon;
@@ -693,7 +948,11 @@ export function PainPoints() {
               <button
                 key={point.id}
                 type="button"
-                className={mergeClasses(styles.pointCard, isActive && styles.pointCardActive)}
+                className={mergeClasses(
+                  card.card,
+                  styles.pointCard,
+                  isActive && styles.pointCardActive,
+                )}
                 onMouseEnter={() => setActiveIndex(index)}
                 onFocus={() => setActiveIndex(index)}
                 onClick={() => setActiveIndex(index)}
@@ -729,6 +988,10 @@ export function PainPoints() {
           </div>
         </div>
       </div>
+        <p className={styles.hint}>把鼠标移到卡片上，可查看对应的场景演示。</p>
+      </div>
+
+      <PainMobileCarousel />
     </section>
   );
 }

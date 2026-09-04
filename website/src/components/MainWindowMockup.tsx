@@ -21,7 +21,6 @@ import {
 } from "@fluentui/react-components";
 import {
   Add20Regular,
-  AnimalCat24Regular,
   Apps20Regular,
   ArrowClockwise20Regular,
   CheckboxChecked20Regular,
@@ -66,89 +65,65 @@ import { useSiteThemeContext } from "../themeContext";
 import { darkTheme, lightTheme } from "../theme";
 import type { ThemePreference } from "../useSiteTheme";
 import logoUrl from "../assets/logo.png";
+import { COW_STICKERS, FISH_STICKERS, matchStickerQuery, type StickerRef } from "../mockStickers";
+import { StickerImage } from "./StickerImage";
 
 /* ------------------------------------------------------------------ */
 /* 数据层（演示用本地 state，不持久化、不写剪贴板）                       */
 /* ------------------------------------------------------------------ */
 
-type MockGroupId = "meme" | "cat";
+type MockGroupId = "cow" | "fish";
 
 type MockItem = {
   id: number;
-  emoji: string;
+  img: string;
   name: string;
   gif?: boolean;
   tags: string[];
-  tint: string;
   groups: MockGroupId[];
   favorite?: boolean;
   deleted?: boolean;
   addedSeq: number;
 };
 
-type MockView = "all" | "recent" | "favorites" | "group:meme" | "group:cat" | "ungrouped" | "trash";
+type MockView = "all" | "recent" | "favorites" | "group:cow" | "group:fish" | "ungrouped" | "trash";
 type MockSort = "added-time" | "modified-time" | "name-asc" | "name-desc" | "format";
 type MockDensity = "compact" | "comfortable" | "large";
 
-const TINTS = {
-  blue: "rgba(71, 158, 245, 0.14)",
-  green: "rgba(56, 190, 128, 0.14)",
-  orange: "rgba(255, 153, 61, 0.16)",
-  purple: "rgba(150, 110, 245, 0.14)",
-  pink: "rgba(245, 110, 150, 0.14)",
-  cyan: "rgba(56, 180, 200, 0.14)",
-} as const;
-
-function item(
-  id: number,
-  emoji: string,
-  name: string,
-  tags: string[],
-  tint: keyof typeof TINTS,
-  groups: MockGroupId[],
-  gif?: boolean,
-): MockItem {
-  return { id, emoji, name, tags, tint: TINTS[tint], groups, gif, addedSeq: id };
+function stickerItem(id: number, sticker: StickerRef, groups: MockGroupId[]): MockItem {
+  return { id, img: sticker.src, name: sticker.name, gif: sticker.gif, tags: [], groups, addedSeq: id };
 }
 
+// 用真实贴纸生成演示素材：抽象草地牛 一组、蓝色大肥鱼 一组。
 const INITIAL_ITEMS: MockItem[] = [
-  item(1, "😹", "cat-laugh.gif", ["猫"], "blue", ["cat"], true),
-  item(2, "😂", "laugh-cry.png", ["笑"], "orange", ["meme"]),
-  item(3, "🥰", "so-loved.png", ["爱心"], "pink", []),
-  item(4, "😎", "cool-dog.gif", ["墨镜"], "green", ["meme"], true),
-  item(5, "🤯", "mind-blown.png", [], "purple", ["meme"]),
-  item(6, "🐱", "cat-typing.gif", ["猫", "打字"], "blue", ["cat"], true),
-  item(7, "🍵", "sipping-tea.png", ["吃瓜"], "green", ["meme"]),
-  item(8, "👍", "thumbs-up.png", ["点赞"], "orange", ["meme"]),
-  item(9, "😭", "sobbing.gif", ["哭"], "purple", [], true),
-  item(10, "🎉", "party-time.png", ["庆祝"], "pink", ["meme"]),
-  item(11, "🤔", "thinking.png", [], "cyan", []),
-  item(12, "🥺", "pleading-eyes.png", ["卖萌"], "blue", ["cat"]),
-  item(13, "🐾", "paw-print.png", ["猫"], "orange", ["cat"]),
-  item(14, "😻", "heart-eyes-cat.gif", ["猫", "爱心"], "pink", ["cat"], true),
-  item(15, "🔥", "fire-mood.png", ["热度"], "orange", []),
-  item(16, "🙀", "cat-shock.png", ["猫"], "purple", ["cat"]),
-  item(17, "✨", "sparkle-star.png", ["闪光"], "cyan", []),
-  item(18, "🐈", "walking-cat.gif", ["猫"], "green", ["cat"], true),
+  ...COW_STICKERS.map((sticker, index) => stickerItem(index + 1, sticker, ["cow"])),
+  ...FISH_STICKERS.map((sticker, index) => stickerItem(COW_STICKERS.length + index + 1, sticker, ["fish"])),
 ];
 
-// 「导入」按钮的模拟素材池（用尽即提示）。
+// 「导入」按钮的模拟素材池（取两组里未在首屏展示顺序靠后的几张；用尽即提示）。
 const IMPORT_POOL: Omit<MockItem, "id" | "addedSeq">[] = [
-  { emoji: "🐸", name: "pepe-frog.gif", tags: ["青蛙"], tint: TINTS.green, groups: [], gif: true },
-  { emoji: "🤡", name: "clown-time.png", tags: ["小丑"], tint: TINTS.purple, groups: [] },
-  { emoji: "🍕", name: "pizza-party.png", tags: ["美食"], tint: TINTS.orange, groups: [] },
-  { emoji: "🤖", name: "robot-dance.gif", tags: ["机器人"], tint: TINTS.blue, groups: [], gif: true },
-  { emoji: "💀", name: "skull-mood.png", tags: [], tint: TINTS.cyan, groups: [] },
-  { emoji: "🐷", name: "piggy-oink.png", tags: ["猪猪"], tint: TINTS.pink, groups: [] },
-  { emoji: "🦀", name: "crab-rave.gif", tags: ["螃蟹"], tint: TINTS.orange, groups: [], gif: true },
-  { emoji: "🥳", name: "celebrate.png", tags: ["庆祝"], tint: TINTS.purple, groups: [] },
-  { emoji: "🐨", name: "koala-sleep.png", tags: ["考拉"], tint: TINTS.green, groups: [] },
+  ...COW_STICKERS.slice(0, 5).map((sticker) => ({
+    img: sticker.src,
+    name: sticker.name,
+    gif: sticker.gif,
+    tags: [] as string[],
+    groups: [] as MockGroupId[],
+  })),
+  ...FISH_STICKERS.slice(0, 4).map((sticker) => ({
+    img: sticker.src,
+    name: sticker.name,
+    gif: sticker.gif,
+    tags: [] as string[],
+    groups: [] as MockGroupId[],
+  })),
 ];
 
 const GROUP_META: { id: MockGroupId; label: string }[] = [
-  { id: "meme", label: "沙雕图" },
-  { id: "cat", label: "猫猫" },
+  { id: "cow", label: "抽象草地牛" },
+  { id: "fish", label: "蓝色大肥鱼" },
 ];
+
+// 分组名与「多词 AND + 组/名/标签」搜索逻辑统一放在 ../mockStickers（matchStickerQuery）。
 
 const SORT_OPTIONS: { value: MockSort; label: string }[] = [
   { value: "added-time", label: "按添加时间" },
@@ -576,9 +551,14 @@ const useStyles = makeStyles({
     display: "grid",
     placeItems: "center",
     overflow: "hidden",
-    padding: tokens.spacingHorizontalS,
-    fontSize: "44px",
-    lineHeight: "1",
+    padding: "6px",
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  tileImg: {
+    display: "block",
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
   },
   tileGifBadge: {
     position: "absolute",
@@ -784,7 +764,7 @@ function EmptyState(props: { icon: ReactNode; text: string }) {
 
 export function MainWindowMockup() {
   const styles = useStyles();
-  const { systemDark } = useSiteThemeContext();
+  const { resolved } = useSiteThemeContext();
 
   // 演示窗口按可用宽度等比缩放显示（布局盒固定 1100×720，内部不 reflow）。
   const scrollOuterRef = useRef<HTMLDivElement>(null);
@@ -803,7 +783,7 @@ export function MainWindowMockup() {
   // 演示窗口的局部主题：与应用语义一致（浅/深/跟随系统），只作用于窗口内部，
   // 不影响网站页面（外层 FluentProvider 不变）。
   const [mockTheme, setMockTheme] = useState<ThemePreference>("system");
-  const mockResolved = mockTheme === "system" ? (systemDark ? "dark" : "light") : mockTheme;
+  const mockResolved = mockTheme === "system" ? resolved : mockTheme;
 
   // 窗口内 toast：模拟应用右上角通知，2.6s 自动消失
   const [toasts, setToasts] = useState<{ id: number; title: string }[]>([]);
@@ -845,11 +825,11 @@ export function MainWindowMockup() {
       case "favorites":
         list = items.filter((candidate) => candidate.favorite && !candidate.deleted);
         break;
-      case "group:meme":
-        list = items.filter((candidate) => candidate.groups.includes("meme") && !candidate.deleted);
+      case "group:cow":
+        list = items.filter((candidate) => candidate.groups.includes("cow") && !candidate.deleted);
         break;
-      case "group:cat":
-        list = items.filter((candidate) => candidate.groups.includes("cat") && !candidate.deleted);
+      case "group:fish":
+        list = items.filter((candidate) => candidate.groups.includes("fish") && !candidate.deleted);
         break;
       case "ungrouped":
         list = items.filter((candidate) => candidate.groups.length === 0 && !candidate.deleted);
@@ -863,11 +843,7 @@ export function MainWindowMockup() {
 
     const trimmed = query.trim().toLowerCase();
     if (trimmed) {
-      list = list.filter(
-        (candidate) =>
-          candidate.name.toLowerCase().includes(trimmed) ||
-          candidate.tags.some((tag) => tag.toLowerCase().includes(trimmed)),
-      );
+      list = list.filter((candidate) => matchStickerQuery(trimmed, candidate));
     }
 
     const sorted = [...list];
@@ -897,8 +873,8 @@ export function MainWindowMockup() {
       all: items.filter((candidate) => !candidate.deleted).length,
       favorites: items.filter((candidate) => candidate.favorite && !candidate.deleted).length,
       trash: items.filter((candidate) => candidate.deleted).length,
-      meme: items.filter((candidate) => candidate.groups.includes("meme") && !candidate.deleted).length,
-      cat: items.filter((candidate) => candidate.groups.includes("cat") && !candidate.deleted).length,
+      cow: items.filter((candidate) => candidate.groups.includes("cow") && !candidate.deleted).length,
+      fish: items.filter((candidate) => candidate.groups.includes("fish") && !candidate.deleted).length,
       ungrouped: items.filter((candidate) => candidate.groups.length === 0 && !candidate.deleted).length,
     }),
     [items],
@@ -915,10 +891,10 @@ export function MainWindowMockup() {
       }
       case "favorites":
         return { title: "收藏", count: counts.favorites };
-      case "group:meme":
-        return { title: "沙雕图", count: counts.meme };
-      case "group:cat":
-        return { title: "猫猫", count: counts.cat };
+      case "group:cow":
+        return { title: "抽象草地牛", count: counts.cow };
+      case "group:fish":
+        return { title: "蓝色大肥鱼", count: counts.fish };
       case "ungrouped":
         return { title: "未分组", count: counts.ungrouped };
       case "trash":
@@ -1040,7 +1016,7 @@ export function MainWindowMockup() {
     }
     const take = remaining.slice(0, 2 + Math.floor(Math.random() * 2));
     const targetGroup: MockGroupId | null =
-      view === "group:meme" ? "meme" : view === "group:cat" ? "cat" : null;
+      view === "group:cow" ? "cow" : view === "group:fish" ? "fish" : null;
     const created = take.map((proto, index) => ({
       ...proto,
       groups: targetGroup ? [targetGroup] : [],
@@ -1075,8 +1051,8 @@ export function MainWindowMockup() {
       <div className={styles.stage} style={{ height: `calc(720px * ${displayScale} + 32px)` }}>
       <div
         className={styles.window}
-        style={{ transform: `scale(${displayScale})` }}
-        aria-label="EmoBox 主窗口界面原型（可交互演示，1100×720 固定布局）"
+        style={{ transform: `scale(${displayScale})`, colorScheme: mockResolved }}
+        aria-label="EmoBox 主窗口界面演示（可交互，1100×720 固定布局）"
       >
         <FluentProvider
           theme={mockResolved === "dark" ? darkTheme : lightTheme}
@@ -1090,7 +1066,7 @@ export function MainWindowMockup() {
             type="button"
             className={styles.windowControl}
             aria-label="最小化（示意）"
-            onClick={() => notify("窗口控制仅为界面示意")}
+            onClick={() => notify("窗口控制仅为界面演示")}
           >
             <SubtractRegular />
           </button>
@@ -1098,7 +1074,7 @@ export function MainWindowMockup() {
             type="button"
             className={styles.windowControl}
             aria-label="最大化（示意）"
-            onClick={() => notify("窗口控制仅为界面示意")}
+            onClick={() => notify("窗口控制仅为界面演示")}
           >
             <Maximize16Regular />
           </button>
@@ -1239,35 +1215,35 @@ export function MainWindowMockup() {
                     appearance="subtle"
                     aria-label="搜索分组"
                     icon={<Search20Regular />}
-                    onClick={() => notify("分组搜索在完整版应用中可用")}
+                    onClick={() => notify("分组搜索需在真实应用中使用（演示不包含）")}
                   />
                   <Button
                     size="small"
                     appearance="subtle"
                     aria-label="新建分组"
                     icon={<Add20Regular />}
-                    onClick={() => notify("新建分组在完整版应用中可用")}
+                    onClick={() => notify("新建分组需在真实应用中使用（演示不包含）")}
                   />
                 </div>
               </div>
             )}
-            {!groupsCollapsed && (
-              <div className={styles.groupList}>
-                {GROUP_META.map((meta) => (
+            {/* 分组区容器常驻（它也是把底部导航顶到侧栏底部的弹性区），收起只隐藏分组条目 */}
+            <div className={styles.groupList}>
+              {!groupsCollapsed &&
+                GROUP_META.map((meta) => (
                   <SidebarItem
                     key={meta.id}
-                    icon={meta.id === "meme" ? <EmojiMeme24Regular /> : <AnimalCat24Regular />}
+                    icon={meta.id === "cow" ? <EmojiMeme24Regular /> : <Folder24Regular />}
                     label={meta.label}
-                    count={String(meta.id === "meme" ? counts.meme : counts.cat)}
+                    count={String(meta.id === "cow" ? counts.cow : counts.fish)}
                     outlineBadge
-                    pinned={meta.id === "meme"}
+                    pinned={meta.id === "cow"}
                     selected={view === `group:${meta.id}`}
                     collapsed={sidebarCollapsed}
                     onSelect={() => switchView(`group:${meta.id}`)}
                   />
                 ))}
-              </div>
-            )}
+            </div>
             <Divider className={styles.divider} />
             <div className={styles.navGroup}>
               <SidebarItem
@@ -1494,7 +1470,7 @@ export function MainWindowMockup() {
                                   )}
                                   <MenuItem
                                     icon={<Tag20Regular />}
-                                    onClick={() => notify("标签管理在完整版应用中可用")}
+                                    onClick={() => notify("标签管理需在真实应用中使用（演示不包含）")}
                                   >
                                     管理标签
                                   </MenuItem>
@@ -1506,9 +1482,7 @@ export function MainWindowMockup() {
                             </MenuPopover>
                           </Menu>
                         </span>
-                        <span role="img" aria-label={tile.name}>
-                          {tile.emoji}
-                        </span>
+                        <StickerImage className={styles.tileImg} src={tile.img} gif={tile.gif} />
                       </div>
                       <div className={mergeClasses(styles.captionRow, selected && styles.captionSelected)}>
                         <span className={styles.captionText} title={tile.name}>

@@ -1,13 +1,14 @@
-import { Badge, Button, Link, makeStyles, tokens } from "@fluentui/react-components";
+import { Badge, Button, Link, makeStyles, mergeClasses, shorthands, tokens } from "@fluentui/react-components";
 import {
   ArrowDownload20Regular,
+  ArrowRight20Regular,
   Checkmark20Regular,
   Copy20Regular,
   Eye20Regular,
   FolderZip20Regular,
   Laptop20Regular,
 } from "@fluentui/react-icons";
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { useCardStyles, useSectionStyles } from "../styles/common";
 import { useLatestRelease } from "../useLatestRelease";
 
@@ -30,130 +31,115 @@ function detectOS(): VisitorOS {
 }
 
 const useStyles = makeStyles({
-  grid: {
+  cards: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
     gap: "16px",
-    maxWidth: "820px",
+    maxWidth: "760px",
     margin: "0 auto",
   },
-  fileName: {
-    fontFamily: tokens.fontFamilyMonospace,
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground2,
-    backgroundColor: tokens.colorNeutralBackground3,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusSmall,
-    padding: "2px 6px",
-    display: "inline-block",
-    marginBottom: "14px",
+  card: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    textAlign: "left",
   },
-  title: {
-    margin: "0 0 8px",
-    fontSize: tokens.fontSizeBase400,
-    fontWeight: tokens.fontWeightSemibold,
-    color: tokens.colorNeutralForeground1,
+  cardHead: {
     display: "flex",
     alignItems: "center",
     gap: "8px",
   },
-  text: {
-    margin: "0 0 18px",
+  cardTitle: {
+    margin: "0",
+    fontSize: tokens.fontSizeBase400,
+    fontWeight: tokens.fontWeightSemibold,
+    color: tokens.colorNeutralForeground1,
+  },
+  cardDesc: {
+    margin: "0",
+    flex: "1 1 auto",
     fontSize: tokens.fontSizeBase300,
-    lineHeight: "1.65",
+    lineHeight: "1.6",
     color: tokens.colorNeutralForeground2,
   },
-  versionBadge: {
-    verticalAlign: "1px",
-    marginLeft: "6px",
-  },
-  requirement: {
-    margin: "24px auto 0",
-    maxWidth: "820px",
-    textAlign: "center",
-    fontSize: tokens.fontSizeBase300,
-    color: tokens.colorNeutralForeground2,
-    lineHeight: "1.7",
-  },
-  footnote: {
-    marginTop: "12px",
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
-  },
-  links: {
-    marginTop: "8px",
-    display: "flex",
+  dlButton: {
+    width: "100%",
     justifyContent: "center",
-    gap: "16px",
-    flexWrap: "wrap",
+  },
+  cardFile: {
+    marginTop: "2px",
+    fontSize: tokens.fontSizeBase100,
+    fontFamily: tokens.fontFamilyMonospace,
+    color: tokens.colorNeutralForeground3,
+    wordBreak: "break-all",
   },
 
-  // 编辑器风格校验命令块（恒暗，类 GitHub dark，不随网站主题变化）
-  codeBlock: {
-    position: "relative",
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    width: "100%",
-    maxWidth: "640px",
-    margin: "16px auto 0",
-    padding: "16px 14px 12px",
-    backgroundColor: "#0d1117",
-    border: "1px solid #30363d",
-    borderRadius: tokens.borderRadiusMedium,
-    color: "#c9d1d9",
-    fontFamily: tokens.fontFamilyMonospace,
-    fontSize: tokens.fontSizeBase200,
-    textAlign: "left",
-  },
-  codeTag: {
-    position: "absolute",
-    top: "-10px",
-    left: "12px",
-    padding: "1px 8px",
-    fontSize: "11px",
-    lineHeight: "1.4",
-    color: "#8b949e",
-    backgroundColor: "#161b22",
-    border: "1px solid #30363d",
-    borderRadius: tokens.borderRadiusSmall,
-  },
-  codePrompt: {
-    color: "#7ee787",
-    flexShrink: 0,
-    userSelect: "none",
-  },
-  codeText: {
-    flex: 1,
-    minWidth: 0,
-    overflowX: "auto",
-    whiteSpace: "nowrap",
-    fontFamily: "inherit",
-  },
-  copyButton: {
+  // 校验入口：并入安装版卡片的小字按钮
+  verifyButton: {
     display: "inline-flex",
     alignItems: "center",
     gap: "5px",
-    flexShrink: 0,
-    padding: "4px 10px",
-    fontSize: tokens.fontSizeBase100,
-    fontFamily: "inherit",
-    color: "#c9d1d9",
-    backgroundColor: "rgba(240, 246, 252, 0.06)",
-    border: "1px solid rgba(240, 246, 252, 0.12)",
-    borderRadius: tokens.borderRadiusSmall,
+    alignSelf: "flex-start",
+    padding: "2px 0",
+    border: "none",
+    background: "transparent",
     cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground3,
     ":hover": {
-      color: "#ffffff",
-      backgroundColor: "rgba(240, 246, 252, 0.12)",
+      color: tokens.colorNeutralForeground1,
     },
     "& svg": {
       width: "14px",
       height: "14px",
     },
   },
-  copyButtonDone: {
-    color: "#7ee787",
+
+  // 底部小字链接（胶囊式）
+  links: {
+    marginTop: "26px",
+    display: "flex",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+    fontSize: tokens.fontSizeBase300,
+  },
+  linkPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "7px 16px",
+    borderRadius: tokens.borderRadiusLarge,
+    color: tokens.colorNeutralForeground2,
+    backgroundColor: tokens.colorNeutralBackground1,
+    textDecoration: "none",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    ":hover": {
+      color: tokens.colorNeutralForeground1,
+      ...shorthands.borderColor(tokens.colorBrandStroke1),
+    },
+    "& svg": {
+      width: "14px",
+      height: "14px",
+      flexShrink: 0,
+      color: tokens.colorNeutralForeground3,
+    },
+  },
+
+  // 标题行的版本胶囊
+  versionPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    marginLeft: "2px",
+    padding: "0 8px",
+    fontSize: tokens.fontSizeBase100,
+    lineHeight: "1.8",
+    fontFamily: tokens.fontFamilyMonospace,
+    color: tokens.colorNeutralForeground2,
+    backgroundColor: tokens.colorNeutralBackground3,
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: tokens.borderRadiusCircular,
   },
 
   // macOS / Linux：计划中
@@ -164,7 +150,7 @@ const useStyles = makeStyles({
     textAlign: "center",
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusXLarge,
+    borderRadius: tokens.borderRadiusLarge,
   },
   plannedIcon: {
     display: "inline-flex",
@@ -192,9 +178,47 @@ const useStyles = makeStyles({
   },
 });
 
+function DownloadCard(props: {
+  title: string;
+  recommended?: boolean;
+  desc: string;
+  href: string;
+  primary: boolean;
+  icon: ReactElement;
+  buttonLabel: string;
+  fileName: string;
+  footer?: ReactElement;
+}) {
+  const styles = useStyles();
+  const card = useCardStyles();
+  return (
+    <div className={mergeClasses(card.card, styles.card)}>
+      <div className={styles.cardHead}>
+        <h3 className={styles.cardTitle}>{props.title}</h3>
+        {props.recommended ? (
+          <Badge appearance="tint" color="brand">
+            推荐
+          </Badge>
+        ) : null}
+      </div>
+      <p className={styles.cardDesc}>{props.desc}</p>
+      <Button
+        as="a"
+        href={props.href}
+        className={styles.dlButton}
+        appearance={props.primary ? "primary" : "secondary"}
+        icon={props.icon}
+      >
+        {props.buttonLabel}
+      </Button>
+      <div className={styles.cardFile}>{props.fileName}</div>
+      {props.footer}
+    </div>
+  );
+}
+
 export function DownloadSection() {
   const section = useSectionStyles();
-  const card = useCardStyles();
   const styles = useStyles();
 
   // 访问者系统（同步检测，无需等待）
@@ -223,10 +247,8 @@ export function DownloadSection() {
       <div className={section.header}>
         <h2 className={section.title}>下载安装</h2>
         <p className={section.description}>
-          免费开源，Windows 10 / 11（x64）。
-          <Badge className={styles.versionBadge} appearance="tint" color="brand">
-            最新版本 v{release.version}
-          </Badge>
+          Windows 10 / 11（x64） · 最新版本
+          <span className={styles.versionPill}>v{release.version}</span>
         </p>
       </div>
 
@@ -248,66 +270,58 @@ export function DownloadSection() {
         </div>
       ) : (
         <>
-          <div className={styles.grid}>
-            <div className={card.card}>
-              <h3 className={styles.title}>安装版（推荐）</h3>
-              <span className={styles.fileName}>{release.setupName}</span>
-              <p className={styles.text}>NSIS 安装向导，缺少 WebView2 运行时会自动下载安装。</p>
-              <Button
-                as="a"
-                href={release.setupUrl}
-                appearance="primary"
-                icon={<ArrowDownload20Regular />}
-              >
-                下载安装版
-              </Button>
-            </div>
-            <div className={card.card}>
-              <h3 className={styles.title}>便携版</h3>
-              <span className={styles.fileName}>{release.zipName}</span>
-              <p className={styles.text}>解压即用，适合免安装或绿色便携场景。</p>
-              <Button as="a" href={release.zipUrl} icon={<FolderZip20Regular />}>
-                下载便携版
-              </Button>
-            </div>
-          </div>
-
-          <div className={styles.requirement}>
-            系统要求：Windows 10 / 11（x64）
-            <div className={styles.footnote}>
-              下载完成后，可在 PowerShell 里运行以下命令校验安装包（SHA-256 校验和同时发布在
-              Release 说明末尾的「校验和」表格中）：
-            </div>
-            <div className={styles.codeBlock}>
-              <span className={styles.codeTag}>PowerShell</span>
-              <span className={styles.codePrompt} aria-hidden>
-                PS&gt;
-              </span>
-              <code className={styles.codeText}>{checksumCommand}</code>
-              <button
-                type="button"
-                className={copied ? `${styles.copyButton} ${styles.copyButtonDone}` : styles.copyButton}
-                onClick={copyChecksum}
-                aria-label="复制校验命令"
-              >
-                {copied ? <Checkmark20Regular /> : <Copy20Regular />}
-                {copied ? "已复制" : "复制"}
-              </button>
-            </div>
+          <div className={styles.cards}>
+            <DownloadCard
+              title="安装版"
+              recommended
+              desc="向导式安装，会自动补齐 WebView2 运行环境，适合大多数用户。"
+              href={release.setupUrl}
+              primary
+              icon={<ArrowDownload20Regular />}
+              buttonLabel="下载安装版"
+              fileName={release.setupName}
+              footer={
+                <button
+                  type="button"
+                  className={styles.verifyButton}
+                  onClick={copyChecksum}
+                  title="SHA-256 校验和发布在 Release 说明末尾的「校验和」表格中"
+                >
+                  {copied ? <Checkmark20Regular /> : <Copy20Regular />}
+                  {copied ? "已复制校验命令" : "复制 SHA-256 校验命令"}
+                </button>
+              }
+            />
+            <DownloadCard
+              title="便携版"
+              desc="压缩包解压即可运行，无需安装，适合便携与免安装场景。"
+              href={release.zipUrl}
+              primary={false}
+              icon={<FolderZip20Regular />}
+              buttonLabel="下载便携版"
+              fileName={release.zipName}
+            />
           </div>
         </>
       )}
 
       <div className={styles.links}>
-        <Link href={RELEASES_PAGE} target="_blank" rel="noreferrer">
-          前往 Releases 页面
-        </Link>
-        <Link href={`${REPO_URL}#-下载安装`} target="_blank" rel="noreferrer">
-          查看完整安装说明
-        </Link>
-        <Link href={`${REPO_URL}#-从源码构建`} target="_blank" rel="noreferrer">
-          从源码构建
-        </Link>
+        {[
+          { href: RELEASES_PAGE, label: "前往 Releases 页面" },
+          { href: `${REPO_URL}/issues`, label: "去 Issue 提意见" },
+          { href: `${REPO_URL}#-从源码构建`, label: "从源码构建" },
+        ].map((item) => (
+          <Link
+            key={item.label}
+            className={styles.linkPill}
+            href={item.href}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {item.label}
+            <ArrowRight20Regular />
+          </Link>
+        ))}
       </div>
     </section>
   );

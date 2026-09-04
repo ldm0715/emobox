@@ -7,14 +7,14 @@ import {
   tokens,
 } from "@fluentui/react-components";
 import {
-  AnimalCat24Regular,
   Dismiss20Regular,
-  EmojiMeme24Regular,
   Search20Regular,
   SearchSquare20Regular,
   Send20Regular,
 } from "@fluentui/react-icons";
-import { useMemo, useState, type KeyboardEvent, type ReactElement } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
+import { COW_STICKERS, FISH_STICKERS, matchStickerQuery } from "../mockStickers";
+import { StickerImage } from "./StickerImage";
 
 /* ------------------------------------------------------------------ */
 /* 数据（演示池：搜索、分组、加载更多都是本地过滤）                       */
@@ -29,74 +29,83 @@ const TINTS = {
   cyan: "rgba(56, 180, 200, 0.14)",
 } as const;
 
-type OverlayGroup = "meme" | "cat";
+type OverlayGroup = "cow" | "fish";
 
 type OverlayItem = {
-  emoji: string;
+  img: string;
   name: string;
-  tint: string;
+  gif?: boolean;
   groups: OverlayGroup[];
   tags: string[];
 };
 
 const POOL: OverlayItem[] = [
-  { emoji: "😹", name: "cat-laugh.gif", tint: TINTS.blue, groups: ["cat"], tags: ["猫"] },
-  { emoji: "🐱", name: "cat-typing.gif", tint: TINTS.green, groups: ["cat"], tags: ["猫", "打字"] },
-  { emoji: "😸", name: "grin-cat.png", tint: TINTS.orange, groups: ["cat"], tags: ["猫"] },
-  { emoji: "😻", name: "heart-eyes-cat.gif", tint: TINTS.pink, groups: ["cat"], tags: ["猫", "爱心"] },
-  { emoji: "🙀", name: "cat-shock.png", tint: TINTS.purple, groups: ["cat"], tags: ["猫"] },
-  { emoji: "🐈", name: "walking-cat.gif", tint: TINTS.cyan, groups: ["cat"], tags: ["猫"] },
-  { emoji: "🐱", name: "server-cat.png", tint: TINTS.blue, groups: ["cat"], tags: ["猫", "运维"] },
-  { emoji: "😽", name: "kiss-cat.gif", tint: TINTS.green, groups: ["cat"], tags: ["猫"] },
-  { emoji: "🐱", name: "ninja-cat.png", tint: TINTS.purple, groups: ["cat"], tags: ["猫", "忍者"] },
-  { emoji: "🐾", name: "paw-print.png", tint: TINTS.orange, groups: ["cat"], tags: ["猫", "爪印"] },
-  { emoji: "😂", name: "laugh-cry.png", tint: TINTS.orange, groups: ["meme"], tags: ["笑"] },
-  { emoji: "😎", name: "cool-dog.gif", tint: TINTS.green, groups: ["meme"], tags: ["墨镜"] },
-  { emoji: "🤯", name: "mind-blown.png", tint: TINTS.purple, groups: ["meme"], tags: [] },
-  { emoji: "🍵", name: "sipping-tea.png", tint: TINTS.green, groups: ["meme"], tags: ["吃瓜"] },
-  { emoji: "👍", name: "thumbs-up.png", tint: TINTS.orange, groups: ["meme"], tags: ["点赞"] },
-  { emoji: "🥰", name: "so-loved.png", tint: TINTS.pink, groups: [], tags: ["爱心"] },
-  { emoji: "😭", name: "sobbing.gif", tint: TINTS.purple, groups: [], tags: ["哭"] },
-  { emoji: "🎉", name: "party-time.png", tint: TINTS.pink, groups: [], tags: ["庆祝"] },
-  { emoji: "🤔", name: "thinking.png", tint: TINTS.cyan, groups: [], tags: [] },
-  { emoji: "🥺", name: "pleading-eyes.png", tint: TINTS.blue, groups: [], tags: ["卖萌"] },
+  ...COW_STICKERS.map((s) => ({
+    img: s.src,
+    name: s.name,
+    gif: s.gif,
+    groups: ["cow"] as OverlayGroup[],
+    tags: ["牛"],
+  })),
+  ...FISH_STICKERS.map((s) => ({
+    img: s.src,
+    name: s.name,
+    gif: s.gif,
+    groups: ["fish"] as OverlayGroup[],
+    tags: ["鱼"],
+  })),
 ];
 
 const PAGE_SIZE = 10;
 
 const CHIPS: { label: string; group: OverlayGroup | null; icon?: ReactElement }[] = [
   { label: "全部", group: null },
-  { label: "沙雕图", group: "meme", icon: <EmojiMeme24Regular /> },
-  { label: "猫猫", group: "cat", icon: <AnimalCat24Regular /> },
+  { label: "抽象草地牛", group: "cow" },
+  { label: "蓝色大肥鱼", group: "fish" },
 ];
 
-/* 聊天语境（写死），自己发送的表情会追加在后面。 */
-type MockMessage = { id: number; self?: boolean; avatar: string; tint: string; text?: string; emoji?: string };
+/* 聊天语境（写死），自己发送的贴纸会追加在后面。 */
+type MockMessage = {
+  id: number;
+  self?: boolean;
+  avatar: string;
+  tint: string;
+  text?: string;
+  sticker?: { img: string; gif?: boolean };
+};
 
 const INITIAL_MESSAGES: MockMessage[] = [
-  { id: 1, avatar: "🐟", tint: TINTS.cyan, text: "今晚谁去吃烧烤 🍢" },
-  { id: 2, avatar: "🐻", tint: TINTS.orange, text: "我先冲了，老地方见" },
-  { id: 3, self: true, avatar: "😊", tint: TINTS.pink, text: "收到！马上到 🚴" },
+  { id: 1, avatar: "🐟", tint: TINTS.cyan, text: "deepseek 貌似要大幅涨价了" },
+  { id: 2, avatar: "🐻", tint: TINTS.orange, text: "梁叔叔最不喜欢就是你们这些10块10快充的用户了" },
+  { id: 3, avatar: "😺", tint: TINTS.purple, text: "ds老师，我还记得你" },
 ];
 
 const SELF_AVATAR = { emoji: "😊", tint: TINTS.pink };
 
 const useStyles = makeStyles({
   scrollOuter: {
-    overflowX: "auto",
+    overflowX: "clip",
   },
-  // 浮层固定 680×500（应用 quick-search 窗口尺寸），不随视口缩放。
+  // 演示固定 820px 设计稿宽度，按可用宽度等比缩放居中（与 Hero 主窗口 mock 一致）。
+  stage: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "flex-start",
+    overflow: "hidden",
+  },
+  // 内层 820px 画布：外层 stage 按容器宽度缩放适配。
   wrapper: {
     position: "relative",
     width: "820px",
-    margin: "0 auto",
+    flexShrink: 0,
+    transformOrigin: "top center",
   },
 
   // 背景：极简聊天窗口示意（网站场景插画，非应用 UI）
   chat: {
     display: "flex",
     flexDirection: "column",
-    minHeight: "560px",
+    minHeight: "640px",
     backgroundColor: tokens.colorNeutralBackground2,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
     borderRadius: tokens.borderRadiusXLarge,
@@ -113,7 +122,7 @@ const useStyles = makeStyles({
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   chatTitle: {
-    fontSize: tokens.fontSizeBase300,
+    fontSize: tokens.fontSizeBase400,
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground1,
   },
@@ -121,8 +130,8 @@ const useStyles = makeStyles({
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    gap: "14px",
-    padding: "20px",
+    gap: "20px",
+    padding: "22px",
     overflowY: "auto",
   },
   msgRow: {
@@ -134,19 +143,19 @@ const useStyles = makeStyles({
     flexDirection: "row-reverse",
   },
   avatar: {
-    width: "30px",
-    height: "30px",
+    width: "38px",
+    height: "38px",
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: "16px",
+    fontSize: "20px",
     borderRadius: tokens.borderRadiusMedium,
   },
   bubble: {
-    maxWidth: "300px",
-    padding: "8px 12px",
-    fontSize: tokens.fontSizeBase300,
+    maxWidth: "320px",
+    padding: "10px 14px",
+    fontSize: tokens.fontSizeBase400,
     lineHeight: "1.5",
     color: tokens.colorNeutralForeground1,
     backgroundColor: tokens.colorNeutralBackground3,
@@ -156,9 +165,15 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorBrandBackground2,
   },
   bubbleEmoji: {
-    fontSize: "24px",
+    fontSize: "26px",
     lineHeight: "1.3",
     padding: "6px 10px",
+  },
+  msgSticker: {
+    display: "block",
+    width: "86px",
+    height: "86px",
+    objectFit: "contain",
   },
   guideRow: {
     display: "flex",
@@ -180,14 +195,14 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: "10px",
-    minHeight: "46px",
+    minHeight: "54px",
     margin: "16px",
-    padding: "0 8px 0 14px",
+    padding: "0 10px 0 16px",
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     color: tokens.colorNeutralForeground3,
-    fontSize: tokens.fontSizeBase300,
+    fontSize: tokens.fontSizeBase400,
     cursor: "text",
     ":hover": {
       ...shorthands.borderColor(tokens.colorNeutralStroke1),
@@ -202,11 +217,12 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: "4px",
-    minHeight: "44px",
+    minHeight: "52px",
   },
-  inputEmoji: {
-    fontSize: "24px",
-    lineHeight: "1",
+  inputPreview: {
+    width: "58px",
+    height: "58px",
+    objectFit: "contain",
     animationName: {
       from: { opacity: "0", transform: "scale(0.4)" },
       to: { opacity: "1", transform: "scale(1)" },
@@ -216,8 +232,8 @@ const useStyles = makeStyles({
   },
   caret: {
     display: "inline-block",
-    width: "2px",
-    height: "20px",
+    width: "3px",
+    height: "24px",
     backgroundColor: tokens.colorBrandForeground1,
     animationName: {
       from: { opacity: "1" },
@@ -244,15 +260,15 @@ const useStyles = makeStyles({
     },
   },
 
-  // 前景：快捷搜索浮层（QuickSearchPanel 规格，固定 680 宽；
-  // 每次唤起经 key 重挂载重播入场动画——应用 activationId 同语义）
+  // 前景：快捷搜索浮层（示意，原 680×500 同比例放大到接近原尺寸，保留长宽比）
   overlay: {
     position: "absolute",
-    top: "56px",
+    top: "60px",
     left: "50%",
     transform: "translateX(-50%)",
-    width: "680px",
-    height: "500px",
+    width: "660px",
+    height: "486px",
+    paddingBottom: "12px",
     zIndex: 2,
     display: "flex",
     flexDirection: "column",
@@ -274,13 +290,13 @@ const useStyles = makeStyles({
     gridTemplateColumns: "auto minmax(0, 1fr) auto auto",
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
-    height: "48px",
+    height: "52px",
     paddingLeft: tokens.spacingHorizontalM,
     paddingRight: tokens.spacingHorizontalXS,
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   title: {
-    fontSize: tokens.fontSizeBase300,
+    fontSize: tokens.fontSizeBase400,
     fontWeight: tokens.fontWeightSemibold,
   },
   shortcut: {
@@ -308,7 +324,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: tokens.spacingHorizontalXS,
-    height: "36px",
+    height: "44px",
     flexShrink: 0,
     minWidth: 0,
     overflowX: "auto",
@@ -359,11 +375,10 @@ const useStyles = makeStyles({
   frameEmoji: {
     width: "100%",
     height: "100%",
-    display: "grid",
-    placeItems: "center",
-    fontSize: "34px",
-    lineHeight: "1",
-    padding: tokens.spacingHorizontalXS,
+    display: "block",
+    objectFit: "contain",
+    padding: "4px",
+    boxSizing: "border-box",
     borderRadius: tokens.borderRadiusSmall,
   },
   fileName: {
@@ -387,26 +402,29 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalM} 0 ${tokens.spacingVerticalXS}`,
   },
   footer: {
-    minHeight: "22px",
+    minHeight: "18px",
+    flexShrink: 0,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: tokens.spacingHorizontalL,
+    gap: tokens.spacingHorizontalM,
     color: tokens.colorNeutralForeground4,
     fontSize: tokens.fontSizeBase100,
+    lineHeight: "1.2",
   },
   key: {
-    padding: `1px ${tokens.spacingHorizontalXS}`,
+    padding: "0 3px",
     color: tokens.colorNeutralForeground3,
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
     borderRadius: tokens.borderRadiusSmall,
     fontFamily: tokens.fontFamilyMonospace,
+    lineHeight: "1.2",
   },
   footerItem: {
     display: "inline-flex",
     alignItems: "center",
-    gap: "4px",
+    gap: "3px",
   },
   caption: {
     marginTop: "16px",
@@ -449,6 +467,28 @@ const useStyles = makeStyles({
 export function QuickSearchMockup() {
   const styles = useStyles();
 
+  // 外层按可用宽度等比缩放演示画布（820px 设计稿），窄屏/手机自适应。
+  const outerRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState({ scale: 1, height: 0 });
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return;
+    const update = () => {
+      setFit({
+        scale: Math.min(1, outer.clientWidth / 820),
+        height: inner.offsetHeight,
+      });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(outer);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
+
   // 浮层内 toast：模拟应用通知，2.6s 自动消失
   const [toasts, setToasts] = useState<{ id: number; title: string }[]>([]);
   const nextToastIdRef = useMemo(() => ({ current: 1 }), []);
@@ -463,25 +503,23 @@ export function QuickSearchMockup() {
 
   // 场景状态：输入框点击唤起浮层 → 选表情自动粘贴 → 发送进消息列表
   const [messages, setMessages] = useState<MockMessage[]>(INITIAL_MESSAGES);
-  const [inputEmoji, setInputEmoji] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ img: string; gif?: boolean } | null>(null);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [activationCount, setActivationCount] = useState(0);
 
-  const [query, setQuery] = useState("猫");
+  const [query, setQuery] = useState("");
   const [chip, setChip] = useState<OverlayGroup | null>(null);
   const [displayed, setDisplayed] = useState(PAGE_SIZE);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const filtered = useMemo(() => {
-    const trimmed = query.trim().toLowerCase();
-    return POOL.filter(
-      (candidate) =>
-        (chip === null || candidate.groups.includes(chip)) &&
-        (!trimmed ||
-          candidate.name.toLowerCase().includes(trimmed) ||
-          candidate.tags.some((tag) => tag.toLowerCase().includes(trimmed))),
-    );
-  }, [query, chip]);
+  const filtered = useMemo(
+    () =>
+      POOL.filter(
+        (candidate) =>
+          (chip === null || candidate.groups.includes(chip)) && matchStickerQuery(query, candidate),
+      ),
+    [query, chip],
+  );
 
   const visible = filtered.slice(0, displayed);
   const hasMore = filtered.length > displayed;
@@ -504,23 +542,29 @@ export function QuickSearchMockup() {
     setOverlayOpen(false);
   }
 
-  // 选中表情 = 复制并「自动粘贴」回聊天输入框（应用 hide-then-paste 的演示化）。
+  // 选中贴纸 = 复制并「自动粘贴」回聊天输入框（应用 hide-then-paste 的演示化）。
   function pickItem(item: OverlayItem) {
     notify(`已复制 “${item.name}”，自动粘贴回聊天窗口`);
-    setInputEmoji(item.emoji);
+    setDraft({ img: item.img, gif: item.gif });
     setOverlayOpen(false);
   }
 
   function sendMessage() {
-    if (!inputEmoji) {
-      notify("先点输入框唤起快捷搜索，选一张表情");
+    if (!draft) {
+      notify("先点输入框唤起快捷搜索，选一张贴纸");
       return;
     }
     setMessages((prev) => [
       ...prev,
-      { id: prev.length + 1, self: true, avatar: SELF_AVATAR.emoji, tint: SELF_AVATAR.tint, emoji: inputEmoji },
+      {
+        id: prev.length + 1,
+        self: true,
+        avatar: SELF_AVATAR.emoji,
+        tint: SELF_AVATAR.tint,
+        sticker: { img: draft.img, gif: draft.gif },
+      },
     ]);
-    setInputEmoji(null);
+    setDraft(null);
   }
 
   function handleOverlayKeyDown(event: KeyboardEvent<HTMLElement>) {
@@ -541,9 +585,10 @@ export function QuickSearchMockup() {
   }
 
   return (
-    <div className={styles.scrollOuter}>
-      <div className={styles.wrapper}>
-        {/* 背景聊天窗口：点输入框唤起浮层，点空白处失焦关闭 */}
+    <div className={styles.scrollOuter} ref={outerRef}>
+      <div className={styles.stage} style={{ height: `${fit.height * fit.scale}px` }}>
+        <div className={styles.wrapper} ref={innerRef} style={{ transform: `scale(${fit.scale})` }}>
+          {/* 背景聊天窗口：点输入框唤起浮层，点空白处失焦关闭 */}
         <div
           className={styles.chat}
           onClick={() => {
@@ -551,7 +596,7 @@ export function QuickSearchMockup() {
           }}
         >
           <div className={styles.chatTitleBar}>
-            <span className={styles.chatTitle}>摸鱼吹水群（219）</span>
+            <span className={styles.chatTitle}>天才程序员（233）</span>
           </div>
           <div className={styles.chatMessages}>
             {messages.map((message) => (
@@ -559,13 +604,19 @@ export function QuickSearchMockup() {
                 <span className={styles.avatar} style={{ backgroundColor: message.tint }}>
                   {message.avatar}
                 </span>
-                <span className={mergeClasses(styles.bubble, message.self && styles.bubbleSelf, message.emoji && styles.bubbleEmoji)}>
-                  {message.emoji ?? message.text}
-                </span>
+                {message.sticker ? (
+                  <span className={mergeClasses(styles.bubble, message.self && styles.bubbleSelf)}>
+                    <img className={styles.msgSticker} src={message.sticker.img} alt="" draggable={false} />
+                  </span>
+                ) : (
+                  <span className={mergeClasses(styles.bubble, message.self && styles.bubbleSelf)}>
+                    {message.text}
+                  </span>
+                )}
               </div>
             ))}
           </div>
-          {!overlayOpen && !inputEmoji && (
+          {!overlayOpen && !draft && (
             <div className={styles.guideRow}>
               <span className={styles.guide}>点击下方输入框，体验唤起快捷搜索 ↓</span>
             </div>
@@ -578,11 +629,9 @@ export function QuickSearchMockup() {
             }}
           >
             <span className={styles.chatInputText}>
-              {inputEmoji ? (
+              {draft ? (
                 <>
-                  <span className={styles.inputEmoji} role="img" aria-label="待发送表情">
-                    {inputEmoji}
-                  </span>
+                  <img className={styles.inputPreview} src={draft.img} alt="待发送贴纸" draggable={false} />
                   <span className={styles.caret} aria-hidden />
                 </>
               ) : (
@@ -675,14 +724,7 @@ export function QuickSearchMockup() {
                       onClick={() => pickItem(result)}
                     >
                       <span className={styles.frame}>
-                        <span
-                          className={styles.frameEmoji}
-                          role="img"
-                          aria-label={result.name}
-                          style={{ backgroundColor: result.tint }}
-                        >
-                          {result.emoji}
-                        </span>
+                        <StickerImage className={styles.frameEmoji} src={result.img} gif={result.gif} />
                       </span>
                       <span className={styles.fileName}>{result.name}</span>
                     </div>
@@ -725,9 +767,10 @@ export function QuickSearchMockup() {
           ))}
         </div>
       </div>
+      </div>
 
       <div className={styles.caption}>
-        界面为 HTML 原型示意：点击输入框唤起浮层 → 点选表情（自动粘贴）→ 点发送，全是本地演示
+        以上是界面演示：点击输入框会唤起快捷搜索，点选表情会自动粘贴，点发送即可发出。
       </div>
     </div>
   );

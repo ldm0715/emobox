@@ -1,6 +1,7 @@
-import { Fragment } from "react";
 import { makeStyles, mergeClasses, shorthands, tokens } from "@fluentui/react-components";
 import { Search20Regular } from "@fluentui/react-icons";
+import { FISH_STICKERS } from "../mockStickers";
+import { StickerImage } from "./StickerImage";
 import { useSectionStyles } from "../styles/common";
 
 /* ------------------------------------------------------------------ */
@@ -14,21 +15,21 @@ const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "center",
     gap: "10px",
-    "@media (max-width: 980px)": {
+    "@media (max-width: 1120px)": {
       flexDirection: "column",
-      gap: "18px",
+      gap: "26px",
     },
   },
   scene: {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "12px",
+    gap: "14px",
   },
   sceneCaption: {
     display: "flex",
     alignItems: "center",
-    gap: "8px",
+    gap: "10px",
     fontSize: tokens.fontSizeBase300,
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground2,
@@ -37,15 +38,15 @@ const useStyles = makeStyles({
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    width: "22px",
-    height: "22px",
+    width: "26px",
+    height: "26px",
     fontSize: tokens.fontSizeBase200,
     color: "#ffffff",
     backgroundColor: tokens.colorBrandBackground,
     borderRadius: tokens.borderRadiusCircular,
   },
   flowNote: {
-    marginTop: "18px",
+    marginTop: "22px",
     textAlign: "center",
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground4,
@@ -53,8 +54,8 @@ const useStyles = makeStyles({
 
   // 幕 1 / 幕 3：迷你聊天窗口
   miniChat: {
-    width: "232px",
-    height: "178px",
+    width: "282px",
+    height: "244px",
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
@@ -64,12 +65,12 @@ const useStyles = makeStyles({
     boxShadow: tokens.shadow8,
   },
   miniTitleBar: {
-    height: "26px",
+    height: "30px",
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
-    padding: "0 10px",
-    fontSize: tokens.fontSizeBase100,
+    padding: "0 12px",
+    fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground2,
     backgroundColor: tokens.colorNeutralBackground2,
@@ -80,14 +81,14 @@ const useStyles = makeStyles({
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
-    padding: "10px",
+    gap: "10px",
+    padding: "12px",
     overflow: "hidden",
   },
   miniMsg: {
     alignSelf: "flex-start",
-    maxWidth: "150px",
-    padding: "4px 9px",
+    maxWidth: "190px",
+    padding: "6px 11px",
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground1,
     backgroundColor: tokens.colorNeutralBackground3,
@@ -104,10 +105,10 @@ const useStyles = makeStyles({
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
-    gap: "6px",
-    minHeight: "34px",
-    margin: "0 10px 10px",
-    padding: "0 10px",
+    gap: "8px",
+    minHeight: "40px",
+    margin: "0 12px 12px",
+    padding: "0 12px",
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground3,
     backgroundColor: tokens.colorNeutralBackground3,
@@ -115,7 +116,7 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
   },
   inputEmoji: {
-    fontSize: "18px",
+    fontSize: "22px",
     lineHeight: "1",
     animationName: {
       "0%": { opacity: "0", transform: "scale(0.4)" },
@@ -129,7 +130,7 @@ const useStyles = makeStyles({
   caret: {
     display: "inline-block",
     width: "2px",
-    height: "16px",
+    height: "18px",
     backgroundColor: tokens.colorBrandForeground1,
     animationName: {
       from: { opacity: "1" },
@@ -152,8 +153,8 @@ const useStyles = makeStyles({
 
   // 幕 2：迷你快捷搜索浮层
   miniOverlay: {
-    width: "232px",
-    height: "178px",
+    width: "282px",
+    height: "244px",
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
@@ -163,12 +164,12 @@ const useStyles = makeStyles({
     boxShadow: `0 0 0 1px ${tokens.colorBrandStroke1}, ${tokens.shadow8}`,
   },
   miniOverlayBar: {
-    height: "26px",
+    height: "30px",
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
-    padding: "0 10px",
-    fontSize: tokens.fontSizeBase100,
+    padding: "0 12px",
+    fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
     color: tokens.colorNeutralForeground1,
     backgroundColor: tokens.colorNeutralBackground2,
@@ -177,16 +178,16 @@ const useStyles = makeStyles({
   miniOverlayShortcut: {
     marginLeft: "auto",
     fontFamily: tokens.fontFamilyMonospace,
-    fontSize: "10px",
+    fontSize: "11px",
     fontWeight: tokens.fontWeightRegular,
     color: tokens.colorNeutralForeground3,
   },
   miniSearch: {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
-    margin: "8px 10px 0",
-    padding: "5px 9px",
+    gap: "8px",
+    margin: "10px 12px 0",
+    padding: "7px 11px",
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground1,
     backgroundColor: tokens.colorNeutralBackground3,
@@ -194,8 +195,8 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     "& svg": {
       flexShrink: 0,
-      width: "12px",
-      height: "12px",
+      width: "14px",
+      height: "14px",
     },
   },
   miniGrid: {
@@ -203,8 +204,8 @@ const useStyles = makeStyles({
     minHeight: 0,
     display: "grid",
     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: "6px",
-    padding: "8px 10px",
+    gap: "8px",
+    padding: "10px 12px",
     alignContent: "start",
   },
   miniCell: {
@@ -212,7 +213,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: "20px",
+    overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusSmall,
@@ -222,10 +223,24 @@ const useStyles = makeStyles({
     ...shorthands.borderColor(tokens.colorBrandStroke1),
     boxShadow: `0 0 0 1px ${tokens.colorBrandStroke1}`,
   },
+  miniImg: {
+    display: "block",
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    padding: "3px",
+    boxSizing: "border-box",
+  },
+  miniSticker: {
+    display: "block",
+    width: "46px",
+    height: "46px",
+    objectFit: "contain",
+  },
   miniGridHint: {
     flexShrink: 0,
-    padding: "0 10px 8px",
-    fontSize: "10px",
+    padding: "0 12px 10px",
+    fontSize: "11px",
     color: tokens.colorNeutralForeground3,
     textAlign: "center",
   },
@@ -235,10 +250,10 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "6px",
+    gap: "7px",
     flexShrink: 0,
     alignSelf: "center",
-    "@media (max-width: 980px)": {
+    "@media (max-width: 1120px)": {
       padding: "2px 0",
     },
   },
@@ -262,12 +277,12 @@ const useStyles = makeStyles({
   },
   arrowLine: {
     position: "relative",
-    width: "72px",
+    width: "88px",
     height: "2px",
     backgroundColor: tokens.colorBrandStroke1,
-    "@media (max-width: 980px)": {
+    "@media (max-width: 1120px)": {
       width: "2px",
-      height: "48px",
+      height: "64px",
     },
   },
   arrowHead: {
@@ -277,7 +292,7 @@ const useStyles = makeStyles({
     borderTop: "5px solid transparent",
     borderBottom: "5px solid transparent",
     borderLeft: `7px solid ${tokens.colorBrandStroke1}`,
-    "@media (max-width: 980px)": {
+    "@media (max-width: 1120px)": {
       right: "-5px",
       top: "auto",
       bottom: "-6px",
@@ -304,7 +319,7 @@ const useStyles = makeStyles({
     animationDuration: "2.2s",
     animationIterationCount: "infinite",
     animationTimingFunction: "ease-in-out",
-    "@media (max-width: 980px)": {
+    "@media (max-width: 1120px)": {
       animationName: {
         from: { top: "-3px", left: "-2.5px", opacity: "0" },
         "20%": { opacity: "1" },
@@ -344,12 +359,7 @@ function FlowArrow(props: { keys: string[]; label: string }) {
   return (
     <div className={styles.arrow} aria-hidden>
       <div className={styles.arrowKeys}>
-        {props.keys.map((key, index) => (
-          <Fragment key={key}>
-            {index > 0 ? "+" : ""}
-            <KeyCap>{key}</KeyCap>
-          </Fragment>
-        ))}
+        <KeyCap>{props.keys.join(" + ")}</KeyCap>
       </div>
       <div className={styles.arrowLine}>
         <span className={styles.arrowDot} />
@@ -366,10 +376,10 @@ function ChatBeforeScene() {
   return (
     <div className={styles.scene}>
       <div className={styles.miniChat}>
-        <div className={styles.miniTitleBar}>摸鱼吹水群（219）</div>
+        <div className={styles.miniTitleBar}>天才程序员（233）</div>
         <div className={styles.miniMsgs}>
-          <span className={styles.miniMsg}>今晚谁去吃烧烤 🍢</span>
-          <span className={styles.miniMsg}>我先冲了，老地方见</span>
+          <span className={styles.miniMsg}>deepseek 貌似要大幅涨价了</span>
+          <span className={styles.miniMsg}>梁叔叔最不喜欢就是你们这些10块10快充的用户了</span>
         </div>
         <div className={styles.miniInput}>
           <span className={styles.caret} aria-hidden />
@@ -380,19 +390,14 @@ function ChatBeforeScene() {
   );
 }
 
-/** 幕 2：浮层弹出，搜索并选中表情 */
+/** 幕 2：浮层弹出，搜索并选中贴纸 */
 function OverlayScene() {
   const styles = useStyles();
-  const cells = [
-    { emoji: "😹", selected: true },
-    { emoji: "🐱", selected: false },
-    { emoji: "😸", selected: false },
-    { emoji: "😻", selected: false },
-    { emoji: "🙀", selected: false },
-    { emoji: "🐈", selected: false },
-    { emoji: "🐾", selected: false },
-    { emoji: "😽", selected: false },
-  ];
+  const cells = FISH_STICKERS.slice(0, 8).map((sticker, index) => ({
+    img: sticker.src,
+    gif: sticker.gif,
+    selected: index === 0,
+  }));
   return (
     <div className={styles.scene}>
       <div className={styles.miniOverlay}>
@@ -402,7 +407,7 @@ function OverlayScene() {
         </div>
         <div className={styles.miniSearch}>
           <Search20Regular aria-hidden />
-          猫
+          鱼
           <span className={styles.caret} aria-hidden />
         </div>
         <div className={styles.miniGrid}>
@@ -410,37 +415,34 @@ function OverlayScene() {
             <span
               key={index}
               className={mergeClasses(styles.miniCell, cell.selected && styles.miniCellSelected)}
-              role="img"
-              aria-label={cell.selected ? "选中的表情" : undefined}
             >
-              {cell.emoji}
+              <StickerImage className={styles.miniImg} src={cell.img} gif={cell.gif} />
             </span>
           ))}
         </div>
         <div className={styles.miniGridHint}>↑↓ 选择 · Enter 复制</div>
       </div>
-      <SceneCaption no="2">浮层里搜到表情</SceneCaption>
+      <SceneCaption no="2">浮层里搜到贴纸</SceneCaption>
     </div>
   );
 }
 
-/** 幕 3：表情自动粘贴进输入框，发送后出现在消息列表（循环演示） */
+/** 幕 3：贴纸自动粘贴进输入框，发送后出现在消息列表（循环演示） */
 function ChatAfterScene() {
   const styles = useStyles();
+  const sent = FISH_STICKERS[0];
   return (
     <div className={styles.scene}>
       <div className={styles.miniChat}>
-        <div className={styles.miniTitleBar}>摸鱼吹水群（219）</div>
+        <div className={styles.miniTitleBar}>天才程序员（233）</div>
         <div className={styles.miniMsgs}>
-          <span className={styles.miniMsg}>我先冲了，老地方见</span>
+          <span className={styles.miniMsg}>ds老师，我还记得你</span>
           <span className={mergeClasses(styles.miniMsg, styles.miniMsgSelf, styles.sentMsg)} aria-hidden>
-            😹
+            <img className={styles.miniSticker} src={sent.src} alt="" draggable={false} />
           </span>
         </div>
         <div className={styles.miniInput}>
-          <span className={styles.inputEmoji} role="img" aria-label="自动粘贴的表情">
-            😹
-          </span>
+          <img className={styles.miniSticker} src={sent.src} alt="" draggable={false} />
           <span className={styles.caret} aria-hidden />
         </div>
       </div>
@@ -458,7 +460,7 @@ export function Workflow() {
       <div className={section.header}>
         <h2 className={section.title}>几秒钟，从素材库到聊天框</h2>
         <p className={section.description}>
-          一次「找表情并发出去」只需要四次按键——下面的流程会一直循环播放。
+          从唤起浮层到发出表情，全程只需按四次键。
         </p>
       </div>
       <div className={styles.flow}>
@@ -468,7 +470,7 @@ export function Workflow() {
         <FlowArrow keys={["Enter"]} label="复制 · 自动粘贴" />
         <ChatAfterScene />
       </div>
-      <div className={styles.flowNote}>场景为 HTML 原型示意，循环播放</div>
+      <div className={styles.flowNote}>以上为演示动画，自动循环播放。</div>
     </section>
   );
 }

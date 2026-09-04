@@ -11,7 +11,6 @@ import {
   type FluentIcon,
 } from "@fluentui/react-icons";
 import { useSiteThemeContext } from "../themeContext";
-import { useLatestRelease } from "../useLatestRelease";
 import logoUrl from "../assets/logo.png";
 
 const useStyles = makeStyles({
@@ -80,6 +79,7 @@ const NAV_ITEMS: { href: string; label: string; icon: FluentIcon }[] = [
   { href: "#showcase", label: "界面", icon: Desktop20Regular },
   { href: "#features", label: "特性", icon: Sparkle20Regular },
   { href: "#workflow", label: "上手", icon: Rocket20Regular },
+  { href: "#download", label: "下载", icon: ArrowDownload20Regular },
 ];
 
 /** GitHub 专用标识（simple-icons 单色，CC0；与应用 aboutUpdate.tsx 的 GithubIcon 同源）。 */
@@ -94,7 +94,6 @@ export function GithubIcon() {
 export function SiteHeader() {
   const styles = useStyles();
   const { resolved, setPreference } = useSiteThemeContext();
-  const release = useLatestRelease();
 
   // 主题图标展示当前状态：深色显示月亮、浅色显示太阳，点击切换到相反主题。
   const nextTheme = resolved === "dark" ? "light" : "dark";
@@ -115,17 +114,6 @@ export function SiteHeader() {
               </Button>
             );
           })}
-          {/* 下载：点击直接下载最新版安装包（直链，不跳转 Releases 页） */}
-          <Button
-            as="a"
-            href={release.setupUrl}
-            appearance="subtle"
-            size="small"
-            icon={<ArrowDownload20Regular />}
-            title={`直接下载 EmoBox v${release.version} 安装包`}
-          >
-            下载
-          </Button>
         </nav>
         <div className={styles.actions}>
           <Button
@@ -143,10 +131,10 @@ export function SiteHeader() {
             rel="noreferrer"
             appearance="subtle"
             size="small"
+            aria-label="ldm0715/emobox（GitHub 仓库）"
+            title="ldm0715/emobox"
             icon={<GithubIcon />}
-          >
-            GitHub
-          </Button>
+          />
         </div>
       </div>
     </header>

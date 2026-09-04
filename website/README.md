@@ -43,8 +43,8 @@ website/src/
 │   ├── global.css            # 字体栈、主题底色、::selection
 │   └── common.ts             # section 标题、卡片等公共样式
 └── components/
-    ├── SiteHeader.tsx        # 吸顶导航（锚点 + 主题点击切换 + 下载直链 + GitHub）
-    ├── Hero.tsx              # 标语 + 下载入口 + 主窗口原型
+    ├── SiteHeader.tsx        # 吸顶导航（锚点 + 主题切换 + GitHub；「下载」是 #download 锚点）
+    ├── Hero.tsx              # 标语 + 「下载最新版本」锚点（#download）+ 主窗口原型
     ├── PainPoints.tsx        # 痛点：左竖排卡片悬停联动右侧动画场景
     ├── MainWindowMockup.tsx  # 主窗口可交互原型（1100×720 固定布局 + 等比缩放显示）
     ├── QuickSearchMockup.tsx # 快捷搜索浮层场景演示（唤起 → 选图 → 自动粘贴 → 发送）
@@ -75,14 +75,14 @@ website/src/
 - 快捷搜索浮层场景（点输入框唤起 → 选表情自动粘贴 → 发送）消息语境写死，表情进入输入框与消息列表均为循环动画演示。
 - 界面细节（尺寸、图标、徽章、布局结构）**对照主应用源码 1:1 复刻**：`AppToolbar` / `LibrarySidebar` / `LibraryHeader` / `EmojiGridItem` / `QuickSearchPanel` / `QuickSearchContent` / `SettingsMenu` / `navItemStyles` / `cardStyles` / `ImportMenu`。改应用 UI 时请检查 mockup 是否需要跟进。
 
-### 最新版本与下载直链
+### 下载入口与最新版本
 
-- `useLatestRelease.ts` 请求 GitHub 公开 API（`releases/latest`，有 CORS、无需鉴权）解析版本号与 `x64-setup.exe` / `x64.zip` 资产直链；模块级缓存让页面多处共享同一次请求。
+- 「下载」统一走**页内下载区**：`DownloadSection`（`id="download"`）才是真正下载的地方——其两张卡片（安装版/便携版）按钮 `href` **直接指向 release 资产 URL**（点击即下载）。顶部导航「下载」与 Hero「下载最新版本」都只是 `href="#download"` 的锚点，平滑滚动到下载区（曾误做直链下载，2026-09 已改，勿改回）。
+- `useLatestRelease.ts` 请求 GitHub 公开 API（`releases/latest`，有 CORS、无需鉴权）解析版本号与 `x64-setup.exe` / `x64.zip` 资产直链；模块级缓存让页面多处共享同一次请求。消费方：`DownloadSection`（文件名/版本/直链按钮）+ `SiteFooter`（`Latest` 勋章 value 显示 `v{version}`）。
 - API 限流/失败时回退到 `FALLBACK_VERSION` 常量拼 `releases/download/` 直链——**发布新版本时同步更新该常量**。
-- 顶部导航「下载」与下载区的按钮 `href` 直接指向资产 URL（点击即下载），不跳转 Releases 页面。
 
 ## 发布新版本时的检查清单
 
 1. 更新 `website/package.json` 的 `version`
 2. 更新 `src/useLatestRelease.ts` 的 `FALLBACK_VERSION`
-3. 检查 `src/components/SettingsMockup.tsx` 内写死的版本 Badge 是否需要跟进
+3. 检查 `src/components/SettingsMockup.tsx` 内写死的版本 Badge/toast 是否需要跟进
