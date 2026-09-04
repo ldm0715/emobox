@@ -359,7 +359,7 @@ export function SettingsMockup(props: {
     setCheckingUpdate(true);
     window.setTimeout(() => {
       setCheckingUpdate(false);
-      props.onNotify("已是最新版本 v0.1.2（演示）");
+      props.onNotify("已是最新版本 v0.1.3（演示）");
     }, 900);
   }
 
@@ -689,7 +689,7 @@ export function SettingsMockup(props: {
         <span className={styles.brandTitle}>
           <img src={logoUrl} alt="" className={styles.brandLogo} />
           <span>EmoBox</span>
-          <Badge appearance="tint">v0.1.2</Badge>
+          <Badge appearance="tint">v0.1.3</Badge>
         </span>
         <Button
           appearance="subtle"

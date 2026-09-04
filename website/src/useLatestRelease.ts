@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 const RELEASE_API = "https://api.github.com/repos/ldm0715/emobox/releases/latest";
 // GitHub API 不可达时的回退版本号（发布新版本时与 website/package.json 同步更新）。
-const FALLBACK_VERSION = "0.1.2";
+const FALLBACK_VERSION = "0.1.3";
 
 export interface ReleaseInfo {
   version: string;
