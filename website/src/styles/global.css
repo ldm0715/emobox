@@ -1,0 +1,49 @@
+:root {
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* 页面底色与应用一致：暗色 BG2 #191d26 / 亮色 #fafafa（防闪烁脚本会提前设置 data-theme） */
+html[data-theme="light"] {
+  background-color: #fafafa;
+}
+
+html[data-theme="dark"] {
+  background-color: #191d26;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* 与应用一致的品牌色选中文本：dark=brand70 / light=brand80 配白字 */
+::selection {
+  background: #0f6cbd;
+  color: #ffffff;
+}
+
+html[data-theme="dark"] ::selection {
+  background: #115ea3;
+  color: #ffffff;
+}
+
+/* 行内代码（FEATURES 文案里的搜索语法等，在组件外定义故用全局类） */
+.feature-code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.85em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background-color: var(--colorNeutralBackground3);
+  border: 1px solid var(--colorNeutralStroke2);
+}

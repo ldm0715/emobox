@@ -1,0 +1,25 @@
+{
+  "name": "emobox-website",
+  "private": true,
+  "version": "0.1.2",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fluentui/react-components": "9.74.6",
+    "@fluentui/react-icons": "2.0.338",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}

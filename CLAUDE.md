@@ -33,7 +33,7 @@ npx vitest run src/features/library/useMultiSelection.test.ts
 npx vitest run -t "<用例名>"
 ```
 
-验收标准是 `cargo fmt --check` + `cargo check` + `cargo clippy -- -D warnings` + `cargo test` + `npm run build`（tsc + vite）+ `npx vitest run`（Phase 8 起浮层 `useQuickSearchQuery` 乱序/分页/缓存（Phase 20）测试、Phase 9 起 `useMultiSelection` 多选测试、Phase 27 起 `mirrorSources` 镜像源测试）+ `MANUAL_ACCEPTANCE.md` 中的手动清单。
+验收标准是 `cargo fmt --check` + `cargo check` + `cargo clippy -- -D warnings` + `cargo test` + `npm run build`（tsc + vite）+ `npx vitest run`（Phase 8 起浮层 `useQuickSearchQuery` 乱序/分页/缓存（Phase 20）测试、Phase 9 起 `useMultiSelection` 多选测试、Phase 27 起 `mirrorSources` 镜像源测试）+ `MANUAL_ACCEPTANCE.md` 中的手动清单。改 `website/` 后另跑 `cd website && npm run build`（官网独立构建，见「官网介绍站」章节）。
 
 ## 高层架构
 
@@ -128,6 +128,16 @@ npx vitest run -t "<用例名>"
 - **生命周期**：每次打开先清空再写入（跨会话复用不可能）；`peek`（不消耗）让同一会话可反复粘贴；粘贴失败时命令层 `clear`；**浮层隐藏不 clear**（hide-then-paste 顺序，Phase 15 修复）；60 秒 TTL 兜底。
 - **关键 Win32 不变量**：绝不含 `VK_RETURN`；`AttachThreadInput` 所有路径 detach（Drop guard）；`SendInput` 拆成带间隔的逐事件调用；激活前复验 PID 防 HWND 复用；输入不经过 shell/`Command::new`；不用 IM 私有协议 / 不读内容 / 不后台轮询；HWND 绝不持久化。
 - **已知缺口（Phase 15 已修复，待真机复验）**：`focus_restore.rs` 曾因 `VARIANT` 嵌套 union 构造在 Rust 2024 下撞 `E0133` 编译损坏，Phase 15 已按文档既定方案重写（`CreateTrueCondition()` + `FindAll` + 遍历 `CurrentControlType() == UIA_EditControlTypeId`）。Windows 构建已恢复，但真机自动粘贴端到端（尤其 Electron 应用 / 原生微信的 UIA 可见性）**尚未复验** —— Electron 应用需 Chromium 无障碍树就绪，原生微信靠 `EnumChildWindows` 回退。完整细节与决策记录：`docs/phase7-chat-paste.md` 与 `docs/phase15-selection-search.md`。
+
+## 官网介绍站（website/）
+
+`website/` 是独立的静态介绍站点（GitHub Pages：<https://ldm0715.github.io/emobox/>），React 19 + Fluent UI v9，依赖版本与主应用锁同（`@fluentui/react-components` 9.74.6 精确锁定）。**与主应用构建/测试完全隔离**：改动、安装依赖、构建都在 `website/` 内进行（`cd website && npm install && npm run build`），不碰主 `package.json`。完整约定见 `website/README.md`，要点：
+
+- **部署**：`.github/workflows/pages.yml` 仅在 `website/**`（或 workflow 自身）变更时触发，push main 自动构建部署；`vite.config.ts` 的 `base` 固定 `/emobox/`。本地依赖安装需官方 registry（npmmirror 未同步 react-icons 2.0.338，lock 已指向官方源）。
+- **主题（承重）**：`website/src/theme.ts` 逐行照抄主应用 `ThemeProvider.tsx` 的 brand ramp 与暗/亮 override（暗色 BG2 `#191d26` / BG1 `#222732` / BG3 `#2a303d`）——**改应用主题必须两边同步**。网站级主题（浅/深/跟随系统）在 `useSiteTheme` + `SiteThemeContext`，localStorage key `emobox-site.theme`（与 `index.html` 内联防闪烁脚本同 key）。
+- **双层主题（承重）**：`MainWindowMockup` 内部有独立的局部主题（嵌套 `FluentProvider`，`display: contents`）——**在原型里切主题只影响演示窗口，不影响网站页面**（应用语义的演示化）；其 `SettingsMockup`（设置弹窗，在演示窗口内部弹出而非全屏 Dialog）与工具栏主题按钮共享局部状态。
+- **mockup 是可交互演示（承重）**：主窗口原型布局固定 1100×720（应用默认窗口），`ResizeObserver` + `transform: scale` 按可用宽度等比缩放，内部布局永不 reflow；视图/分组切换、点击复制、收藏、回收站、多选、模拟导入、密度/排序、侧栏折叠全部是**本地 state**，不写真实剪贴板、不持久化、不发 toast 到页面级（Fluent `Toaster` 是 portal，mockup 内用窗口内自绘 toast）。界面细节**对照主应用源码 1:1 复刻**（`AppToolbar` / `LibrarySidebar` / `LibraryHeader` / `EmojiGridItem` / `QuickSearchPanel` / `QuickSearchContent` / `SettingsMenu` / `navItemStyles` / `cardStyles` / `ImportMenu`）——**改应用 UI 时检查 mockup 是否需要跟进**。
+- **最新版本获取**：`useLatestRelease.ts`（GitHub `releases/latest` 公开 API，模块级缓存）供顶部导航与下载区共享；API 限流时回退 `FALLBACK_VERSION` 常量——**发新版本时同步更新**（另有 `website/package.json` version 与 `SettingsMockup` 内的版本 Badge）。下载按钮 `href` 直接指向 release 资产 URL（点击即下载）。
 
 ## 关键不变量 / 硬性规则
 
