@@ -9,7 +9,7 @@ import {
   Search20Regular,
   type FluentIcon,
 } from "@fluentui/react-icons";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useCardStyles, useSectionStyles } from "../styles/common";
 import { ALL_STICKERS, COW_STICKERS, FISH_STICKERS } from "../mockStickers";
 import { StickerImage } from "./StickerImage";
@@ -224,12 +224,15 @@ const useStyles = makeStyles({
   },
 
   /* ---- Demo 1：表情散落各处 ---- */
+  // 定宽是硬约束：FitToWidth 靠「固定自然宽度」算缩放比，流式宽度在窄容器里只会换行重排
+  // （三张卡竖堆、scale 恒为 1），不会按预期缩小。566 = 178×3 + 16×2。
   scatterWrap: {
     position: "relative",
     display: "flex",
     gap: "16px",
     justifyContent: "center",
     flexWrap: "wrap",
+    width: "566px",
   },
   appCard: {
     display: "flex",
@@ -493,7 +496,11 @@ const useStyles = makeStyles({
   },
   mobileViewport: {
     display: "flex",
+    // 高度跟随当前激活 slide（组件内动态设置），避免被最高的 slide 撑高；
+    // 不加 height 过渡——过渡在标签页被节流时时间线冻结，高度会卡在过渡起点。
+    alignItems: "flex-start",
     overflowX: "auto",
+    overflowY: "hidden",
     scrollSnapType: "x mandatory",
     scrollbarWidth: "none",
     msOverflowStyle: "none",
@@ -506,7 +513,7 @@ const useStyles = makeStyles({
     minWidth: "100%",
     scrollSnapAlign: "start",
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "center",
     padding: "4px 0",
     boxSizing: "border-box",
@@ -566,7 +573,13 @@ const useStyles = makeStyles({
 });
 
 /** 演示内容按可用宽度等比缩放（窄屏自动缩小、不裁剪），宽屏为 1:1。 */
-function FitToWidth({ children }: { children: ReactNode }) {
+function FitToWidth({
+  children,
+  onHeightChange,
+}: {
+  children: ReactNode;
+  onHeightChange?: (height: number) => void;
+}) {
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const [fit, setFit] = useState({ scale: 1, height: 0 });
@@ -579,7 +592,9 @@ function FitToWidth({ children }: { children: ReactNode }) {
       const width = inner.offsetWidth;
       if (!width) return;
       const scale = Math.min(1, outer.clientWidth / width);
-      setFit({ scale, height: inner.offsetHeight * scale });
+      const height = Math.round(inner.offsetHeight * scale);
+      setFit({ scale, height });
+      onHeightChange?.(height);
     };
     update();
     const observer = new ResizeObserver(update);
@@ -853,7 +868,19 @@ function PainMobileCarousel() {
   const trackRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(0);
   const [active, setActive] = useState(0);
+  // 各 slide 的缩放后内容高度（FitToWidth 回调上报）：轨道高度跟随当前激活 slide，
+  // 避免被最高的一张撑出底部空白（此前较矮的演示离下方说明卡有 40px+ 隐形间距）。
+  const [slideHeights, setSlideHeights] = useState<number[]>([]);
   const count = PAIN_POINTS.length;
+
+  const handleSlideHeight = useCallback((index: number, height: number) => {
+    setSlideHeights((prev) => {
+      if (prev[index] === height) return prev;
+      const next = [...prev];
+      next[index] = height;
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const track = trackRef.current;
@@ -888,13 +915,21 @@ function PainMobileCarousel() {
   const slides = [...PAIN_POINTS, PAIN_POINTS[0]];
   const current = PAIN_POINTS[active];
   const ActiveIcon = current.icon;
+  const viewportHeight = slideHeights[active];
 
   return (
     <div className={styles.mobile}>
-      <div className={styles.mobileViewport} ref={trackRef}>
+      {/* +8 = mobileSlide 上下各 4px 的 padding */}
+      <div
+        className={styles.mobileViewport}
+        ref={trackRef}
+        style={{ height: viewportHeight !== undefined ? viewportHeight + 8 : undefined }}
+      >
         {slides.map((point, index) => (
           <div key={index} className={styles.mobileSlide}>
-            <FitToWidth>{point.demo}</FitToWidth>
+            <FitToWidth onHeightChange={(height) => handleSlideHeight(index, height)}>
+              {point.demo}
+            </FitToWidth>
           </div>
         ))}
       </div>

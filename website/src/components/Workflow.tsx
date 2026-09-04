@@ -293,7 +293,11 @@ const useStyles = makeStyles({
     borderBottom: "5px solid transparent",
     borderLeft: `7px solid ${tokens.colorBrandStroke1}`,
     "@media (max-width: 1120px)": {
-      right: "-5px",
+      // 竖线上用 left:50% + translateX 居中，不用 right 魔法数字——
+      // 定宽偏移叠加缩放取整会让三角相对竖线偏右约 1px，看起来小歪
+      right: "auto",
+      left: "50%",
+      transform: "translateX(-50%)",
       top: "auto",
       bottom: "-6px",
       borderTop: `7px solid ${tokens.colorBrandStroke1}`,
